@@ -619,8 +619,9 @@ Remove the Secrets and the ConfigMap by hand. The current service never reads
 them, and they hold Device identity digests, project names and signed control
 requests that no longer protect anything. If you want a record of the
 identities the ledger retained, export the Secrets to private storage outside
-Git first. Do not delete the `fleet-system-private` namespace: the manager
-keeps its own private records there.
+Git first. After the Device custody cutover nothing keeps records in the
+`fleet-system-private` namespace, so delete it as the last step of [moving
+from the Secret-backed staging](../../config/README.md#moving-from-the-secret-backed-staging).
 
 Delete in this order, on the host cluster, after the current registration
 release is running and no older registration pod remains:

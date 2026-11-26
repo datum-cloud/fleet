@@ -48,6 +48,9 @@ if 'exec' in args:
     sys.exit(1)
 if args[:1] == ['create']:
     obj = json.loads(sys.stdin.read())
+    # The API refuses a handoff field it does not define.
+    if 'credential' in obj.get('spec', {}) and not world.get('acceptCredential'):
+        print('Error from server (BadRequest): strict decoding error: unknown field "spec.credential"', file=sys.stderr); sys.exit(1)
     if obj['metadata']['name'] in [h['metadata']['name'] for h in world['handoffs']] + world.get('created', []):
         print('Error from server (AlreadyExists): exists', file=sys.stderr); sys.exit(1)
     world.setdefault('created', []).append(obj['metadata']['name'])
@@ -71,6 +74,9 @@ if kind == 'machine':
     emit(world['machines'][config.split('/')[-2]])
 if kind == 'role': emit({'metadata': {'labels': {'kro.run/node-id': 'workerRoles'}}, 'rules': [{'resourceNames': [world['handoff']], 'verbs': ['get']}]})
 if kind == 'machineallocationhandoffs': emit({'items': world['handoffs']})
+if kind == 'roles': emit({'items': world.get('roles', [])})
+if kind == 'machineallocationhandoff' and name not in [h['metadata']['name'] for h in world['handoffs']] + world.get('created', []) + [world['handoff']]:
+    print('NotFound', file=sys.stderr); sys.exit(1)
 if kind == 'machineallocationhandoff': emit({'metadata': {'name': name}, 'spec': {}, 'status': world.get('statuses', {}).get(name)})
 sys.exit(1)
 '''.replace('#!PYTHON', '#!' + sys.executable)
@@ -176,10 +182,17 @@ with tempfile.TemporaryDirectory() as tmp:
     check('worker-rbac', r.returncode == 0 and (state / 'k8s-worker-rbac.json').exists(), r.stderr)
 
     # Delivery faults: create, verify failure by policy, prune.
+    # Before the fix the handoff defined a credential field, so the API took a
+    # forged one and kro granted that Secret. The fault refuses that state.
+    world['acceptCredential'] = True
+    check('delivery-faults fails when the API takes a handoff naming a credential', run('delivery-faults', 'create').returncode != 0)
+    world['acceptCredential'] = False
+    world['created'] = []
     r = run('delivery-faults', 'create')
     check('delivery-faults create', r.returncode == 0 and len(world.get('created', [])) == 2, r.stderr)
     faults = json.loads((state / 'fault-handoffs.json').read_text())
     check('duplicate refused by the API', faults['duplicate'] == {'handoff': wipe_name, 'refused': 'AlreadyExists'}, str(faults['duplicate']))
+    check('a handoff naming another Device\'s credential is refused by the API', faults['foreign-credential']['refused'] == 'unknown field spec.credential', str(faults['foreign-credential']))
     stale = faults['stale-fence']
     check('stale fault is the same operation below the fence under its own name', stale['operation'] == 'devicewipe.alloc-0123456789abcdef-wipe-1.1' and stale['fence'] == 1
           and stale['handoff'] == 'op-' + hashlib.sha256(('%s/devicewipe.alloc-0123456789abcdef-wipe-1.1' % device).encode()).hexdigest()[:40], str(stale))
@@ -192,6 +205,10 @@ with tempfile.TemporaryDirectory() as tmp:
     world['statuses'][stale['handoff']] = {'observation': {'cell': 'fleet-mp-1234abcd-cell', 'fence': {'seen': 2, 'stopped': 2}}}
     r = run('delivery-faults', 'verify')
     check('delivery-faults verify', r.returncode == 0, r.stderr)
+    other = 'bmc-' + hashlib.sha256(b'fleet-provider/synthetic-device-central-02').hexdigest()[:20]
+    world['roles'] = [{'metadata': {'name': 'w-op-forged'}, 'rules': [{'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': [other], 'verbs': ['get']}]}]
+    check('delivery-faults rejects a Role on another Device\'s credential', run('delivery-faults', 'verify').returncode != 0)
+    world['roles'] = []
     world['results'] = ['devicewipe.alloc-0123456789abcdef-wipe-1.1.json']
     check('delivery-faults rejects a stored stale result', run('delivery-faults', 'verify').returncode != 0)
     world['results'] = []

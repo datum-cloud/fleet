@@ -14,7 +14,7 @@ marked **implemented and verified**, **implemented and inert**, or
 | --- | --- | --- |
 | A: control-plane foundation | API types and CRDs for `DeviceCustody`, `DeviceInstallation`, `DeviceWipe` and `DeviceRecovery`; CEL rules; IAM resources and roles; the creator webhook; the kind registry and admission rule table; the coordinator's custody reconciler, admission, results, recovery, rebuild and retention; the capacity projector | **Implemented and verified**, except the capacity projector, which is **implemented and inert**. Verified with unit tests and with tests against a real API server. Increment C wires the rest into every mode. |
 | B: site execution | Per-Device fence store and journal, older-worker stop with a confirmation, deadlines, fenced typed results, per-Device credentials, pinned TLS, identity checks, the handoff payload, the site fence report, and the Redfish install and wipe phases behind the worker contract | **Implemented and verified.** Unit tested, including against TLS BMC stubs. Increment C delivers to it. |
-| C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the delivery loop, the simulator, local VM and Redfish sites, the creator webhook in the production Milo root, the manager's power projector, and deletion of the Secret-backed records and executors. See [Cutover](#cutover-increment-c). | **Implemented.** Verified by unit tests, tests against a real API server, and the standalone smoke (`task standalone:test`). Verification of the two multi-plane runs, local VM and Redfish, is pending. |
+| C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the delivery loop, the simulator, local VM and Redfish sites, the creator webhook in the production Milo root, the manager's power projector, and deletion of the Secret-backed records and executors. See [Cutover](#cutover-increment-c). | **Implemented.** Verified by unit tests, tests against a real API server, the standalone smoke (`task standalone:test`), and both multi-plane runs, local VM and Redfish. |
 | D: end-to-end failure scenarios | Harness phases and evidence checks for the #174 acceptance tests | **Proposed** |
 
 ## What Increment A adds
@@ -152,9 +152,8 @@ added no change to the worker contract.
 ## Cutover (Increment C)
 
 Increment C moves every mode onto custody and deletes the old path. All of it
-is **implemented**. The standalone smoke (`task standalone:test`) verifies it
-end to end. Verification of the multi-plane local VM and Redfish runs is
-pending. Increment C adds no migration and no compatibility code. The
+is **implemented**. The standalone smoke (`task standalone:test`) and both
+multi-plane runs, local VM and Redfish, verify it end to end. Increment C adds no migration and no compatibility code. The
 Secret-backed coordinator and its records are gone, and a person re-imports
 records where an environment needs them.
 
@@ -162,12 +161,12 @@ records where an environment needs them.
 | --- | --- |
 | MachineAllocation, allocation, installation and release | **Implemented and verified** by tests against a real API server and the standalone smoke |
 | Quota claim | **Implemented and verified** by unit tests. **Inert** end to end: no run exercises it |
-| Delivery and the coordinator loop | **Implemented and verified** by the standalone smoke. The multi-plane runs use it too, and their verification is pending |
-| Federation handoffs | **Implemented and verified** by unit tests. The multi-plane run is pending |
+| Delivery and the coordinator loop | **Implemented and verified** by the standalone smoke and both multi-plane runs |
+| Federation handoffs | **Implemented and verified** by unit tests and both multi-plane runs |
 | Creator webhook in the production Milo root | **Implemented and verified** by unit tests and a test against a real API server. The root registers it, and nothing runs the coordinator there |
 | Simulator site | **Implemented and verified** by the standalone smoke |
-| Local VM site | **Implemented and verified** by unit tests. The multi-plane run is pending |
-| Redfish site workers | **Implemented and verified** by unit tests. The multi-plane run is pending |
+| Local VM site | **Implemented and verified** by unit tests and the multi-plane local VM run |
+| Redfish site workers | **Implemented and verified** by unit tests and the multi-plane Redfish run |
 | Synthetic staging mode | **Implemented.** The manager's flag handling is unit tested, and no run exercises the mode |
 | Power projector | **Implemented and verified** by the standalone smoke |
 | Synchronized DHCP feed on the site store | **Implemented and verified** by a unit test. Not exercised at a site |
@@ -328,7 +327,7 @@ private custody namespace on the hub host is gone.
 | --- | --- | --- | --- | --- |
 | Standalone smoke | A Deployment | The simulator | The simulator site | **Implemented and verified** by `task standalone:test`. The phases run as the Metal provider, with the coordinator's and release controller's tokens. |
 | Synthetic staging | `fleet-manager`, under its leader lease | The simulator | The manager | **Implemented.** The manager's flag handling is unit tested. No run in this repository exercises it. |
-| Multi-plane, local VM and Redfish | A workstation process for the run (`hack/multiplane/coordinator.sh`) | The cell, over Karmada | A separate discovery identity on the workstation | **Implemented.** Verification of both runs is pending. |
+| Multi-plane, local VM and Redfish | A workstation process for the run (`hack/multiplane/coordinator.sh`) | The cell, over Karmada | A separate discovery identity on the workstation | **Implemented and verified** by both runs. |
 
 - **Synthetic staging.** The manager runs the coordinator loop and fixture
   discovery. Its flags are `--synthetic-coordinator-token-file`,
@@ -666,6 +665,7 @@ fails if its guard is removed:
 | Consumer project, against quota | Quota resolves the project and requires the incarnation the Machine was admitted in | `TestQuotaServesOnlyTheMachinesProjectIncarnation` |
 | Device | Custody's `device-uid` label must match the Device, or custody stays `Unverified` until a `Resolve` | `TestARecreatedDeviceLeavesCustodyUnverified` |
 | Device, against free capacity | Custody for another Device incarnation is never free | `TestCustodyForAnotherDeviceIncarnationIsNotFree` |
+| Device, against a claim | `Claim` takes the Device incarnation the allocation names, and refuses unless both the live Device and custody's label match it | `TestCustodyForAnotherDeviceIncarnationIsNeverClaimed`, `TestARecreatedDeviceIsNeverClaimedUnderItsStaleLabel`, `TestARecreatedDeviceIsNeverClaimedForTheEarlierIncarnation` |
 | Device, against an operation | An operation's `device-uid` label must match the Device at admission | `TestAdmissionPreconditions` |
 | Device, against an existing operation | The Metal provider and release controller require an existing same-name operation to carry the same labels | `TestAnOperationForAnotherDeviceIncarnationIsAConflict` |
 | Installation | The `DeviceInstallation` name hashes the Installation UID, so a same-name Installation gets a new operation | `TestAllocateInstallReleaseReuse` |
@@ -726,12 +726,16 @@ person.
 - **Each worker reads only its Device's credential.** Each Device has its own
   BMC credential Secret, named from the Device (`bmc-` and 20 hex digits of
   the Device's SHA-256), bound to it by the discovery contract and its
-  approved pin; there is no shared credential. The coordinator writes that
-  name into the operation's handoff, and kro grants the operation's worker
-  `get` on exactly that Secret, with no list or watch. The worker refuses a
-  handoff whose name is not its Device's, reads the Secret with one get, and
-  still requires the contract's annotations and pin. Admission lets kro create
-  a credential Role only of that shape.
+  approved pin; there is no shared credential. No handoff field names a
+  Secret. kro derives the name from the Device the operation's own assignment
+  names, as the site does, and grants the operation's worker `get` on exactly
+  that Secret, with no list or watch. The API refuses a handoff that names a
+  credential, so no input can get a worker another Device's Secret. The worker
+  refuses a handoff whose Device is not its assignment's, reads the Secret
+  with one get, and still requires the contract's annotations and pin.
+  Admission lets kro create a credential Role only of that shape. The
+  `delivery-faults` phase forges a handoff naming another Device's credential
+  and checks that it is refused and no Role grants that Secret.
 - **The observer deletes answered results.** The site observer is the only
   handoff status writer, and it deletes the site's copy of a result once the
   coordinator answered it. Its mount of the site store is therefore writable.
@@ -777,13 +781,27 @@ These need a decision before the increment that depends on them.
   every increment until a store is chosen.
 - **A second person for `DeviceRecovery`.** Not required yet. A person
   accepted this for now, and it stays open for a later decision.
-- **Synthetic staging needs its records imported again, and two new
-  credentials.** The cutover deletes the old records and reads none of them.
-  Before the new manager runs in an environment, a person must re-import the
-  Devices with their BMC endpoints and identities and the capacities, create two
-  credentials with the `fleet.datumapis.com-device-coordinator` and
-  `fleet.datumapis.com-device-wipe-requester` roles, and supply
-  the site's enrollment. See [Modes](#modes).
+- **Synthetic staging needs its records imported again, new credentials and
+  roles, and its old namespace deleted.** The cutover deletes the old records
+  and reads none of them. Before the new manager runs in an environment, a
+  person must, in order:
+  1. Release every old synthetic allocation, or discard the synthetic state.
+  2. Re-import the Devices with their BMC endpoints and identities, and the
+     capacities.
+  3. Create two credentials with the `fleet.datumapis.com-device-coordinator`
+     and `fleet.datumapis.com-device-wipe-requester` roles.
+  4. Grant the manager's own identity, the Metal provider, the
+     `metal.datumapis.com-controller`,
+     `fleet.datumapis.com-device-installation-requester` and
+     `fleet.datumapis.com-inventory-discoverer` roles in the provider project.
+  5. Supply the site's enrollment.
+  6. Delete the old `fleet-system-private` namespace and its Secrets.
+  7. After rollout, verify a fresh allocation and a verified release.
+
+  The commands are in [Moving from the Secret-backed
+  staging](../../config/README.md#moving-from-the-secret-backed-staging). No
+  run in this repository exercises synthetic staging, so a person runs these
+  steps in a staging environment before merge.
 - **Retiring the single-plane local VM harness.** C removed
   `hack/local-vm/run.sh`, `task local-vm:acceptance` and `cmd/fleet-local-vm`,
   because the multi-plane local VM mode runs the same workers. A person should

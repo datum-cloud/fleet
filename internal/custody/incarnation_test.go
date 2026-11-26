@@ -257,3 +257,30 @@ func TestRebuildIgnoresAnEarlierDeviceIncarnation(t *testing.T) {
 		t.Fatalf("rebuild took the earlier Device's allocation as the holder: %+v", rebuilt.Spec.Holder)
 	}
 }
+
+// TestARecreatedDeviceIsNeverClaimedUnderItsStaleLabel covers custody still
+// labelled for the earlier Device, recreated under the same name before
+// rebuild relabels custody. The allocation names that earlier incarnation,
+// so custody's label matches it, and only the live Device shows the claim is
+// stale.
+func TestARecreatedDeviceIsNeverClaimedUnderItsStaleLabel(t *testing.T) {
+	e := startEnv(t)
+	device := e.verified("server-example-849", uid(849), fmt.Sprintf("%064x", 849))
+	old := device.UID
+	if err := e.admin.Delete(e.ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	recreated := e.device(device.Name, uid(849), fmt.Sprintf("%064x", 849))
+	if recreated.UID == old {
+		t.Fatal("the Device was not recreated")
+	}
+	if label := e.custody(device.Name).Labels[ops.LabelDeviceUID]; label != string(old) {
+		t.Fatalf("custody label = %q, want the earlier Device's", label)
+	}
+	if err := e.coord.Claim(e.ctx, device.Name, old, "alloc-stale-label"); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("claim for the earlier Device incarnation = %v", err)
+	}
+	if holder := e.custody(device.Name).Spec.Holder; holder.Type != ops.HolderNone {
+		t.Fatalf("holder = %+v", holder)
+	}
+}

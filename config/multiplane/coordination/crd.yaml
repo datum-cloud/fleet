@@ -41,9 +41,6 @@ spec:
                   type: string
                   minLength: 1
                   maxLength: 65536
-                # The Device's BMC credential Secret at the site, derived from
-                # the Device; the assignment's worker may get only it.
-                credential: {type: string, pattern: '^bmc-[a-f0-9]{20}$'}
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true

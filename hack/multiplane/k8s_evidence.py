@@ -131,16 +131,17 @@ def worker_rbac(state, name):
     role = get(state, '-n', NS, 'get', 'role', 'w-' + name)
     record.update(roleRules=role['rules'], roleCreatedBy=role['metadata'].get('labels', {}).get('kro.run/node-id'))
     if REDFISH:
-        # A Redfish worker may get exactly its Device's credential Secret, the
-        # one its handoff names, and nothing else.
+        # A Redfish worker may get exactly the credential Secret of the Device
+        # its assignment names, and nothing else. No handoff field names it.
         spec = get(state, '-n', NS, 'get', 'machineallocationhandoff', name)['spec']
-        if spec.get('credential') != credential_name(spec['device']):
-            raise SystemExit('the handoff does not name its Device credential Secret: %s' % spec.get('credential'))
-        mine = kubectl(state, '-n', CREDENTIALS, 'get', 'secret', spec['credential'], '-o', 'name', check=False, config='worker-kubeconfig.json')
+        if 'credential' in spec:
+            raise SystemExit('the handoff names a credential Secret: %s' % spec['credential'])
+        own = credential_name(json.loads(spec['assignmentJSON'])['device'])
+        mine = kubectl(state, '-n', CREDENTIALS, 'get', 'secret', own, '-o', 'name', check=False, config='worker-kubeconfig.json')
         if mine.returncode:
             raise SystemExit("Redfish worker cannot get its own Device's credential: " + mine.stderr[:200])
         creds = get(state, '-n', CREDENTIALS, 'get', 'role', 'w-' + name)
-        if creds['rules'] != [{'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': [spec['credential']], 'verbs': ['get']}]:
+        if creds['rules'] != [{'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': [own], 'verbs': ['get']}]:
             raise SystemExit('Redfish worker credential Role is not get on its one Secret: %s' % creds['rules'])
         record.update(ownCredentialReadable=True, credentialRoleRules=creds['rules'])
     write(s / 'k8s-worker-rbac.json', record)
@@ -256,7 +257,8 @@ def handoff(name, cell, spec, fault):
 def delivery_faults(state, action):
     """Each fault derives from the latest delivered assignment, whose fence is
     the Device's stored fence: a duplicate of it, the same assignment for
-    another cell, and the same operation below that fence."""
+    another cell, the same operation below that fence, and a handoff that
+    names another Device's credential Secret."""
     s = pathlib.Path(state)
     cell = (s / 'prefix').read_text().strip() + '-cell'
     private = s / 'fault-handoffs.json'
@@ -269,9 +271,6 @@ def delivery_faults(state, action):
         if source['metadata']['name'] != assignment_name(assignment) or assignment['fence'] < 2:
             raise SystemExit('the stale-fence fault needs a delivered assignment under its own name with a fence of at least 2')
         faults = {}
-        # A Redfish worker's Role names the Device's credential, so each fault
-        # carries the source's; without it kro renders no Job.
-        credential = {k: v for k, v in source['spec'].items() if k == 'credential'}
         # The same assignment again: its name is fixed by its contents, so the API refuses it.
         dup = handoff(source['metadata']['name'], cell, source['spec'], 'duplicate')
         r = kubectl(state, 'create', '-f', '-', input=json.dumps(dup), check=False)
@@ -281,21 +280,41 @@ def delivery_faults(state, action):
         # Selected by the cell label, but the handoff names another cell.
         wrong = dict(assignment, operation=dict(assignment['operation'], name=assignment['operation']['name'] + '-fault-wrong-cell'))
         faults['wrong-cell'] = {'handoff': assignment_name(wrong), 'spec': {'cell': 'remote-elsewhere-cell', 'device': assignment['device'],
-                                                                          'assignmentJSON': json.dumps(wrong, separators=(',', ':')), **credential}}
+                                                                          'assignmentJSON': json.dumps(wrong, separators=(',', ':'))}}
         # Well-formed for this cell under its own name, but below the stored fence.
         stale = dict(assignment, fence=assignment['fence'] - 1)
         faults['stale-fence'] = {'handoff': assignment_name(stale), 'operation': harness.operation_key(stale['operation']['kind'], stale['operation']['name'], stale['fence']), 'fence': stale['fence'],
-                                 'spec': {'cell': cell, 'device': assignment['device'], 'assignmentJSON': json.dumps(stale, separators=(',', ':')), **credential}}
+                                 'spec': {'cell': cell, 'device': assignment['device'], 'assignmentJSON': json.dumps(stale, separators=(',', ':'))}}
         for fault in JOB_FAULTS:
             f = faults[fault]
             kubectl(state, 'create', '-f', '-', input=json.dumps(handoff(f['handoff'], cell, f.pop('spec'), fault)))
             (s / ('fault-%s-job' % fault)).write_text('w-' + f['handoff'] + '\n')
+        # A forged handoff naming another Device's credential Secret. No handoff
+        # field may name a Secret, so the API refuses it, and no Role on that
+        # Secret is ever created.
+        foreign = dict(assignment, fence=assignment['fence'] - 1, operation=dict(assignment['operation'], name=assignment['operation']['name'] + '-fault-credential'))
+        forged = handoff(assignment_name(foreign), cell, {'cell': cell, 'device': assignment['device'], 'assignmentJSON': json.dumps(foreign, separators=(',', ':')),
+                                                          'credential': credential_name(OTHER_DEVICE)}, 'foreign-credential')
+        r = kubectl(state, 'create', '--validate=strict', '-f', '-', input=json.dumps(forged), check=False)
+        if r.returncode == 0:
+            raise SystemExit('a handoff naming another Device\'s credential Secret was accepted')
+        if 'unknown field' not in r.stderr or 'credential' not in r.stderr:
+            raise SystemExit('a handoff naming a credential Secret was refused for another reason: ' + r.stderr[:200])
+        if kubectl(state, '-n', NS, 'get', 'machineallocationhandoff', assignment_name(foreign), check=False).returncode == 0:
+            raise SystemExit('the refused credential handoff exists')
+        faults['foreign-credential'] = {'handoff': assignment_name(foreign), 'refused': 'unknown field spec.credential'}
         faults['source'] = {'handoff': source['metadata']['name'], 'operation': assignment['operation'], 'fence': assignment['fence']}
         write(private, faults)
         return
     faults = json.loads(private.read_text())
     if action == 'verify':
-        record = {'observedAt': now(), 'source': faults['source'], 'faults': {'duplicate': faults['duplicate']}}
+        record = {'observedAt': now(), 'source': faults['source'], 'faults': {'duplicate': faults['duplicate'], 'foreign-credential': faults['foreign-credential']}}
+        # No Role at the site grants any Secret but the one of the Device its
+        # own assignment names; another Device's credential is never granted.
+        for role in get(state, '-n', CREDENTIALS, 'get', 'roles')['items']:
+            names = [n for rule in role.get('rules', []) for n in rule.get('resourceNames', [])]
+            if credential_name(OTHER_DEVICE) in names:
+                raise SystemExit('Role %s grants another Device\'s credential Secret' % role['metadata']['name'])
         for fault in JOB_FAULTS:
             name = faults[fault]['handoff']
             j, ps = job(state, name), pods(state, name)

@@ -61,8 +61,8 @@ check('Redfish worker mounts no credential and no host path', not any('secret' i
 check('Redfish worker reads per-Device credentials from the credential namespace', env.get('FLEET_SITE_CREDENTIALS_NAMESPACE') == 'fleet-site-credentials'
       and env.get('FLEET_SITE_PROJECT') == 'provider', str(env.keys()))
 creds = resources.get('workerCredentialRoles', {}).get('template', {})
-check("per-operation credential Role gets only the handoff's one named Secret, in the credential namespace", creds.get('metadata', {}).get('namespace') == 'fleet-site-credentials'
-      and creds.get('rules') == [{'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': ['${handoff.spec.credential}'], 'verbs': ['get']}], json.dumps(creds)[:300])
+check("per-operation credential Role gets only the Secret of the Device its assignment names, in the credential namespace", creds.get('metadata', {}).get('namespace') == 'fleet-site-credentials'
+      and creds.get('rules') == [{'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': ["${'bmc-' + '%x'.format([hash.sha256(json.unmarshal(handoff.spec.assignmentJSON).device)]).substring(0, 20)}"], 'verbs': ['get']}], json.dumps(creds)[:300])
 binding = resources.get('workerCredentialBindings', {}).get('template', {})
 check('per-operation credential RoleBinding binds its own Role to its own ServiceAccount', binding.get('metadata', {}).get('namespace') == 'fleet-site-credentials'
       and binding.get('roleRef', {}).get('name') == '${"w-" + handoff.metadata.name}'
@@ -101,6 +101,10 @@ policy = next((d for d in base if d.get('kind') == 'ValidatingAdmissionPolicy' a
 text = json.dumps(policy)
 check('admission denies libvirt mounts and URIs for kro worker Jobs', "startsWith('/run/fleet-libvirt')" in text and "FLEET_LIBVIRT_URI" in text)
 identity = json.dumps(next((d for d in base if d.get('kind') == 'ValidatingAdmissionPolicy' and d['metadata']['name'] == 'fleet-site-kro-worker-identity'), {}))
+handoff_crd = documents((root / 'config/multiplane/coordination/crd.yaml').read_text())[0]
+handoff_spec = handoff_crd['spec']['versions'][0]['schema']['openAPIV3Schema']['properties']['spec']
+check('no handoff field names a credential Secret, so a forged one is refused', 'credential' not in handoff_spec.get('properties', {})
+      and not handoff_spec.get('x-kubernetes-preserve-unknown-fields'), json.dumps(handoff_spec)[:300])
 check('admission confines credential Roles to get on one named Secret', 'fleet-site-credentials' in identity and "r.verbs == ['get']" in identity and 'size(r.resourceNames) == 1' in identity
       and "r.verbs == ['list']" not in identity)
 check('BMC identity in the base', any(d.get('kind') == 'ServiceAccount' and d['metadata']['name'] == 'fleet-site-bmc' for d in base))
