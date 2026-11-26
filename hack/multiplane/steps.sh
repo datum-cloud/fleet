@@ -262,6 +262,14 @@ JSON
   py record-job-interrupt "$state" "$old_job" "$new_job" "$(cat "$state/interrupt-job-pod-before")" "$pod"
   printf 'interrupt-job: running worker Job deleted mid-install; kro recreated it under a new UID for the same operation\n'
   ;;
+ complete)
+  # The Flux qualification suite: the one install runs to completion without
+  # interruption before the GitOps scenarios disturb its surroundings.
+  name=$(cat "$state/install-handoff")
+  site wait --for=condition=Complete "job/w-$name" --timeout=30m >/dev/null
+  cell -n "$ns" wait --for=jsonpath='{.status.observation.result.phase}'=Succeeded machineallocationhandoff "$name" --timeout=5m >/dev/null
+  printf 'complete: the worker Job completed the install and the observer published Succeeded\n'
+  ;;
  resume)
   name=$(cat "$state/install-handoff")
   site wait --for=condition=Complete "job/w-$name" --timeout=20m >/dev/null
@@ -409,7 +417,7 @@ PY
   ;;
  boot-denials)
   # Probe the boot Service from the runtime Pod: the same path firmware uses.
-  # The origin comes from the Flux-owned Service, which drift repair recreated.
+  # The origin comes from the Flux-owned Service.
   origin="http://$(site get service fleet-site-boot -o jsonpath='{.spec.clusterIP}'):8080"
   [[ $origin == "$(site get handoffdispatcher dispatcher -o jsonpath='{.status.bootOrigin}')" ]] || { echo 'dispatcher boot origin differs from the boot Service' >&2; exit 1; }
   if [[ $(cat "$state/site-provider" 2>/dev/null) == redfish ]]; then

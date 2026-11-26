@@ -9,10 +9,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 umask 077
-usage() { echo 'usage: hack/multiplane/run.sh [--redfish] [--preflight-only] [--bootstrap] [--keep] [--leave-running] [--skip-readiness-tests]' >&2; exit 64; }
-preflight_only=0 bootstrap=() keep=0 leave=0 skip_tests=() provider=libvirt
+usage() { echo 'usage: hack/multiplane/run.sh [--redfish] [--suite acceptance|flux-qualification] [--preflight-only] [--bootstrap] [--keep] [--leave-running] [--skip-readiness-tests]' >&2; exit 64; }
+preflight_only=0 bootstrap=() keep=0 leave=0 skip_tests=() provider=libvirt suite=acceptance
 for arg in "$@"; do
+ if [[ ${want_suite:-} == 1 ]]; then
+  [[ $arg == acceptance || $arg == flux-qualification ]] || usage
+  suite=$arg want_suite=0
+  continue
+ fi
  case "$arg" in
+  # The Flux GitOps behavior scenarios are their own suite (flux-qualification.sh).
+  --suite) want_suite=1 ;;
   --preflight-only) preflight_only=1 ;;
   --bootstrap) bootstrap=(--bootstrap) ;;
   --keep) keep=1 ;;
@@ -24,12 +31,14 @@ for arg in "$@"; do
   *) usage ;;
  esac
 done
+[[ ${want_suite:-} != 1 ]] || usage
 export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker FLEET_SITE_PROVIDER=$provider
 harness=(python3 hack/multiplane/harness.py)
 state=$(mktemp -d "${FLEET_MULTIPLANE_STATE_ROOT:-/tmp}/fleet-multiplane.XXXXXX")
 mkdir -m 0700 "$state/evidence"
 printf '%s\n' "$provider" > "$state/site-provider"
-printf 'Private run state: %s\nShareable evidence: %s/evidence\nSite provider: %s\n' "$state" "$state" "$provider"
+printf '%s\n' "$suite" > "$state/suite"
+printf 'Private run state: %s\nShareable evidence: %s/evidence\nSite provider: %s\nSuite: %s\n' "$state" "$state" "$provider" "$suite"
 
 finish() {
  code=$1
@@ -145,7 +154,9 @@ ph coordinator 120 bash hack/multiplane/coordinator.sh start "$state"
 ph flux-site 1200 "${flux[@]}" publish "$state" --revision 2 --site off --purpose 'shared site services and dispatcher, dispatch disabled' --cluster cell --cluster hub --cluster platform --timeout 900
 ph site-install 900 bash hack/multiplane/site.sh check "$state"
 ph flux-verify 300 "${flux[@]}" verify "$state"
-if [[ $provider == redfish ]]; then
+if [[ $suite == flux-qualification ]]; then
+ bash hack/multiplane/flux-qualification.sh "$state" & wait $!
+elif [[ $provider == redfish ]]; then
  bash hack/multiplane/acceptance-redfish.sh "$state" & wait $!
 else
  bash hack/multiplane/acceptance.sh "$state" & wait $!
@@ -158,4 +169,4 @@ else
 fi
 # The last act of a completed run: only now may the result record passed.
 : > "$state/completed"
-printf 'Local topology/PXE acceptance (%s provider) passed. Production authority and physical hardware remain unqualified.\n' "$provider"
+printf 'Local %s suite (%s provider) passed. Production authority and physical hardware remain unqualified.\n' "$suite" "$provider"

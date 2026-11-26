@@ -21,6 +21,13 @@ tasks:
     cmds:
       - ./hack/multiplane/run.sh --redfish {{.CLI_ARGS}}
 
+  multiplane:flux-qualification:
+    desc: "The Flux qualification suite: the same fresh topology and Flux bootstrap, one completed installation, then the GitOps behavior scenarios (graph lifecycle, drift, restart, fail-closed, retention) the acceptance runs no longer repeat (same exit codes)."
+    env:
+      FLEET_MULTIPLANE_INOTIFY: '1024'
+    cmds:
+      - ./hack/multiplane/run.sh --suite flux-qualification {{.CLI_ARGS}}
+
   multiplane:preflight:
     desc: Check local prerequisites and implementation readiness without creating resources.
     env:

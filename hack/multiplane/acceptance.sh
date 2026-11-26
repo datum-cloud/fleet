@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Ordered acceptance phases over an already bootstrapped topology. Each phase is
 # bounded and recorded in evidence/phases.jsonl; the first failure stops the run.
+# The GitOps behavior scenarios that test packaging run in their own suite,
+# flux-qualification.sh; flux-retention stays, as it guards Fleet's journal volume.
 set -euo pipefail
 umask 077
 state=${1:?private state directory}
@@ -30,10 +32,6 @@ step heal 1200
 ph install 900 "$host" install --config "$state/acceptance.json"
 ph install-repeat 900 "$host" install --config "$state/acceptance.json"
 step lifecycle 900
-flux graph-lifecycle 1200
-flux drift 900
-flux restart 1200
-flux fail-closed 1500
 flux retention 1500
 ph reflection-faults 900 python3 hack/multiplane/reflection-faults.py "$state"
 ph release 1200 "$host" release --config "$state/acceptance.json"

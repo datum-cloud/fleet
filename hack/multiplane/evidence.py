@@ -88,11 +88,9 @@ markers = ('custody-crd-rules: the provider project API refused every forbidden 
            'recovery-mismatch: refused', 'deadline-settled: the release wipe was admitted', 'rebuild-unverified: custody rebuilt Unverified',
            'probe-unallocatable: no eligible capacity while custody is Unverified', 'rebuild-verified: custody Verified',
            'wrong-location: denied before allocation', 'Flux restored the binding', 'flux-verify: 3 clusters Ready', 'cell Flux applied the dispatch revision',
-           'Flux restored consumer-a', 'Flux on every cluster Ready at the current revision', 'flux-drift: helm-controller restored kro',
-           'recreated the shared boot Service at its fixed ClusterIP and restored the observer', 'flux-graph-lifecycle: deleting the dispatcher removed only kro per-operation objects',
-           'kro RBAC and admission confine it to per-operation objects',
-           'flux-restart: every Flux controller', 'flux-fail-closed: absent kro chart digest', 'shared site layers applied it with services untouched',
-           'flux-retention: removing the volume claim', 'flux-final: platform, hub and cell Ready', 'one writer per site object') + tuple(m + ': management rejected' for m in REFLECTION_FAULTS)
+           'Flux restored consumer-a', 'Flux on every cluster Ready at the current revision',
+           'kro RBAC and admission confine it to per-operation objects', 'flux-retention: removing the volume claim',
+           'flux-final: platform, hub and cell Ready', 'one writer per site object') + tuple(m + ': management rejected' for m in REFLECTION_FAULTS)
 if REDFISH:
     markers += ('bmc-upstream: DMTF Redfish-Interface-Emulator 1.2.2 archive verified', 'bmc-self-test: upstream emulator and lab adapter self-test passed',
                 'redfish-enroll: synthetic per-Device BMC credentials', 'redfish-baseline: both lab target disks present', 'redfish-discovery-faults: real emulator discovery',
@@ -409,8 +407,10 @@ if pv['spec']['persistentVolumeReclaimPolicy'] != 'Retain' or sorted(deployments
     fail('site volume or Flux-owned shared Deployments not as expected')
 (ev / 'kubernetes-execution.json').write_text(json.dumps(execution, indent=2, sort_keys=True) + '\n')
 arch = out('docker', 'info', '--format', '{{.Architecture}}').strip()
-flux_files = ('flux-verify.json', 'flux-initial.json', 'flux-rbac-restore.json', 'flux-drift.json', 'flux-restart.json', 'flux-fail-closed.json', 'flux-retention.json', 'flux-final.json',
-              'flux-graph-lifecycle.json', 'flux-ownership-final.json', 'kro-rbac.json')
+# The GitOps behavior scenarios run in the Flux qualification suite, which
+# verifies its own evidence; these files are the acceptance suite's.
+flux_files = ('flux-verify.json', 'flux-initial.json', 'flux-rbac-restore.json', 'flux-retention.json', 'flux-final.json', 'flux-ownership-final.json',
+              'kro-rbac.json')
 for name in flux_files:
     if not (ev / name).exists():
         fail('missing Flux evidence ' + name)
@@ -433,7 +433,7 @@ for name in FAILURE_SCENARIOS:
 summary = {
     # The evidence verified; the run is not finished. Only result.json, which
     # run.sh writes last, records whether the run passed.
-    'schemaVersion': 3, 'acceptance': 'evidence-verified',
+    'schemaVersion': 3, 'suite': 'acceptance', 'acceptance': 'evidence-verified',
     'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'prefix': prefix,
     'qualification': {'nativeMiloProjectAPIs': True, 'actualKarmadaDeliveryAndReflection': True, 'realLocalPXE': True,
                       'kubernetesJobExecution': True, 'actualKroController': True, 'fluxReconciledServices': True,
@@ -445,7 +445,8 @@ summary = {
         'interruptedWorkerResumedExactOperation': interrupt,
         'kubernetesExecution': 'kubernetes-execution.json',
         'gitops': {'sourceRevisions': [{k: r[k] for k in ('revision', 'digest', 'purpose', 'gitHead', 'contentSumsSHA256', 'files')} for r in flux_revisions],
-                   'evidence': list(flux_files), 'siteImage': write_env['siteImage']},
+                   'evidence': list(flux_files), 'siteImage': write_env['siteImage'],
+                   'behaviorScenarios': 'not run; the Flux qualification suite runs them'},
         'installerStarts': starts,
         'reflectionRejections': list(REFLECTION_FAULTS),
         'failureScenarios': failure_scenarios,

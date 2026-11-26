@@ -198,7 +198,7 @@ with tempfile.TemporaryDirectory() as tmp:
         check('no docker process launch in site execution: ' + name, '-vm' not in text and 'cell.pid' not in text)
     sequence = (root / 'hack/multiplane/acceptance.sh').read_text()
     order = ['custody-crd-rules', 'import-inert', 'staff-access', 'allocate', 'verify-contention', 'tenant-isolation', 'admit-install', 'await-delivery', 'partition', 'dispatch', 'interrupt-pod', 'interrupt-job', 'resume',
-             'worker-rbac', 'partition-readiness', 'heal', 'install', 'install-repeat', 'lifecycle', 'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention',
+             'worker-rbac', 'partition-readiness', 'heal', 'install', 'install-repeat', 'lifecycle', 'retention',
              'reflection-faults', 'release', 'release-status-a',
              'reuse', 'reuse-status', 'delivery-faults', 'deadline-admit', 'machine-delete', 'deadline-hold', 'release-b', 'deadline-settled', 'release-status-b',
              'rebuild', 'wrong-location', 'boot-denials', 'flux-final', 'evidence']
@@ -209,6 +209,54 @@ with tempfile.TemporaryDirectory() as tmp:
                     'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention'):
             continue
         check('step implemented: ' + name, ' %s)' % name in steps or '|%s)' % name in steps or ' %s|' % name in steps)
+
+    # The GitOps behavior scenarios that test packaging run only in the Flux
+    # qualification suite, after one completed installation; every Fleet phase,
+    # flux-retention (the journal volume) among them, stays in both modes.
+    qualification = (root / 'hack/multiplane/flux-qualification.sh').read_text()
+    redfish_sequence = (root / 'hack/multiplane/acceptance-redfish.sh').read_text()
+    check('retention stays in both acceptance modes', 'flux retention ' in sequence and 'flux retention ' in redfish_sequence and 'retention' not in qualification)
+    check('acceptance evidence requires retention', "'flux-retention.json'" in evidence and "'flux-retention: removing the volume claim'" in evidence)
+    for name in ('graph-lifecycle', 'drift', 'restart', 'fail-closed'):
+        check('acceptance evidence does not require ' + name, 'flux-%s' % name not in evidence, name)
+        check('scenario only in qualification: ' + name, 'flux %s ' % name in qualification and ' %s ' % name not in sequence and ' %s ' % name not in redfish_sequence)
+        check('scenario evidence checked: ' + name, "'%s':" % name in (root / 'hack/multiplane/flux.py').read_text().split('SCENARIOS = ')[1].split('\n\n')[0])
+    q_order = ['allocate', 'admit-install', 'await-delivery', 'dispatch', 'complete', 'install', 'graph-lifecycle', 'drift', 'restart', 'fail-closed',
+               'release', 'release-status-a', 'flux-final', 'evidence']
+    q_positions = [qualification.find(' ' + name + ' ') for name in q_order]
+    check('qualification phase order', all(p >= 0 for p in q_positions) and q_positions == sorted(q_positions), str(list(zip(q_order, q_positions))))
+    check('step implemented: complete', ' complete)' in steps)
+    check('flux-final stays in both acceptance modes', 'step flux-final ' in sequence and 'step flux-final ' in redfish_sequence)
+    for arg in (['--suite'], ['--suite', 'bogus'], ['--suite', '--redfish']):
+        r = subprocess.run(['bash', str(root / 'hack/multiplane/run.sh'), *arg], text=True, capture_output=True, env=base)
+        check('run usage: ' + ' '.join(arg), r.returncode == 64, str(r.returncode))
+    # The qualification suite's own evidence check, over synthetic state.
+    s = state()
+    (s / 'prefix').write_text('fleet-mp-0000aaaa\n')
+    (s / 'evidence').mkdir(exist_ok=True)
+    flux_py = (root / 'hack/multiplane/flux.py').read_text()
+    scenario_lines = [l.split("': '", 1)[1].rstrip("',}") for l in flux_py.split('SCENARIOS = ')[1].split('\n\n')[0].splitlines()]
+    q_markers = ['flux-verify: 3 clusters Ready', 'cell Flux applied the dispatch revision', 'complete: the worker Job completed the install', 'install: verified',
+               'release: verified', 'release-status-a: consumer-a Machine Released', 'flux-final: platform, hub and cell Ready', 'one writer per site object']
+    for name in ['flux-verify', 'flux-initial', 'flux-ownership-final', 'flux-graph-lifecycle', 'flux-drift', 'flux-restart', 'flux-fail-closed']:
+        (s / 'evidence' / (name + '.json')).write_text('{}')
+    rev = {'revision': 3, 'digest': 'sha256:' + '1' * 64, 'purpose': 'enable dispatch', 'gitHead': 'f' * 40, 'contentSumsSHA256': '2' * 64, 'files': 1, 'fluxRevision': 'r3@sha256:1'}
+    (s / 'flux-revisions.json').write_text(json.dumps([rev]))
+    snap = {'sources': {'flux-system/fleet-gitops': {'artifactRevision': 'r3@sha256:1'}}, 'kustomizations': {'flux-system/fleet-cluster': {'lastAppliedRevision': 'r3@sha256:1', 'suspend': False}}}
+    (s / 'evidence/flux-final.json').write_text(json.dumps({c: snap for c in ('platform', 'hub', 'cell')}))
+    def qualify():
+        return subprocess.run([sys.executable, str(root / 'hack/multiplane/flux.py'), 'qualification-evidence', str(s)], text=True, capture_output=True, env=base, cwd=root)
+    (s / 'phases.log').write_text('\n'.join(q_markers + [m for m in scenario_lines if m != scenario_lines[1]]))
+    r = qualify()
+    check('qualification evidence refuses a missing scenario', r.returncode != 0 and not (s / 'evidence/summary.json').exists(), r.stdout + r.stderr[-300:])
+    (s / 'phases.log').write_text('\n'.join(q_markers + scenario_lines))
+    r = qualify()
+    summary = json.loads((s / 'evidence/summary.json').read_text()) if (s / 'evidence/summary.json').exists() else {}
+    check('qualification evidence verifies', r.returncode == 0 and summary.get('suite') == 'flux-qualification' and summary.get('acceptance') == 'evidence-verified'
+          and summary.get('scenarios') == ['drift', 'fail-closed', 'graph-lifecycle', 'restart'], r.stdout + r.stderr[-400:])
+    s = state(); (s / 'suite').write_text('flux-qualification\n')
+    r = run(['result', '--state', str(s), '--exit-code', '1'])
+    check('result records the suite', json.loads((s / 'evidence/result.json').read_text())['suite'] == 'flux-qualification' and 'suite=flux-qualification' in r.stdout, r.stdout)
 
     # The custody CRD rule phase proves the provider project API enforces the
     # CEL rules in its own namespace, then deletes every object it created, in
