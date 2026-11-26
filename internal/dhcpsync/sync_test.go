@@ -79,6 +79,7 @@ type fakeSite struct {
 	mu      sync.Mutex
 	feed    bootnet.Feed
 	served  int
+	refuse  bool
 	reports []bootnet.Applied
 }
 
@@ -107,6 +108,10 @@ func (f *fakeSite) handler(t *testing.T) http.Handler {
 			b, _ := io.ReadAll(q.Body)
 			if json.Unmarshal(b, &a) != nil || a.Verify() != nil {
 				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if f.refuse {
+				w.WriteHeader(http.StatusConflict)
 				return
 			}
 			f.reports = append(f.reports, a)
@@ -170,8 +175,8 @@ func TestAppliesReservationIntoItsContainingSubnetThenReports(t *testing.T) {
 		t.Fatalf("report did not echo the served feed's issue time: %+v", reports)
 	}
 	// An unchanged feed, though issued later, is neither re-applied nor
-	// re-reported; a restarted
-	// Kea (new pid) lost its reservations and is re-applied without a report.
+	// re-reported before the refresh interval; a restarted Kea (new pid)
+	// lost its reservations and is re-applied without a report.
 	if err := s.Cycle(ctx); err != nil || kea.applied() != 2 || len(site.reported()) != 2 {
 		t.Fatalf("unchanged feed churned: %v", err)
 	}
@@ -184,6 +189,50 @@ func TestAppliesReservationIntoItsContainingSubnetThenReports(t *testing.T) {
 	site.set(t)
 	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 3 || site.reported()[2].Feed.Serves(reservation.MAC, reservation.Address) {
 		t.Fatalf("withdrawal not applied and reported: %v", err)
+	}
+}
+
+// TestAnUnchangedFeedIsReportedAgainAfterTheRefreshInterval: an instance
+// whose applied revision never changes still reports, once per refresh
+// interval, the feed with the issue time of its latest fetch, without
+// applying it again. A refused report is sent again on the next cycle.
+func TestAnUnchangedFeedIsReportedAgainAfterTheRefreshInterval(t *testing.T) {
+	s, kea, site := newSyncer(t)
+	ctx := context.Background()
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return now }
+	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 1 {
+		t.Fatalf("first report: %v", err)
+	}
+	now = now.Add(DefaultRefresh - time.Second)
+	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 1 {
+		t.Fatalf("re-reported before the refresh interval: %v, %d", err, len(site.reported()))
+	}
+	now = now.Add(time.Second)
+	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 2 || kea.applied() != 1 {
+		t.Fatalf("not re-reported after the refresh interval, or re-applied: %v, %d reports, %d applies", err, len(site.reported()), kea.applied())
+	}
+	if r := site.reported(); r[1].Feed.Revision != r[0].Feed.Revision || !r[1].Feed.Issued.Equal(issuedBase.Add(3*time.Second)) {
+		t.Fatalf("refreshed report = %+v, want the latest fetch's issue time", r[1].Feed)
+	}
+	// The site refuses a report: it is not believed sent.
+	site.mu.Lock()
+	site.refuse = true
+	site.mu.Unlock()
+	now = now.Add(DefaultRefresh)
+	if err := s.Cycle(ctx); err == nil {
+		t.Fatal("a refused report was not an error")
+	}
+	site.mu.Lock()
+	site.refuse = false
+	site.mu.Unlock()
+	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 3 || !site.reported()[2].Feed.Issued.Equal(issuedBase.Add(5*time.Second)) {
+		t.Fatalf("refused report not sent again with the next fetch: %v, %+v", err, site.reported())
+	}
+	// A changed revision is reported at once, inside the interval.
+	site.set(t, reservation)
+	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 4 || !site.reported()[3].Feed.Has(reservation.MAC, reservation.Address) {
+		t.Fatalf("changed revision not reported at once: %v", err)
 	}
 }
 

@@ -29,14 +29,29 @@ type Syncer struct {
 	Socket   string // Kea's unix control socket
 	Base     string // Kea configuration without Fleet reservations
 	HTTP     *http.Client
+	// Refresh is the least time between two reports of one unchanged
+	// revision. It defaults to DefaultRefresh.
+	Refresh time.Duration
+	Now     func() time.Time
 
 	applied, reported string
+	reportedIssued    time.Time
+	reportedAt        time.Time
 	pid               float64
 }
 
+// DefaultRefresh is how often an unchanged applied feed is reported again.
+const DefaultRefresh = 30 * time.Second
+
 // Cycle fetches the feed, applies it when it changed or Kea restarted, and
-// reports a newly applied revision. Any failure leaves the last report as the
-// site's evidence; nothing is reported that Kea did not accept.
+// reports it: at once when the applied revision changed, and otherwise again
+// with the issue time of this fetch once Refresh has passed since the last
+// report. The site proves withdrawal only from a report of a feed issued
+// after the admission was published, so an instance whose applied revision
+// never changed, because it never fetched the reservation, must still report
+// a fresh issue. Any failure leaves the last report as the site's evidence,
+// and a refused report is sent again on a later cycle; nothing is reported
+// that Kea did not accept.
 func (s *Syncer) Cycle(ctx context.Context) error {
 	feed, err := s.fetch(ctx)
 	if err != nil {
@@ -60,14 +75,26 @@ func (s *Syncer) Cycle(ctx context.Context) error {
 		}
 		s.applied, s.pid = feed.Revision, pid
 	}
-	if s.reported == s.applied {
+	now := s.now()
+	refresh := s.Refresh
+	if refresh <= 0 {
+		refresh = DefaultRefresh
+	}
+	if s.reported == s.applied && (!feed.Issued.After(s.reportedIssued) || now.Sub(s.reportedAt) < refresh) {
 		return nil
 	}
 	if err := s.report(ctx, feed); err != nil {
 		return err
 	}
-	s.reported = feed.Revision
+	s.reported, s.reportedIssued, s.reportedAt = feed.Revision, feed.Issued, now
 	return nil
+}
+
+func (s *Syncer) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
 }
 
 func (s *Syncer) request(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
