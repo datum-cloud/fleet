@@ -83,7 +83,12 @@ func checkNetworkBoot(ctx context.Context, admission *Admission, kind, bootInter
 	if network == nil {
 		return nil
 	}
-	if err := bootaddress.Verify(ctx, admission.Reader, admission.Operation, kind, *network); err != nil {
+	if err := bootaddress.Verify(ctx, admission.Reader, admission.Operation, kind, *network); errors.Is(err, bootaddress.ErrUnreachable) {
+		// Fail closed without deciding: the claim may still hold the address.
+		refusal := refuse(ReasonBootAddress, "waiting: IPAM could not be read to check the boot address claim %s", network.AddressClaim.Name)
+		refusal.Retry = true
+		return refusal
+	} else if err != nil {
 		return refuse(ReasonBootAddress, "the boot address claim %s does not hold %s", network.AddressClaim.Name, network.Address)
 	}
 	return nil

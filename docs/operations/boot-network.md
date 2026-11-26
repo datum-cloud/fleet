@@ -75,8 +75,39 @@ coordinator writes a hold before it copies `OutcomeUnknown` to the operation.
 
 A claim whose operation does not exist yet stays, so a requester that crashed
 between the claim and the operation still finds it. The roles grant each
-requester `create`, `get`, `list` and `delete` on `ipclaims`, and the
-coordinator `get`.
+requester `create`, `get`, `list` and `delete` on `ipclaims` and `get` and
+`list` on `ipallocations`, and the coordinator `get` on `ipclaims`.
+
+### IPAM's claim contract
+
+Fleet follows the contract IPAM implements, not only its documentation:
+
+- IPAM binds a claim, or refuses it, in the create response. A second create
+  under the same name is a `409 Conflict` with a `ClaimExists` cause, so the
+  requester reads the existing claim instead.
+- A full pool is a `507` with an `Exhausted` cause and, when one pool ran out,
+  its name. The requester reports `IPAM has no free provisioning address` and
+  creates no operation. A `400` refusal, such as an unknown class, is reported
+  as `IPAM refused the boot address claim` with IPAM's message, and also
+  creates no operation. Neither leaves a claim.
+- IPAM rewrites the claim's class and family to the resolved class, keeps its
+  labels, and stamps its owner as the provider project. Fleet reads only the
+  labels and the bound address.
+- Fleet uses a claim only if IPAM stored it with reclaim policy `Delete`,
+  which overrides the class's. A retaining claim, or a `409` such as
+  `AllocationRetained`, is refused: its address would outlive the claim.
+- A delete releases the address and removes the claim and its allocation in
+  one transaction. IPAM ignores delete preconditions, so the claim's name and
+  labels are the guard. A release counts only when a read finds the claim gone
+  and no `IPAllocation` names it; because the claim deletes its allocation, a
+  claim found gone after a lost delete response was released. A failed delete
+  leaves the claim and its address held until a later call.
+- A claim read at admission that fails for any reason but its absence leaves
+  the operation `Pending` with `BootAddressUnavailable`, never admitted, and
+  the coordinator checks it again. This holds for every creator: a staff
+  operation waits the same way and is cancelled only by staff expiry, so a
+  brief IPAM outage fails no installation or wipe. A missing, rebound or recreated claim fails
+  the operation.
 
 ## Enrollment
 

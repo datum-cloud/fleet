@@ -333,7 +333,7 @@ func (e *env) ipClaim(name, operation, kind, phase, address string) *unstructure
 	claim.SetNamespace("default")
 	claim.SetName(name)
 	claim.SetLabels(map[string]string{bootaddress.OperationLabel: operation, bootaddress.KindLabel: kind})
-	claim.Object["spec"] = map[string]any{"className": "provisioning"}
+	claim.Object["spec"] = map[string]any{"className": "provisioning", "reclaimPolicy": "Delete"}
 	if err := e.admin.Create(e.ctx, claim); err != nil {
 		e.t.Fatal(err)
 	}

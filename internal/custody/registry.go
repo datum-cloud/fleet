@@ -194,6 +194,10 @@ type ApplyContext struct {
 type Refusal struct {
 	Reason  string
 	Message string
+	// Retry means the check could not decide, for example because a service
+	// it reads is unreachable. The operation stays Pending and is checked
+	// again; it is never admitted on an undecided check.
+	Retry bool
 }
 
 func (r *Refusal) Error() string { return r.Reason + ": " + r.Message }

@@ -95,16 +95,18 @@ for role in roles:
   # reads custody and Devices only to skip taken capacity.
   rules+=[{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch','create','delete']},{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations/status'],'verbs':['get','update']},
           {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations'],'verbs':['get','list','watch','create']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecustodies'],'verbs':['get','list','watch']}]
-  # Each requester claims and releases its own boot addresses; the release
-  # controller reads custody to keep a held operation's claim.
+  # Each requester claims and releases its own boot addresses, and reads
+  # allocations to confirm a release; the release controller reads custody
+  # to keep a held operation's claim.
   claims={'apiGroups':['ipam.miloapis.com'],'resources':['ipclaims'],'verbs':['get','list','create','delete']}
-  if synced:rules.append(claims)
+  allocations={'apiGroups':['ipam.miloapis.com'],'resources':['ipallocations'],'verbs':['get','list']}
+  if synced:rules+=[claims,allocations]
   components={
    'coordinator':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list','watch']},{'apiGroups':['fleet.datumapis.com'],'resources':['devicecustodies'],'verbs':['get','list','watch','create','update','delete']},
                   {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations','devicewipes','devicerecoveries'],'verbs':['get','list','watch','delete']},
                   {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations/status','devicewipes/status','devicerecoveries/status'],'verbs':['get','update']},
                   {'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch']}]+([{'apiGroups':['ipam.miloapis.com'],'resources':['ipclaims'],'verbs':['get']}] if synced else []),
-   'release':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicewipes'],'verbs':['get','create']}]+([claims,{'apiGroups':['fleet.datumapis.com'],'resources':['devicecustodies'],'verbs':['get']}] if synced else []),
+   'release':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicewipes'],'verbs':['get','create']}]+([claims,allocations,{'apiGroups':['fleet.datumapis.com'],'resources':['devicecustodies'],'verbs':['get']}] if synced else []),
    'discovery':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices/status'],'verbs':['get','update']}],
    # Staff create recoveries and read inventory and custody, nothing else.
    # The coordinator treats every unconfigured creator as staff.

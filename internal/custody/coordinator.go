@@ -570,7 +570,13 @@ type decision struct {
 	row     Rule
 	settles *ops.OperationReference
 	extra   map[string]string
+	// retry means a check could not decide; the operation waits and is
+	// checked again.
+	retry bool
 }
+
+// undecidedRetry is how soon a check that could not decide runs again.
+const undecidedRetry = 5 * time.Second
 
 // admit evaluates pending candidates and admits at most one with a single
 // conditional custody update.
@@ -593,6 +599,7 @@ func (c *Coordinator) admit(ctx context.Context, custody *ops.DeviceCustody, dev
 	superseded := c.superseded(candidates, custody)
 	queued := false
 	changed := false
+	var requeue time.Duration
 	for _, candidate := range candidates {
 		operation, kind := candidate.operation, candidate.kind
 		var d decision
@@ -617,8 +624,11 @@ func (c *Coordinator) admit(ctx context.Context, custody *ops.DeviceCustody, dev
 			return Outcome{}, err
 		}
 		changed = changed || wrote
+		if d.retry {
+			requeue = undecidedRetry
+		}
 	}
-	return Outcome{Changed: changed}, nil
+	return Outcome{Changed: changed, RequeueAfter: requeue}, nil
 }
 
 // superseded returns pending operations replaced by a newer one of the same
@@ -775,6 +785,12 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 	// that is not recorded, is the one reported.
 	if kind.Check != nil {
 		if refusal := c.Registry.declaredRefusal(kind.GVK.Kind, settleHookKind(kind, row, custody), kind.Check(ctx, admission)); refusal != nil {
+			// An undecided check is not a refusal: every row waits for
+			// it, and a staff operation still expires if it is never
+			// admitted.
+			if refusal.Retry {
+				return decision{phase: ops.PhasePending, reason: refusal.Reason, message: refusal.Message, retry: true}
+			}
 			return fail(refusal.Reason, "%s", refusal.Message)
 		}
 	}
