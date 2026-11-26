@@ -1,4 +1,5 @@
-# The feed, reachable only inside the site cluster.
+# The feed, over TLS only. An environment exposes it to the cluster that
+# runs the site's DHCP instances, which authenticate with the site's token.
 apiVersion: v1
 kind: Service
 metadata:

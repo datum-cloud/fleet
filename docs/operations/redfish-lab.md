@@ -345,7 +345,9 @@ exercises boot addresses, reservations and Kea end to end in the lab:
   `NET_BIND_SERVICE`. It listens on `fleetpxe0` with a raw socket, has no pool,
   and keeps its leases on the site volume. The synchronizer reports as the one
   fixed instance `lab-kea`, so a restarted runtime Pod never strands a
-  withdrawal.
+  withdrawal. In production Kea runs in a central cluster behind the site's
+  relays; the lab has no WAN link or relay, so its Kea sits on the emulated
+  site's bridge instead. The feed, the reports and the gates are the same.
 - **Feed.** The `dhcp-feed` container from `config/site/dhcp/feed` runs beside
   the boot service over TLS. Redfish enrollment generates the synchronizer
   token and a self-signed feed key per run, as Secrets in `fleet-site`, never

@@ -1,8 +1,10 @@
 # A synthetic base configuration. Network operations owns the real one: the
 # site's provisioning subnet and gateway, the relay addresses Kea accepts, and
-# the boot options. Kea listens on every node address, so the relay filter
-# limits it to the site's relays. It has no pools, so Kea answers only
-# reserved MACs, and Kea 2.6 requires the control socket under /var/run/kea.
+# the boot options. Kea answers only relayed requests on a UDP socket, and the
+# relay filter limits it to the site's relays. It has no pools, so Kea answers
+# only reserved MACs, and Kea 2.6 requires the control socket under
+# /var/run/kea. Firmware boots over UEFI HTTP boot, never TFTP: requests from
+# the HTTP boot vendor class get the boot service's loader URL.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -15,13 +17,19 @@ data:
       "control-socket": {"socket-type": "unix", "socket-name": "/var/run/kea/kea4-ctrl-socket"},
       "lease-database": {"type": "memfile", "persist": false},
       "host-reservation-identifiers": ["hw-address"],
+      "authoritative": false,
+      "client-classes": [{
+        "name": "HTTPClient",
+        "test": "substring(option[60].hex,0,10) == 'HTTPClient'",
+        "option-data": [{"name": "vendor-class-identifier", "data": "HTTPClient"}],
+        "boot-file-name": "http://192.0.2.80:8080/pxe/ipxe.efi"
+      }],
       "valid-lifetime": 600,
       "subnet4": [{
         "id": 1,
         "subnet": "198.51.100.0/24",
         "relay": {"ip-addresses": ["198.51.100.1"]},
         "option-data": [{"name": "routers", "data": "198.51.100.1"}],
-        "next-server": "192.0.2.80",
         "boot-file-name": "http://192.0.2.80:8080/pxe/boot.ipxe"
       }]
     }}

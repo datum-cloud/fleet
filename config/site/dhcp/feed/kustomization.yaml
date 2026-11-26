@@ -1,6 +1,6 @@
 # The reservation feed: a container beside the boot service, which reads the
 # site store and writes the applied reports beside the boot evidence, and a
-# Service reachable only inside the site cluster. The environment supplies
+# Service. The site's central DHCP instances reach it over TLS only. The environment supplies
 # the Secrets fleet-site-dhcp-sync (key token) and fleet-site-dhcp-feed-tls
 # (tls.crt, tls.key, ca.crt), never in Git. The Kea component and the
 # Redfish lab's synchronized DHCP both use it.

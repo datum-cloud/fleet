@@ -8,6 +8,10 @@ reservation for that NIC and address only while the operation's network boot
 is admitted, and DHCP reports what it applied. Those reports are the evidence
 that the boot was reachable and that the reservation was later withdrawn.
 
+DHCP does not run at the site. Each site's Kea instances and their
+synchronizers run in a central cluster, reached by the site's relays over the
+site's WAN link, and firmware boots over UEFI HTTP boot, never TFTP.
+
 This page describes the implemented contract. The design is the [server
 networking enhancement][server-networking], which replaces the enrollment values
 of the [boot network enhancement](../enhancements/boot-network/README.md). What
@@ -136,7 +140,7 @@ The worker gates its effects on reports:
    reservation, so a later success settles the hold safely.
 
 An instance that went silent while serving keeps the outcome unknown. After
-making sure its server no longer answers, an operator at the site retires it:
+making sure its server no longer answers, an operator retires it for the site:
 
 ```sh
 FLEET_BOOT_EVIDENCE=/var/lib/fleet-boot fleet-multiplane dhcp-retire -instance dhcp-a
@@ -145,6 +149,15 @@ FLEET_BOOT_EVIDENCE=/var/lib/fleet-boot fleet-multiplane dhcp-retire -instance d
 A later report from a retired instance counts again. Report times are the boot
 service's clock and admission times the worker's, so both roles must run on
 synchronized clocks.
+
+These gates do not depend on where Kea runs. The feed comes only from the
+site's admitted operations at the Device's stored fence, and every report
+names its instance and the exact feed it applied. A WAN outage between the
+site and the central cluster makes the instances silent: an operation waiting
+to power on does not, and one whose reservation an instance last reported
+serving stays unknown until that instance reports it withdrawn or is retired.
+An instance that cannot reach the feed keeps its last applied configuration,
+which its last report shows.
 
 ## Feed and reports
 
@@ -189,32 +202,50 @@ fails the cycle; it is never dropped. A restarted Kea loses its reservations
 and fails closed until the next cycle re-applies them. Before scaling down,
 drain the instance being removed until it reports an empty feed.
 
-## Site DHCP service
+## DHCP service
 
-The `config/site/dhcp/component` Kustomize component deploys the service at a
-synchronized site:
+Two Kustomize components deploy a synchronized site's DHCP service, to two
+places:
 
-| Object | What it runs |
-| --- | --- |
-| `dhcp-feed` container in `fleet-site-boot` | The feed, beside the boot service, so it reads the site store read-only and appends reports to the boot evidence on the same volume |
-| `fleet-site-dhcp-feed` Service | The feed on `:8081`, inside the site cluster only |
-| `fleet-site-dhcp` StatefulSet | At least two Pods, one per node labeled `fleet.datumapis.com/dhcp-host=true`, with host networking. Each runs ISC's Kea DHCPv4 image, pinned by digest, and the synchronizer, sharing Kea's control socket on an `emptyDir` that Kea's command makes `0750`, as Kea 2.6 requires. The Pod name is the instance name |
-| `fleet-site-dhcp` PodDisruptionBudget | One instance down at a time |
+| Component | Object | What it runs |
+| --- | --- | --- |
+| `config/site/dhcp/feed`, beside the site's boot service | `dhcp-feed` container in `fleet-site-boot` | The feed, so it reads the site store read-only and appends reports to the boot evidence on the same volume |
+| | `fleet-site-dhcp-feed` Service | The feed on `:8081`, over TLS only. The environment exposes it to the central cluster |
+| `config/site/dhcp/component`, in a central cluster, once per site | `fleet-site-dhcp` StatefulSet | At least two Pods without host networking, with stable names, so a replaced Pod keeps its instance name and its last report. Each runs ISC's Kea DHCPv4 image, pinned by digest, answering relayed requests on a UDP socket, and the synchronizer, sharing Kea's control socket on an `emptyDir` that Kea's command makes `0750`, as Kea 2.6 requires. The Pod name is the instance name |
+| | `fleet-site-dhcp` Service | One load-balancer address on UDP 67 in front of every instance, with local traffic policy and client-IP affinity. The site's relays forward to it |
+| | `fleet-site-dhcp` PodDisruptionBudget | One instance down at a time |
+
+Any instance may answer a request. Each applies the same feed through its own
+synchronizer and reports under its own name, so the power-on gate needs one
+instance serving and the withdrawal gate covers every instance that ever
+reported. An instance that has not applied a reservation yet stays silent,
+because Kea is not authoritative, and the firmware retries; client-IP affinity
+keeps one relay's exchange on one instance.
+
+Kea answers each relayed request at the relay address the request carries, on
+UDP 67. Its reply leaves through the cluster's egress, which is not always the
+load-balancer address the relay forwarded to, so the cluster must route to
+every relay address and each relay must accept replies from the cluster's
+egress address. Every boot at the site then depends on the central cluster and
+the site's WAN link.
 
 The environment supplies, never in Git:
 
-- the `fleet-site-dhcp-sync` Secret, with the synchronizer token under `token`;
+- the `fleet-site-dhcp-sync` Secret in both places, with the synchronizer
+  token under `token`;
 - the `fleet-site-dhcp-feed-tls` Secret, with `tls.crt` and `tls.key` for the
-  name `fleet-site-dhcp-feed.fleet-site.svc` and the issuing `ca.crt`;
+  feed's name beside the boot service, and the issuing `ca.crt` in both places;
 - the `fleet-site-dhcp-base` ConfigMap from network operations, with
   `kea-dhcp4.conf`; and
-- the `FLEET_SITE_IMAGE` and `FLEET_DHCP_SYNC_IMAGE` substitutions.
+- the `FLEET_SITE_IMAGE`, `FLEET_DHCP_SYNC_IMAGE` and `FLEET_DHCP_FEED_URL`
+  substitutions.
 
 The base configuration names the site's provisioning subnet and gateway, the
-relay addresses Kea accepts, and the boot options. Kea listens on every
-address of its node, so the subnet's relay filter is what limits it to the
-site's relays. The configuration has no pools, so Kea answers only reserved
-MACs, and its control socket is the synchronizer's.
+relay addresses Kea accepts, and the boot options. Kea answers only relayed
+requests, so the subnet's relay filter is what limits it to the site's relays.
+It has no pools, so Kea answers only reserved MACs, and its control socket is
+the synchronizer's. It sets no TFTP server: firmware in the HTTP boot vendor
+class gets the boot service's loader URL.
 
 Both Secrets are required: without them the boot Pod, and so the boot service,
 does not start. The feed loads its certificate and the synchronizer its CA
@@ -235,15 +266,20 @@ Fleet configures no switch, router or relay. A synchronized site needs:
 3. Spanning tree edge mode on server ports.
 4. LACP fallback to an individual port where the boot NIC is a bond member,
    with a fallback timeout below the DHCP timeout of every qualified firmware.
-5. On the provisioning subnet's gateway, a DHCP relay to the address of every
-   node labeled as a DHCP host, with the gateway as the relay address.
-6. Routes and filters so the provisioning subnet reaches only the DHCP hosts and
-   the boot service, and no customer network, BMC network or internet.
+5. On the provisioning subnet's gateway, a DHCP relay to the instances'
+   load-balancer address in the central cluster, with the gateway as the relay
+   address, accepting replies from the cluster's egress address.
+6. Routes and filters over the site's WAN link so the provisioning subnet
+   reaches only the central DHCP and boot service addresses, and no customer
+   network, BMC network or other internet address, and so the central cluster
+   reaches every relay address.
 7. DHCP snooping and source address binding on the provisioning VLAN.
 8. LLDP on server ports.
 9. Switch and port names in Fleet's cable records that match the network
    owner's.
 10. The base configuration above.
+11. Firmware that boots over UEFI HTTP boot, with its DHCP timeout measured
+    against the round trip over the WAN link during qualification.
 
 ## Boot network lab
 
@@ -262,7 +298,7 @@ with a chosen MAC asks for an address. It passes only if:
 
 The lab proves the feed, the synchronizer and reservation-gated answers in a
 real DHCP exchange. With no relay, its Kea answers the client directly on a raw
-socket, where a site's Kea answers relays on a UDP socket. It has no VLAN, no
+socket, where the central Kea answers relays on a UDP socket. It has no VLAN, no
 switch and no firmware, so it proves none of the network operations
 requirements.
 
@@ -274,9 +310,10 @@ requirements.
 | Boot NIC from Device inventory through the admission snapshot; enrollment without MACs or addresses | Implemented; unit tested |
 | Reservation feed, authenticated applied reports, served and withdrawn gates over every reservation of the Device, instance retirement | Implemented; unit tested with a fake BMC and synchronizer, including a silent instance |
 | Kea synchronizer: containing-subnet placement, restart re-apply, report only after Kea accepted | Implemented; unit tested against a fake Kea control socket |
-| Feed over TLS, Kea and the synchronizer as a site component | Implemented; render checked in CI, and reservation-gated answers proved by the boot network lab with real Kea. Not deployed at a site, and relayed requests are not exercised |
+| Feed over TLS beside the boot service; Kea and the synchronizer as a central component, several instances behind one UDP 67 load balancer | Implemented; render checked in CI, and reservation-gated answers proved by the boot network lab with real Kea. Not deployed, and relayed requests across a WAN are not exercised |
+| Boot service and boot files in the central cluster, serving a UEFI HTTP boot loader | Proposed; the boot service runs in the site's boot Pod beside the site store, and serves the iPXE script but no EFI loader yet |
 | Relay, provisioning VLAN, isolation and LACP fallback at a site | Network operations; see the [server networking enhancement][server-networking] |
-| Telling firmware what to boot in synced mode (Redfish `HttpBootUri` for UEFI HTTP Boot, or a DHCP boot-file option) | Proposed; the Redfish worker still arms `Pxe`, which relies on site DHCP for the boot file |
+| Telling firmware what to boot in synced mode (Redfish `HttpBootUri` for UEFI HTTP boot, or the DHCP boot-file option above) | Proposed; the Redfish worker still arms `Pxe`, and the base configuration's HTTP boot class names a loader the boot service does not serve yet |
 | DHCPv6 reservations | Proposed; the feed accepts IPv6, the Kea DHCPv4 synchronizer and the claim reject it |
 | Lab acceptance in synced mode | Implemented as `run.sh --redfish --synced-dhcp`, with a synthetic IPAM stand-in; not yet run. See the [Redfish lab](redfish-lab.md#synchronized-dhcp-mode) |
 

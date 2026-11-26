@@ -3,12 +3,16 @@ kind: ServiceAccount
 metadata: {name: fleet-site-dhcp, namespace: fleet-site}
 automountServiceAccountToken: false
 ---
-# Kea DHCPv4 instances. Each Pod's name is its stable instance name in the
-# applied reports. Pods use host networking on nodes that network operations
-# labels as DHCP hosts, one per node. The base configuration's relay filter
-# limits Kea to relayed requests from the site's relays. Scale down only after the instance being removed
-# reports an empty feed: an instance removed while serving keeps its
-# operations' outcomes unknown until an operator retires it.
+# One site's Kea DHCPv4 instances, in a central cluster rather than at the
+# site. Each Pod's name is its stable instance name in the applied reports,
+# so a StatefulSet, never a Deployment: a replaced Pod keeps its name and its
+# last report. The instances share one load-balancer address on UDP 67
+# (below), which the site's relays reach over the WAN link. Kea answers only relayed
+# requests, on a UDP socket, so it needs no host networking; the base
+# configuration's relay filter limits it to the site's relays. Scale down
+# only after the instance being removed reports an empty feed: an instance
+# removed while serving keeps its operations' outcomes unknown until an
+# operator retires it.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -26,9 +30,6 @@ spec:
     spec:
       serviceAccountName: fleet-site-dhcp
       automountServiceAccountToken: false
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
-      nodeSelector: {fleet.datumapis.com/dhcp-host: "true"}
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -41,10 +42,12 @@ spec:
           # Kea 2.6 refuses a control socket directory that is not 0750,
           # and an emptyDir is created 0777.
           command: [sh, -c, 'chmod 0750 /var/run/kea && exec kea-dhcp4 -c /etc/kea-base/kea-dhcp4.conf']
+          ports:
+            - {name: dhcp, containerPort: 67, protocol: UDP}
           securityContext:
             runAsUser: 0
             allowPrivilegeEscalation: false
-            capabilities: {drop: [ALL], add: [NET_BIND_SERVICE, NET_RAW]}
+            capabilities: {drop: [ALL], add: [NET_BIND_SERVICE]}
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {memory: 256Mi}
@@ -56,7 +59,9 @@ spec:
           imagePullPolicy: IfNotPresent
           command:
             - /fleet-dhcp-sync
-            - -feed=https://fleet-site-dhcp-feed.fleet-site.svc:8081
+            # The site's feed, over TLS only, wherever the site's boot Pod
+            # runs.
+            - -feed=${FLEET_DHCP_FEED_URL}
             - -token-file=/etc/fleet-dhcp/token
             - -ca-file=/etc/fleet-dhcp-tls/ca.crt
             - -kea-socket=/var/run/kea/kea4-ctrl-socket
@@ -98,3 +103,25 @@ spec:
   maxUnavailable: 1
   selector:
     matchLabels: {app.kubernetes.io/name: fleet-site-dhcp}
+---
+# One load-balancer address on UDP 67 for all of the site's instances, which
+# the site's relays forward to. Any instance may answer a request. Each
+# instance applies the same feed through its own synchronizer and reports it
+# under its own stable name, so the withdrawal gate covers every instance;
+# an instance that has not applied a reservation yet stays silent, because
+# Kea is not authoritative, and the firmware retries. Client-IP affinity
+# keeps one relay's exchange on one instance. Kea replies to the relay
+# address in each request; the site's relays must accept replies from the
+# cluster's egress address.
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-site-dhcp
+  namespace: fleet-site
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  sessionAffinity: ClientIP
+  selector: {app.kubernetes.io/name: fleet-site-dhcp}
+  ports:
+    - {name: dhcp, port: 67, targetPort: 67, protocol: UDP}
