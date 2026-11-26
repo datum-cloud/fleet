@@ -2,6 +2,8 @@ module go.datum.net/fleet
 
 go 1.26.4
 
+toolchain go1.27.4
+
 require (
 	go.datum.net/network-services-operator v0.28.5-0.20260925153938-d7fdc43f8524
 	go.miloapis.com/milo v0.36.9
