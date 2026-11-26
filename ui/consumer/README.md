@@ -80,7 +80,7 @@ host-absolute URLs that break behind the portal's `/api/plugins/<slug>/` proxy.
 pnpm build:fixtures && pnpm preview
 
 # cloud-portal, in another terminal
-PORTAL_PLUGINS='metal-datumapis-com=http://localhost:7780' AUTH_DEV_TOKEN_EXCHANGE=1 bun run dev
+PORTAL_PLUGINS='metal-datumapis-com=http://localhost:7780' AUTH_DEV_TOKEN_EXCHANGE=1 pnpm dev
 ```
 
 If cloud-portal's `.env` already sets `PORTAL_PLUGINS_JSON` for other plugins,
