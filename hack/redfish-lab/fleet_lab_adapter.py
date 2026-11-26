@@ -12,6 +12,8 @@ authentication. This module, loaded into the same Flask process, adds only:
     persistent libvirt domain per System, and PowerState read from libvirt;
   * Boot source override (Pxe or Hdd, Once) persisted like BMC NVRAM and
     consumed when the domain is started;
+  * LastResetTime, persisted per System and moved forward each time a reset
+    starts the domain;
   * an append-only request audit log (no bodies, no credentials);
   * bounded, one-shot lab fault injection driven by a state file.
 
@@ -141,6 +143,8 @@ class Lab:
         for sid in targets:
             self.nvram.setdefault(sid, {'BootSourceOverrideEnabled': 'Disabled', 'BootSourceOverrideTarget': 'None'})
         atomic_write(self.nvram_path, self.nvram)
+        self.reset_path = os.path.join(state, 'last-reset.json')
+        self.last_reset = read_json(self.reset_path, {})
 
     def ensure(self, sid):
         """Define lost libvirt objects (the runtime Pod's libvirt config is not durable)."""
@@ -181,6 +185,9 @@ class Lab:
             self.save()
         virsh('define', '/dev/stdin', input=domain_xml(t, boot))
         virsh('start', t['domain'])
+        # The System came out of a reset now, as a BMC reports it.
+        self.last_reset[sid] = now()
+        atomic_write(self.reset_path, self.last_reset)
         return boot
 
 
@@ -210,7 +217,9 @@ def create_app(targets, state, credentials, boot_ip):
 
     def publish(sid, power=None):
         m = cs.members[sid]
-        m['UUID'] = targets[sid]['uuid']
+        current = faults.read()
+        # Lab fault: the BMC reports another server, as after a board swap.
+        m['UUID'] = current.get('swapIdentity', {}).get(sid, targets[sid]['uuid'])
         m['Name'] = targets[sid]['name']
         m['Manufacturer'] = 'DMTF Redfish Interface Emulator (Fleet lab adapter)'
         m['Model'] = 'libvirt/QEMU lab target'
@@ -219,7 +228,11 @@ def create_app(targets, state, credentials, boot_ip):
             'BootSourceOverrideEnabled@Redfish.AllowableValues': list(BOOT_ENABLED)})
         if power:
             m['PowerState'] = power
-        hidden = set(faults.read().get('hideResetTypes', []))
+        if sid in lab.last_reset and sid not in current.get('hideResetTime', []):
+            m['LastResetTime'] = lab.last_reset[sid]
+        else:
+            m.pop('LastResetTime', None)
+        hidden = set(current.get('hideResetTypes', []))
         rai.members[sid]['Parameters'][0]['AllowableValues'] = [v for v in RESET_TYPES if v not in hidden]
 
     for sid in targets:
@@ -317,6 +330,13 @@ def create_app(targets, state, credentials, boot_ip):
         if kind not in allowed:
             return error(400, 'unsupported ResetType')
         domain = targets[sid]['domain']
+        withheld = take('dropRequest', lambda f: f.get('system') == sid and f.get('resetType') == kind)
+        if withheld:
+            # Lab fault: the request is withheld past the client timeout and
+            # never applied.
+            request_context.detail = {'resetType': kind, 'effect': 'none', 'fault': 'drop-request'}
+            time.sleep(min(int(withheld.get('seconds', 45)), 120))
+            return error(503, 'lab BMC dropped the request')
         try:
             with LOCK:
                 power = lab.power(sid)
@@ -330,7 +350,7 @@ def create_app(targets, state, credentials, boot_ip):
         except LibvirtError as e:
             return error(503, 'lab hardware unavailable: %s' % e)
         request_context.detail = {'resetType': kind, 'effect': effect}
-        drop = take('dropResponse', lambda f: f.get('system') == sid and f.get('resetType') == kind) if effect.startswith('started') else None
+        drop = take('dropResponse', lambda f: f.get('system') == sid and f.get('resetType') == kind) if effect != 'none' else None
         if drop:
             # Lab fault: the effect is applied, the response is withheld past the client timeout.
             request_context.detail['fault'] = 'drop-response-after-effect'
@@ -365,12 +385,20 @@ def fault_cli(args):
         faults.update(lambda v: v.__setitem__('rejectAuth', int(args[1])))
     elif args[:1] == ['hide-reset'] and len(args) == 2:
         faults.update(lambda v: v.setdefault('hideResetTypes', []).append(args[1]))
+    elif args[:1] == ['drop-request'] and len(args) in (4, 5):
+        skip = int(args[4]) if len(args) == 5 else 0
+        faults.update(lambda v: v.setdefault('dropRequest', []).append({'system': args[1], 'resetType': args[2], 'seconds': int(args[3]), 'skip': skip}))
+    elif args[:1] == ['swap-identity'] and len(args) == 3:
+        faults.update(lambda v: v.setdefault('swapIdentity', {}).__setitem__(args[1], args[2]))
+    elif args[:1] == ['hide-reset-time'] and len(args) == 2:
+        faults.update(lambda v: v.setdefault('hideResetTime', []).append(args[1]))
     elif args == ['clear']:
         faults.update(lambda v: v.clear())
     elif args == ['show']:
         pass
     else:
-        raise SystemExit('usage: fault drop-response SYSTEM RESETTYPE SECONDS [SKIP] | reject-auth COUNT | hide-reset TYPE | clear | show')
+        raise SystemExit('usage: fault drop-response SYSTEM RESETTYPE SECONDS [SKIP] | drop-request SYSTEM RESETTYPE SECONDS [SKIP]'
+                         ' | swap-identity SYSTEM UUID | hide-reset-time SYSTEM | reject-auth COUNT | hide-reset TYPE | clear | show')
     print(json.dumps(faults.read(), sort_keys=True))
 
 
