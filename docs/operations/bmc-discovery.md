@@ -274,7 +274,34 @@ status:
           sku: TAG0001
           powerState: "On"
           networkInterfaces:
-            - {id: NIC.1, macAddress: "00:00:5e:00:53:01", linkStatus: LinkUp, speedMbps: 25000}
+            - {id: NIC.1, macAddress: "02:00:00:00:01:01", linkStatus: LinkUp, speedMbps: 25000}
+      chassis:
+        - id: "1"
+          networkAdapters:
+            - id: NIC.Slot.1
+              manufacturer: Example NIC Vendor
+              model: Example 2x25G
+              serialNumber: SYNTHETIC-NIC-0001
+              partNumber: EX-0001
+              firmwareVersion: 1.2.3
+              ports:
+                - id: "1"
+                  physicalPortNumber: "1"
+                  macAddresses: ["02:00:00:00:01:01"]
+                  linkStatus: LinkUp
+                  speedMbps: 25000
+                  serviceLabel: NIC Slot 1 Port 1
+                  lldp:
+                    chassisID: "02:00:00:00:ff:01"
+                    chassisIDSubtype: MacAddr
+                    portID: Ethernet1/1
+                    portIDSubtype: IfName
+                    systemName: example-switch-01
+                    managementAddressIPv4: 192.0.2.250
+                - id: "2"
+                  physicalPortNumber: "2"
+                  macAddresses: ["02:00:00:00:01:02"]
+                  linkStatus: LinkDown
   conditions: [...]
 ```
 
@@ -282,8 +309,10 @@ Each observation (`tls`, `serviceRoot`, `inventory`) carries its own time and
 endpoint and is replaced only by a newer observation of the same kind. A
 failed or refused attempt updates `lastAttemptAt` and the conditions and
 keeps every earlier observation. Inventory is all or nothing: a partially read
-BMC keeps the previous inventory. MACs are lowercase colon form and UUIDs
-lowercase canonical. Power state is an observation; discovery never changes it.
+BMC keeps the previous inventory. Network adapters are the exception; see
+[What is read](#what-is-read). MACs are
+lowercase colon form and UUIDs lowercase canonical. Power state is an
+observation; discovery never changes it.
 
 ### Conditions
 
@@ -291,7 +320,7 @@ lowercase canonical. Power state is an observation; discovery never changes it.
 | --- | --- |
 | `Reachable` | `ServiceRootRead`; `ServiceRootUnreadable` (handshake completed, anonymous read failed); False `ConnectFailed`, `EndpointInvalid` |
 | `Authenticated` | `CredentialAccepted`; False `PinNotApproved`, `PinMismatch`, `CredentialRejected`, `CredentialConflict`, `CredentialInvalid`; Unknown `NotAttempted`, `ReadFailed` |
-| `Discovered` | `InventoryRead`; False for a definite refusal (the reason above); Unknown `Unreachable`, `ReadFailed` |
+| `Discovered` | `InventoryRead`; `NetworkAdapterReadFailed` (the rest of the inventory was read); False for a definite refusal (the reason above); Unknown `Unreachable`, `ReadFailed` |
 | `IdentityMatched` | `Matched`; False `SystemUUIDMismatch`, `SerialMismatch`, `ModelMismatch`; Unknown `NotObserved`, `StaleObservation`, `AmbiguousSystem` |
 | `PublicKeyUnique` | `Unique`; False `SharedPublicKey`; Unknown `NotObserved` |
 
@@ -311,8 +340,8 @@ is `StaleObservation`.
 - A completed attempt, including a definite refusal, is repeated after
   `interval`. A rejected credential is not retried sooner, so discovery cannot
   lock out the BMC account.
-- An uncertain attempt (no handshake, an interrupted read) is retried after
-  `retryBase`, doubling to `interval`.
+- An uncertain attempt (no handshake, an interrupted read, a failed network
+  adapter read) is retried after `retryBase`, doubling to `interval`.
 - A Secret change or an endpoint change triggers an attempt at once.
 - No endpoint is contacted twice within `minContactInterval`, whatever the
   trigger.
@@ -330,8 +359,57 @@ collection. Documents are decoded leniently: only the named properties are
 read, so an off-schema vendor property elsewhere in a document does not fail
 the read.
 
-Not read: `Chassis`, `NetworkAdapters` and their ports, firmware inventory,
-sessions. Basic authentication is used; no Redfish session is created.
+Then every Chassis (up to 16) with its `NetworkAdapters`, and each adapter's
+`Ports`. When an adapter's `Ports` yields no port, because the link or the
+collection is absent, empty or 404, the older `NetworkPorts` is read instead. At most 16
+adapters in total and 32 ports per adapter, 64 in total, are read, so one
+inventory issues a bounded number of requests whatever the BMC reports; each
+request has its own `requestTimeout`. Chassis without adapters are left out
+of status.
+
+Network adapters are optional. A missing `Chassis` or `NetworkAdapters`
+collection, or a 404 on a Chassis, adapter, port collection or port, leaves
+that part out. Any other failure there, such as a 5xx or a request timeout,
+drops every adapter from this inventory and records the failure class in
+`networkAdapterReadFailure`; the rest of the inventory is still written.
+Adapters from an earlier inventory are not carried forward, because port
+evidence must come from the observation it is dated with. A rejected
+credential or pin, a link outside its collection or owner, or an interrupted
+attempt fails the whole inventory as for Managers and Systems. An
+off-schema property type in an adapter or port document reads as absent.
+
+For each port, status records:
+
+| Field | Redfish source |
+| --- | --- |
+| `physicalPortNumber` | `Port.PortId`, else `NetworkPort.PhysicalPortNumber` |
+| `macAddresses` | `Port.Ethernet.AssociatedMACAddresses` and `NetworkPort.AssociatedNetworkAddresses`, 48-bit MACs only (a Fibre Channel WWN is dropped), lowercase colon form, up to 16 |
+| `linkStatus` | `LinkStatus` as reported (`LinkUp` on a Port, `Up` on a NetworkPort) |
+| `speedMbps` | `Port.CurrentSpeedGbps` × 1000, else `NetworkPort.CurrentLinkSpeedMbps` |
+| `serviceLabel` | `Port.Location.PartLocation.ServiceLabel` |
+| `lldp` | `Port.Ethernet.LLDPReceive`: chassis and port ID with their subtypes, system name, management IPv4 and IPv6 address |
+
+LLDP chassis and port IDs are kept as the BMC reports them; the subtype says
+whether one is a MAC, an interface name or something else, and discovery does
+not reinterpret it. `lldp` is omitted when the BMC reports no chassis ID, port
+ID or system name, which covers firmware that does not populate
+`LLDPReceive`, a port with no link partner, and a `NotTransmitted` subtype
+with empty values. A `NetworkPort` has no LLDP data. An unspecified management
+address (`0.0.0.0`, `::`) is dropped.
+
+### Joining a port to an inventory interface
+
+Inventory names a Device's interfaces by cabling (`ETH0`, `ETH1`, ...), each
+with a Cable to a known switch port, while the BMC lists ports and
+EthernetInterfaces in its own order. The two are matched by MAC, never by
+name: an operator finds the observed port whose `lldp.systemName` and
+`lldp.portID` are the switch and port a Cable lands on, and takes that port's
+`macAddresses` as the MACs of the interface on the other end of the Cable.
+Discovery does not record or apply that mapping, and never writes
+`spec.interfaces`.
+
+Not read: firmware inventory, `NetworkDeviceFunctions`, sessions. Basic
+authentication is used; no Redfish session is created.
 
 ## Tests
 
@@ -344,6 +422,10 @@ sessions. Basic authentication is used; no Redfish session is created.
 - the decision table: no credential is sent without an approved pin, on a
   mismatch, or with a conflicting or malformed Secret;
 - that a failed attempt keeps earlier observations and reports Unknown;
+- network adapter ports: Ports with and without `LLDPReceive`, a
+  NetworkPorts-only service, a missing NetworkAdapters collection, a 404 on
+  one port, a server error failing the read, links outside their owner, and
+  the adapter and port request bounds;
 - identity comparison, including SKU, model prefixes, UUID selection and
   stale endpoints, and that it never changes spec;
 - that the reconciler writes only `devices/status` and never spec, skips
@@ -368,6 +450,12 @@ sessions. Basic authentication is used; no Redfish session is created.
   `/redfish/v1/`. That is reported as `ServiceRootUnreadable` and does not
   block the pinned read.
 - **Key rotation.** There is no workflow beyond re-approving a new pin.
-- **NetworkAdapters.** MACs from `Chassis/NetworkAdapters` are not read.
+- **NetworkAdapters and LLDP.** Whether vendor firmware populates
+  `NetworkAdapters`, `Ports` and in particular `Ethernet.LLDPReceive` is
+  unverified, as is how it fills the subtypes. Some services publish adapters
+  outside `Chassis`, which is not read. A BMC that answers 403 on an adapter
+  resource is reported as `CredentialRejected` and one that answers 5xx as
+  `ReadFailed`; either way the whole inventory read is lost, not just the
+  adapters.
 - **Credential lifecycle.** Secrets are long-lived; rotation and a broker are
   out of scope.

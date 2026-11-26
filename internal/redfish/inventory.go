@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 
@@ -23,6 +24,12 @@ const (
 type Inventory struct {
 	Managers []Manager
 	Systems  []InventorySystem
+	// Chassis are the Chassis that report network adapters, with each
+	// adapter's physical ports and the LLDP neighbor each port received.
+	Chassis []Chassis
+	// AdapterErr is the outcome class of a failed network adapter read.
+	// Chassis is then empty; the rest of the inventory is complete.
+	AdapterErr error
 }
 
 // Manager is one Redfish Manager: the BMC itself.
@@ -55,18 +62,24 @@ type NetworkInterface struct {
 }
 
 // Inventory reads the service root, every Manager and every ComputerSystem
-// with their EthernetInterfaces. It issues GETs only and never follows an
+// with their EthernetInterfaces, and every Chassis's NetworkAdapters with
+// their ports. It issues GETs only and never follows an
 // action, so it cannot change power, boot or any setting. Documents are
 // decoded leniently: only the named properties are read, and a vendor
 // property with an off-schema type elsewhere in a document is ignored. Any
-// failed read fails the whole observation; nothing partial is returned.
+// failed read fails the whole observation; nothing partial is returned. The
+// one exception is network adapters, which are optional: a missing
+// collection, or a 404 on a Chassis, adapter or port, leaves that part out,
+// and any other failure there is returned in AdapterErr with no adapters.
+// A rejected credential or pin, or a link outside the service, still fails
+// the whole read.
 func (c *Client) Inventory(ctx context.Context) (Inventory, error) {
 	api, err := c.connect(ctx)
 	if err != nil {
 		return Inventory{}, err
 	}
 	var root struct {
-		Systems, Managers link
+		Systems, Managers, Chassis link
 	}
 	if err := getJSON(api, schemas.DefaultServiceRoot, &root); err != nil {
 		return Inventory{}, err
@@ -121,6 +134,16 @@ func (c *Client) Inventory(ctx context.Context) (Inventory, error) {
 				Model: doc.Model, SerialNumber: doc.SerialNumber, SKU: doc.SKU, PowerState: doc.PowerState, NetworkInterfaces: nics})
 		}
 	}
+	chassis, err := chassisAdapters(api, root.Chassis.ID)
+	switch {
+	// An interrupted read is unfinished, not an adapter failure.
+	case errors.Is(err, ErrUnauthorized), errors.Is(err, ErrPinMismatch), errors.Is(err, ErrIdentity), err != nil && ctx.Err() != nil:
+		return Inventory{}, err
+	case err != nil:
+		inv.AdapterErr = err
+	default:
+		inv.Chassis = chassis
+	}
 	return inv, nil
 }
 
@@ -156,7 +179,7 @@ func members(api *gofish.APIClient, collection string, limit int) ([]string, err
 		}
 		path, query, _ := strings.Cut(next, "?")
 		if _, err := cleanPath(path); err != nil || (path != base && !strings.HasPrefix(path, base+"/")) {
-			return nil, errors.New("redfish: collection page outside the collection")
+			return nil, fmt.Errorf("%w: collection page outside the collection", ErrIdentity)
 		}
 		if query != "" {
 			path += "?" + query
@@ -172,7 +195,7 @@ func members(api *gofish.APIClient, collection string, limit int) ([]string, err
 		for _, m := range doc.Members {
 			p, err := cleanPath(m.ID)
 			if err != nil || !strings.HasPrefix(p, base+"/") {
-				return nil, errors.New("redfish: collection member outside the collection")
+				return nil, fmt.Errorf("%w: collection member outside the collection", ErrIdentity)
 			}
 			if len(out) < limit {
 				out = append(out, p)
@@ -189,7 +212,7 @@ func interfaces(api *gofish.APIClient, owner, collection string) ([]NetworkInter
 		return nil, nil
 	}
 	if p, err := cleanPath(collection); err != nil || !strings.HasPrefix(p, owner+"/") {
-		return nil, errors.New("redfish: EthernetInterfaces outside its owner")
+		return nil, fmt.Errorf("%w: EthernetInterfaces outside its owner", ErrIdentity)
 	}
 	paths, err := members(api, collection, maxInventoryInterfaces)
 	if err != nil {
