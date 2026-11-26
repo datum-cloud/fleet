@@ -503,6 +503,19 @@ func (a *Allocator) bootNetwork(ctx context.Context, source bootaddress.Source, 
 	if err := source.Attach(ctx, allocation, operation); err != nil {
 		return nil, err
 	}
+	// A release pass may have found no claim and cleared the record while
+	// the claim was being made, so the record is written again from the
+	// stored allocation before any address is handed out.
+	if _, ok := source.(bootaddress.Lingering); ok {
+		stored := &fleetv1.MachineAllocation{}
+		if err := a.Provider.Get(ctx, client.ObjectKeyFromObject(allocation), stored); err != nil {
+			return nil, err
+		}
+		if err := a.recordBootClaim(ctx, stored, source, kind, operation); err != nil {
+			return nil, err
+		}
+		*allocation = *stored.DeepCopyObject().(*fleetv1.MachineAllocation)
+	}
 	return source.Claim(ctx, allocation.Name, operation)
 }
 

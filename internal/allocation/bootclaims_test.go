@@ -208,3 +208,64 @@ func TestARecordOnlyCheckNeverDeletesAClaimBeingMade(t *testing.T) {
 		t.Fatalf("record = %+v, want the entry kept", allocation.Status.BootClaims)
 	}
 }
+
+// clearBeforeClaim clears the allocation's boot claim record right before
+// the first NSO claim is created, as a release pass that found no claim yet
+// would.
+type clearBeforeClaim struct {
+	client.Client
+	once  *sync.Once
+	clear func()
+}
+
+func (c clearBeforeClaim) Create(ctx context.Context, object client.Object, opts ...client.CreateOption) error {
+	if _, ok := object.(*networkingv1.NetworkInterfaceClaim); ok {
+		c.once.Do(c.clear)
+	}
+	return c.Client.Create(ctx, object, opts...)
+}
+
+// TestTheRecordIsRestoredBeforeTheAddress clears the record between the
+// requester's first record and its claim's creation. The requester records
+// the claim again once it is attached, before it reads the address, so an
+// address is handed out only for a recorded claim.
+func TestTheRecordIsRestoredBeforeTheAddress(t *testing.T) {
+	e, _ := nsoEnv(t)
+	r := newRealizer(e.admin)
+	go r.run(e.ctx)
+	allocation, err := e.allocator.Allocate(e.ctx, e.request(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := allocation.Name + "-install-raced"
+	healthy := e.allocator.Provider
+	e.allocator.Provider = clearBeforeClaim{Client: healthy, once: &sync.Once{}, clear: func() {
+		stored := &fleetv1.MachineAllocation{}
+		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(allocation), stored); err != nil {
+			t.Error(err)
+			return
+		}
+		stored.Status.BootClaims = nil
+		if err := e.admin.Status().Update(e.ctx, stored); err != nil {
+			t.Error(err)
+		}
+	}}
+	recorded := func() bool {
+		t.Helper()
+		stored := &fleetv1.MachineAllocation{}
+		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(allocation), stored); err != nil {
+			t.Fatal(err)
+		}
+		return slices.ContainsFunc(stored.Status.BootClaims, func(record fleetv1.BootClaimRecord) bool { return record.Operation == name })
+	}
+	e.until("the boot address is handed out", func() bool {
+		input, err := e.allocator.bootNetwork(e.ctx, e.allocator.installClaims(), allocation, "DeviceInstallation", name)
+		if err != nil && !errors.Is(err, bootaddress.ErrPending) {
+			t.Fatal(err)
+		}
+		if input != nil && !recorded() {
+			t.Fatalf("an address was handed out for a claim the record does not name")
+		}
+		return input != nil
+	})
+}
