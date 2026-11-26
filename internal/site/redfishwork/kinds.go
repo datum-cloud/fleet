@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
+	"go.datum.net/fleet/internal/bootnet"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/redfish"
 	"go.datum.net/fleet/internal/site"
@@ -124,6 +126,9 @@ func (k Installation) Check(_ context.Context, work *site.Work) *custody.Refusal
 	if spec.Bootstrap != nil {
 		return &custody.Refusal{Reason: custody.ReasonBootstrapUnsupported, Message: "bootstrap payloads need the sealed store, which is not implemented"}
 	}
+	if refusal := k.checkBootNetwork(work, spec.BootNetwork); refusal != nil {
+		return refusal
+	}
 	return checkTarget(work, spec.TargetDisks, installPhases)
 }
 
@@ -138,7 +143,45 @@ func (k Wipe) Check(_ context.Context, work *site.Work) *custody.Refusal {
 	if conn(work).Target.DiskBytes <= 0 {
 		return &custody.Refusal{Reason: ReasonTargetDisks, Message: "the site's enrollment records no disk size to verify the wipe against"}
 	}
+	if refusal := k.checkBootNetwork(work, spec.BootNetwork); refusal != nil {
+		return refusal
+	}
 	return checkTarget(work, spec.TargetDisks, wipePhases)
+}
+
+// checkBootNetwork requires a boot address exactly at a synchronized site,
+// and the boot NIC's MAC from Device inventory, which the admission snapshot
+// carries.
+func (c Config) checkBootNetwork(work *site.Work, network *ops.BootNetworkInput) *custody.Refusal {
+	switch {
+	case c.Synced && network == nil:
+		return &custody.Refusal{Reason: custody.ReasonBootNetworkRequired, Message: "this site's DHCP is synchronized, so a network boot needs a boot address"}
+	case !c.Synced:
+		if refusal := custody.NoBootNetwork(network); refusal != nil {
+			return refusal
+		}
+	}
+	if _, ok := bootnet.NormalizeMAC(work.Snapshot.BootMACAddress); !ok {
+		return &custody.Refusal{Reason: ReasonUnsupportedTarget, Message: "the admission snapshot records no boot NIC MAC"}
+	}
+	if network != nil {
+		if address, err := netip.ParseAddr(network.Address); err != nil || !address.Is4() || address.String() != network.Address {
+			return &custody.Refusal{Reason: ReasonInputs, Message: "the boot address is not one IPv4 host address"}
+		}
+	}
+	return nil
+}
+
+// bootAddress is the admitted boot address, or empty.
+func bootAddress(work *site.Work) string {
+	var inputs struct {
+		BootNetwork *ops.BootNetworkInput `json:"bootNetwork"`
+	}
+	if json.Unmarshal(work.Inputs, &inputs) != nil || inputs.BootNetwork == nil {
+		return ""
+	}
+	address, _ := bootnet.HostAddress(inputs.BootNetwork.Address)
+	return address
 }
 
 // checkTarget requires the one enrolled disk and every capability the phases
@@ -205,8 +248,11 @@ type Boot struct {
 	Fence     int64  `json:"fence"`
 	Mode      string `json:"mode"`
 	MAC       string `json:"mac"`
-	Receipt   string `json:"receipt"`
-	Token     string `json:"token"`
+	// Address is the admitted boot address at a synchronized site. The
+	// reservation feed publishes MAC and Address while the boot is open.
+	Address string `json:"address,omitempty"`
+	Receipt string `json:"receipt"`
+	Token   string `json:"token"`
 	// Created is when the admission was created; DHCP reports before it
 	// are not this operation's.
 	Created time.Time `json:"created"`
@@ -235,7 +281,16 @@ func (c Config) boot(ctx context.Context, work *site.Work, mode string) (Boot, e
 		return boot, err
 	}
 	_, _, _, window := c.durations()
-	boot = Boot{Operation: work.Operation.UID, Fence: work.Fence, Mode: mode, MAC: strings.ToLower(conn(work).Target.MAC), Receipt: hex.EncodeToString(receipt), Token: hex.EncodeToString(token), Created: c.now().UTC(), Expires: c.now().Add(window).UTC()}
+	mac, _ := bootnet.NormalizeMAC(work.Snapshot.BootMACAddress)
+	boot = Boot{Operation: work.Operation.UID, Fence: work.Fence, Mode: mode, MAC: mac, Address: bootAddress(work), Receipt: hex.EncodeToString(receipt), Token: hex.EncodeToString(token), Created: c.now().UTC(), Expires: c.now().Add(window).UTC()}
+	if boot.Address != "" {
+		// Publishing the reservation is an effect: from here on the
+		// operation can no longer end Failed, so its boot address is kept
+		// until withdrawal is proven.
+		if err := work.Step(ctx, site.Step{Name: "boot-reservation", Send: func(context.Context) error { return nil }, Idempotent: true}); err != nil {
+			return boot, err
+		}
+	}
 	return boot, store.PutRecord(work.Device, work.Fence, bootRecords, work.Operation.UID, boot)
 }
 
@@ -288,7 +343,7 @@ func (c Config) run(ctx context.Context, work *site.Work, phases []phase) ([]ops
 			}
 		}
 		if ph.mode != "" && c.Synced && !requested {
-			if err := c.awaitReservation(ctx, work, boot); err != nil {
+			if err := c.awaitReservation(ctx, boot); err != nil {
 				return nil, err
 			}
 		}
@@ -319,7 +374,7 @@ func (c Config) run(ctx context.Context, work *site.Work, phases []phase) ([]ops
 		evidence = append(evidence, ops.StepEvidence{Name: ph.name, CompletedAt: metaNow(c.now())})
 	}
 	if c.Synced {
-		if err := c.awaitWithdrawal(ctx, work, boot); err != nil {
+		if err := c.awaitWithdrawal(ctx, work.Store(), work.Device, boot); err != nil {
 			return nil, err
 		}
 	}

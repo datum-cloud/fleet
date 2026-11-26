@@ -8,7 +8,9 @@ import (
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
+	"go.datum.net/fleet/internal/bootaddress"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -83,7 +85,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		named := &DeviceTestStaffOperation{ObjectMeta: metav1.ObjectMeta{GenerateName: "named-", Namespace: "default"}, Spec: testSpec{OperationEnvelope: envelope(device, staffUser, allocated("alloc-x")), Input: "a"}}
 		e.create(named)
 		// Staff cannot create the release kind either.
-		wipe := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: WipeName("alloc-x", 1), Namespace: "default"}, Spec: ops.DeviceWipeSpec{OperationEnvelope: envelope(device, staffUser, allocated("alloc-x")), Step: 1, CleaningPolicyDigest: policyDigest, TargetDisks: []string{"disk-0"}}}
+		wipe := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: WipeName("alloc-x", 1), Namespace: "default"}, Spec: ops.DeviceWipeSpec{OperationEnvelope: envelope(device, staffUser, allocated("alloc-x")), Step: 1, CleaningPolicyDigest: policyDigest, TargetDisks: []string{"disk-0"}, BootInterface: "primary"}}
 		e.create(wipe)
 		e.settle(device.Name)
 		for _, operation := range []ops.Operation{spoof, service, named, wipe} {
@@ -266,6 +268,83 @@ func TestAdmissionPreconditions(t *testing.T) {
 		e.requirePhase(operation, ops.PhaseFailed, ReasonBootstrapUnsupported)
 		e.requirePhase(missing, ops.PhaseFailed, ReasonBootInterfaceUnknown)
 		e.requireUntouched(device.Name, fence)
+	})
+
+	t.Run("a boot address must still be bound to its claim", func(t *testing.T) {
+		e := e.sub(t)
+		device := fresh()
+		if err := e.coord.Claim(e.ctx, device.Name, "alloc-net"); err != nil {
+			t.Fatal(err)
+		}
+		fence := e.custody(device.Name).Spec.Fence
+		name := func(request string) string { return InstallationName("alloc-net", request) }
+		// claim creates the operation's own claim and returns the input that
+		// names it.
+		claim := func(request, phase, address string) *ops.BootNetworkInput {
+			created := e.ipClaim(bootaddress.ClaimName(name(request)), name(request), "DeviceInstallation", phase, address)
+			return &ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: created.GetName()}, Address: address}
+		}
+		withAddress := func(request string, input *ops.BootNetworkInput) *ops.DeviceInstallation {
+			operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: name(request), Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
+				OperationEnvelope: envelope(device, providerUser, allocated("alloc-net")), RequestUID: request,
+				Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"}, BootNetwork: input,
+			}}
+			e.create(operation)
+			return operation
+		}
+		// A claim deleted and recreated under its name, with the same labels
+		// and address, after its operation was created is not the claim the
+		// operation was built from.
+		recreated := claim("recreated", "Bound", "198.51.100.10")
+		recreatedOperation := withAddress("recreated", recreated)
+		old := &unstructured.Unstructured{}
+		old.SetGroupVersionKind(bootaddress.GVK)
+		if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: "default", Name: recreated.AddressClaim.Name}, old); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.admin.Delete(e.ctx, old); err != nil {
+			t.Fatal(err)
+		}
+		// Creation times have one-second resolution.
+		time.Sleep(1100 * time.Millisecond)
+		claim("recreated", "Bound", "198.51.100.10")
+		otherAddress := claim("other-address", "Bound", "198.51.100.11")
+		otherAddress.Address = "198.51.100.99"
+		good := claim("bound", "Bound", "198.51.100.13")
+		refused := []*ops.DeviceInstallation{
+			recreatedOperation,
+			withAddress("other-address", otherAddress),
+			withAddress("unbound", claim("unbound", "Pending", "198.51.100.12")),
+			withAddress("missing", &ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: bootaddress.ClaimName(name("missing"))}, Address: good.Address}),
+			// Another operation's bound claim is not this operation's.
+			withAddress("foreign", good),
+		}
+		e.settle(device.Name)
+		for _, operation := range refused {
+			e.requirePhase(operation, ops.PhaseFailed, ReasonBootAddress)
+		}
+		e.requireUntouched(device.Name, fence)
+		admitted := withAddress("bound", good)
+		e.settle(device.Name)
+		if active := e.custody(device.Name).Spec.ActiveOperation; active == nil || active.Name != admitted.Name || active.Snapshot.BootMACAddress == "" {
+			t.Fatalf("active = %+v, want the bound installation with the boot MAC from inventory", active)
+		}
+		// A wipe network-boots too, so its boot interface must have a MAC.
+		releasing := fresh()
+		if err := e.coord.Claim(e.ctx, releasing.Name, "alloc-net-wipe"); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.coord.BeginRelease(e.ctx, releasing.Name, "alloc-net-wipe"); err != nil {
+			t.Fatal(err)
+		}
+		wipeFence := e.custody(releasing.Name).Spec.Fence
+		wipe := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: WipeName("alloc-net-wipe", 1), Namespace: "default"}, Spec: ops.DeviceWipeSpec{
+			OperationEnvelope: envelope(releasing, releaseUser, allocated("alloc-net-wipe")), Step: 1, CleaningPolicyDigest: policyDigest, TargetDisks: []string{"disk-0"}, BootInterface: "absent",
+		}}
+		e.create(wipe)
+		e.settle(releasing.Name)
+		e.requirePhase(wipe, ops.PhaseFailed, ReasonBootInterfaceUnknown)
+		e.requireUntouched(releasing.Name, wipeFence)
 	})
 
 	t.Run("a staff operation not admitted within five minutes expires", func(t *testing.T) {

@@ -131,9 +131,9 @@ func newSyncer(t *testing.T) (*Syncer, *fakeKea, *fakeSite) {
 	return &Syncer{Feed: srv.URL, Token: token, Instance: "kea-0", Socket: kea.serve(t), Base: base, HTTP: srv.Client()}, kea, site
 }
 
-var reservation = bootnet.Reservation{MAC: "52:54:00:77:01:0a", Address: "192.0.2.10/24", Gateway: "192.0.2.1", Expires: time.Now().Add(time.Hour)}
+var reservation = bootnet.Reservation{MAC: "52:54:00:77:01:0a", Address: "192.0.2.10", Expires: time.Now().Add(time.Hour)}
 
-func TestAppliesReservationIntoItsExactSubnetThenReports(t *testing.T) {
+func TestAppliesReservationIntoItsContainingSubnetThenReports(t *testing.T) {
 	s, kea, site := newSyncer(t)
 	ctx := context.Background()
 	if err := s.Cycle(ctx); err != nil || kea.applied() != 1 || len(site.reported()) != 1 {
@@ -147,7 +147,7 @@ func TestAppliesReservationIntoItsExactSubnetThenReports(t *testing.T) {
 	subnets := kea.configs[1]["Dhcp4"].(map[string]any)["subnet4"].([]any)
 	kea.mu.Unlock()
 	hosts, _ := json.Marshal(subnets[0].(map[string]any)["reservations"])
-	if string(hosts) != `[{"hw-address":"52:54:00:77:01:0a","ip-address":"192.0.2.10","option-data":[{"data":"192.0.2.1","name":"routers"}]}]` || subnets[1].(map[string]any)["reservations"] != nil {
+	if string(hosts) != `[{"hw-address":"52:54:00:77:01:0a","ip-address":"192.0.2.10"}]` || subnets[1].(map[string]any)["reservations"] != nil {
 		t.Fatalf("reservation not placed in exactly its subnet: %s", hosts)
 	}
 	reports := site.reported()
@@ -166,7 +166,7 @@ func TestAppliesReservationIntoItsExactSubnetThenReports(t *testing.T) {
 		t.Fatalf("restarted Kea not re-applied: %v", err)
 	}
 	site.set(t)
-	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 3 || site.reported()[2].Feed.Serves(reservation.MAC) {
+	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 3 || site.reported()[2].Feed.Serves(reservation.MAC, reservation.Address) {
 		t.Fatalf("withdrawal not applied and reported: %v", err)
 	}
 }
@@ -184,9 +184,17 @@ func TestNothingIsReportedThatKeaDidNotAccept(t *testing.T) {
 	kea.mu.Lock()
 	kea.fail = false
 	kea.mu.Unlock()
-	site.set(t, bootnet.Reservation{MAC: reservation.MAC, Address: "203.0.113.10/24", Gateway: "203.0.113.1", Expires: reservation.Expires})
+	site.set(t, bootnet.Reservation{MAC: reservation.MAC, Address: "203.0.113.10", Expires: reservation.Expires})
 	if err := s.Cycle(ctx); err == nil || kea.applied() != 0 || len(site.reported()) != 0 {
 		t.Fatal("a reservation without a base subnet was dropped or applied")
+	}
+	// Two base subnets containing one address are ambiguous: refused.
+	overlap := filepath.Join(t.TempDir(), "overlap.conf")
+	os.WriteFile(overlap, []byte(`{"Dhcp4":{"subnet4":[{"id":1,"subnet":"192.0.2.0/24"},{"id":2,"subnet":"192.0.2.0/25"}]}}`), 0600)
+	s.Base = overlap
+	site.set(t, reservation)
+	if err := s.Cycle(ctx); err == nil || kea.applied() != 0 || len(site.reported()) != 0 {
+		t.Fatal("a reservation in two base subnets was applied")
 	}
 	s.Token = "wrong-token-wrong-token-wrong-token-0000"
 	if err := s.Cycle(ctx); err == nil {
@@ -198,7 +206,7 @@ func TestForgedFeedIsRejectedBeforeKea(t *testing.T) {
 	s, kea, site := newSyncer(t)
 	site.set(t, reservation)
 	site.mu.Lock()
-	site.feed.Reservations[0].Address = "192.0.2.99/24"
+	site.feed.Reservations[0].Address = "192.0.2.99"
 	site.mu.Unlock()
 	if err := s.Cycle(context.Background()); err == nil || kea.applied() != 0 {
 		t.Fatal("a feed whose revision does not match its reservations was applied")

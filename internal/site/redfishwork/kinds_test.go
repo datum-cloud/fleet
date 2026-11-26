@@ -198,7 +198,7 @@ func runner(t *testing.T, l *lab) *site.Runner {
 	return &site.Runner{
 		Site: "site-example-a", Store: store, Results: site.NewResults(store),
 		Access: site.RedfishAccess{Credentials: credentials{pin: l.pin()},
-			Targets: site.StaticTargets{device: {Device: "server-example-001", Endpoint: l.server.URL, SystemID: "A", SystemUUID: uuid, MAC: mac, DiskBytes: diskBytes, Console: filepath.Base(l.console)}}},
+			Targets: site.StaticTargets{device: {Device: "server-example-001", Endpoint: l.server.URL, SystemID: "A", SystemUUID: uuid, DiskBytes: diskBytes, Console: filepath.Base(l.console)}}},
 		Kinds: map[string]site.Kind{"DeviceInstallation": Installation{config}, "DeviceWipe": Wipe{config}},
 		Poll:  10 * time.Millisecond,
 	}
@@ -241,7 +241,7 @@ func TestInstallationRunsBothPhasesWithOneOnEach(t *testing.T) {
 func TestWipeChecksTheEnrolledDisk(t *testing.T) {
 	l := newLab(t)
 	r := runner(t, l)
-	spec := ops.DeviceWipeSpec{Step: 1, CleaningPolicyDigest: "sha256:" + strings.Repeat("b", 64), TargetDisks: []string{"disk-0"}}
+	spec := ops.DeviceWipeSpec{Step: 1, CleaningPolicyDigest: "sha256:" + strings.Repeat("b", 64), TargetDisks: []string{"disk-0"}, BootInterface: "primary"}
 	result, err := r.Run(context.Background(), assignment(l, "DeviceWipe", "op-wipe", 1, spec))
 	if err != nil {
 		t.Fatal(err)

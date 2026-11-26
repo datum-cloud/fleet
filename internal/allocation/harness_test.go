@@ -51,6 +51,7 @@ type env struct {
 	allocator  *Allocator
 	loop       *delivery.Loop
 	store      *site.Store
+	runner     *site.Runner
 	enrollment fixture.Enrollment
 	class      *fleetv1.MachineClass
 	profile    *fleetv1.MachineProfile
@@ -77,6 +78,7 @@ func startEnv(t *testing.T) *env {
 		filepath.Join(root, "config", "base", "crd"),
 		filepath.Join(root, "config", "components", "inventory", "crds"),
 		filepath.Join(root, "config", "components", "device-operations", "crds"),
+		filepath.Join(root, "internal", "bootaddress", "testdata"),
 	}, ErrorIfCRDPathMissing: true}
 	config, err := environment.Start()
 	if err != nil {
@@ -102,6 +104,7 @@ func startEnv(t *testing.T) *env {
 	}
 	runner := &site.Runner{Site: siteName, Store: e.store, Results: site.NewResults(e.store), Access: fixture.Access{Enrollment: e.enrollment},
 		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}}, Poll: 20 * time.Millisecond}
+	e.runner = runner
 	dispatcher := &siteapi.Dispatcher{Runner: runner, Context: ctx}
 	server := httptest.NewServer(siteapi.Handler(dispatcher, e.store, runner.Results, func() (string, error) { return siteToken, nil }))
 	t.Cleanup(func() { cancel(); server.Close(); dispatcher.Wait() })

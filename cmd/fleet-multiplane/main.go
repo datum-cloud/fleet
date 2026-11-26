@@ -21,6 +21,7 @@ import (
 	"go.datum.net/fleet/internal/multiplane"
 	"go.datum.net/fleet/internal/redfish"
 	"go.datum.net/fleet/internal/site"
+	"go.datum.net/fleet/internal/site/redfishwork"
 )
 
 func main() {
@@ -32,7 +33,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: fleet-multiplane coordinator|site-worker|site-observer|image|boot-service|boot-withhold|boot-denials|dhcp-feed|redfish-probe|<management phase> [flags]")
+		return fmt.Errorf("usage: fleet-multiplane coordinator|site-worker|site-observer|image|boot-service|boot-withhold|boot-denials|dhcp-feed|dhcp-retire|redfish-probe|<management phase> [flags]")
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 	once := fs.Bool("once", false, "one attempt, for fault injection")
@@ -50,6 +51,7 @@ func run() error {
 	pin := fs.String("pin", "", "the BMC's approved key digest; the probe connects only to that key (redfish-probe)")
 	syncToken := fs.String("sync-token-file", "", "file holding the DHCP synchronizer bearer token (dhcp-feed)")
 	installationDeadline := fs.Duration("installation-deadline", 0, "replace the installation deadline for operations this coordinator admits (coordinator)")
+	instance := fs.String("instance", "", "DHCP instance an operator retires (dhcp-retire)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
@@ -80,6 +82,8 @@ func run() error {
 		return boot(os.Args[1], *origin, *extraMAC, *syncToken)
 	case "boot-withhold":
 		return armWithhold(fs.Arg(0))
+	case "dhcp-retire":
+		return redfishwork.RetireInstance(os.Getenv("FLEET_BOOT_EVIDENCE"), *instance)
 	case "site-worker", "site-observer":
 	default:
 		return fmt.Errorf("unknown command")

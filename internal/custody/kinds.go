@@ -9,8 +9,10 @@ import (
 	"strconv"
 	"time"
 
-	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
+	"go.datum.net/fleet/internal/bootaddress"
 )
 
 // Per-kind deadlines. The site worker stops at the deadline exactly; the
@@ -36,15 +38,56 @@ const (
 	ReasonRetryAuthorized      = "RetryAlreadyAuthorized"
 	ReasonDisposalRequired     = "DisposalRequired"
 	ReasonInvalidResolve       = "InvalidResolve"
+	ReasonBootAddress          = "BootAddressUnavailable"
 	// Reasons every site's install and wipe workers raise.
 	ReasonTargetUnsupported = "TargetUnsupported"
 	ReasonTargetDisks       = "TargetDisksUnknown"
 	ReasonInputsUnreadable  = "InputsUnreadable"
+	// Reasons a site raises when an operation's boot network input does not
+	// fit the site's DHCP.
+	ReasonBootNetworkRequired    = "BootNetworkRequired"
+	ReasonBootNetworkUnsupported = "BootNetworkUnsupported"
 )
 
 // workerReasons are the reasons every site's install and wipe workers
 // raise before sending anything.
-var workerReasons = []Reason{{Name: ReasonTargetUnsupported, RaisedBy: RaisedByWorker}, {Name: ReasonTargetDisks, RaisedBy: RaisedByWorker}, {Name: ReasonInputsUnreadable, RaisedBy: RaisedByWorker}}
+var workerReasons = []Reason{{Name: ReasonTargetUnsupported, RaisedBy: RaisedByWorker}, {Name: ReasonTargetDisks, RaisedBy: RaisedByWorker}, {Name: ReasonInputsUnreadable, RaisedBy: RaisedByWorker},
+	{Name: ReasonBootNetworkRequired, RaisedBy: RaisedByWorker}, {Name: ReasonBootNetworkUnsupported, RaisedBy: RaisedByWorker}}
+
+// NoBootNetwork refuses a boot address at a site whose DHCP Fleet does not
+// synchronize. Every such site's install and wipe workers call it.
+func NoBootNetwork(network *ops.BootNetworkInput) *Refusal {
+	if network != nil {
+		return refuse(ReasonBootNetworkUnsupported, "this site's DHCP is not synchronized, so it cannot serve a boot address")
+	}
+	return nil
+}
+
+// networkBootReasons are the coordinator's reasons for a network boot's
+// inputs.
+var networkBootReasons = []Reason{{Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}, {Name: ReasonBootAddress, RaisedBy: RaisedByCoordinator}}
+
+// checkNetworkBoot requires the boot interface to have a MAC in Device
+// inventory and a boot address, when given, to still be bound to the
+// operation's claim.
+func checkNetworkBoot(ctx context.Context, admission *Admission, kind, bootInterface string, network *ops.BootNetworkInput) *Refusal {
+	found := false
+	for _, iface := range admission.Device.Spec.Interfaces {
+		if iface.Name == bootInterface && iface.MACAddress != "" {
+			found = true
+		}
+	}
+	if !found {
+		return refuse(ReasonBootInterfaceUnknown, "the Device records no interface %q with a MAC address", bootInterface)
+	}
+	if network == nil {
+		return nil
+	}
+	if err := bootaddress.Verify(ctx, admission.Reader, admission.Operation, kind, *network); err != nil {
+		return refuse(ReasonBootAddress, "the boot address claim %s does not hold %s", network.AddressClaim.Name, network.Address)
+	}
+	return nil
+}
 
 const evidenceLimit = 4096
 
@@ -100,21 +143,16 @@ func DeviceInstallationKind() Kind {
 		Deadline:      InstallationDeadline,
 		Effectful:     true,
 		BootInterface: func(operation ops.Operation) string { return operation.(*ops.DeviceInstallation).Spec.BootInterface },
-		Check: func(_ context.Context, admission *Admission) *Refusal {
+		Check: func(ctx context.Context, admission *Admission) *Refusal {
 			installation := admission.Operation.(*ops.DeviceInstallation)
 			// Bootstrap stays refused until the sealed store exists.
 			if installation.Spec.Bootstrap != nil {
 				return refuse(ReasonBootstrapUnsupported, "bootstrap payloads need the sealed store, which is not implemented")
 			}
-			for _, iface := range admission.Device.Spec.Interfaces {
-				if iface.Name == installation.Spec.BootInterface && iface.MACAddress != "" {
-					return nil
-				}
-			}
-			return refuse(ReasonBootInterfaceUnknown, "the Device records no interface %q with a MAC address", installation.Spec.BootInterface)
+			return checkNetworkBoot(ctx, admission, "DeviceInstallation", installation.Spec.BootInterface, installation.Spec.BootNetwork)
 		},
 		Settles: []SettleRule{{Held: "DeviceInstallation"}},
-		Reasons: append([]Reason{{Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}, {Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}}, workerReasons...),
+		Reasons: append(append([]Reason{{Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}}, networkBootReasons...), workerReasons...),
 		Evidence: StrictEvidence(evidenceLimit, func(_ ops.Operation, evidence *ops.InstallationEvidence) error {
 			return validateSteps(evidence.Steps)
 		}),
@@ -137,13 +175,18 @@ func DeviceWipeKind() Kind {
 		Name: func(operation ops.Operation) string {
 			return WipeName(allocationName(operation), operation.(*ops.DeviceWipe).Spec.Step)
 		},
-		Deadline:  WipeDeadline,
-		Effectful: true,
+		Deadline:      WipeDeadline,
+		Effectful:     true,
+		BootInterface: func(operation ops.Operation) string { return operation.(*ops.DeviceWipe).Spec.BootInterface },
+		Check: func(ctx context.Context, admission *Admission) *Refusal {
+			wipe := admission.Operation.(*ops.DeviceWipe)
+			return checkNetworkBoot(ctx, admission, "DeviceWipe", wipe.Spec.BootInterface, wipe.Spec.BootNetwork)
+		},
 		// A wipe after release settles an installation hold. A held wipe is
 		// settled by a later wipe only after a DeviceRecovery with Retry.
 		Settles:   []SettleRule{{Held: "DeviceInstallation"}, {Held: "DeviceWipe", RequiresRetry: true}},
 		Retryable: true,
-		Reasons:   workerReasons,
+		Reasons:   append(append([]Reason{}, networkBootReasons...), workerReasons...),
 		Evidence: StrictEvidence(evidenceLimit, func(_ ops.Operation, evidence *ops.WipeEvidence) error {
 			if len(evidence.WipedDisks) > 16 {
 				return errors.New("evidence records at most 16 disks")

@@ -72,7 +72,7 @@ func (a RedfishAccess) Prepare(ctx context.Context, assignment Assignment) (any,
 		return nil, &custody.Refusal{Reason: ReasonNotEnrolled, Message: "this site does not serve the Device"}
 	}
 	snapshot := assignment.Snapshot
-	if !strings.EqualFold(target.SystemUUID, snapshot.SystemUUID) || target.Endpoint != snapshot.BMCEndpoint || (snapshot.BootMACAddress != "" && !strings.EqualFold(target.MAC, snapshot.BootMACAddress)) {
+	if !strings.EqualFold(target.SystemUUID, snapshot.SystemUUID) || target.Endpoint != snapshot.BMCEndpoint {
 		return nil, &custody.Refusal{Reason: custody.ReasonDeviceIdentityMismatch, Message: "the site's enrollment does not match the admitted snapshot"}
 	}
 	credential, found, err := a.Credentials.Lookup(ctx, assignment.Device)

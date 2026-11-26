@@ -132,8 +132,9 @@ ownership audit covers the BMC Deployment, Service and ServiceAccount.
 The disks, domain UUIDs and MACs exist before any allocation. Each installation
 or cleanup reuses target A's single persistent disk. The site enrollment is an
 explicit Device-to-System mapping in the worker template, with each target's BMC
-endpoint, System Id, UUID, MAC, disk size and console capture name. The lab sets
-`"dhcp": "static"` because its dnsmasq leases are fixed; see
+endpoint, System Id, UUID, disk size and console capture name. Target A's boot
+NIC MAC is a Device inventory fact, seeded from the lab's VM definitions. The
+lab sets `"dhcp": "static"` because its dnsmasq leases are fixed; see
 [Boot network](boot-network.md) for synchronized DHCP. Before any request, the
 worker checks the enrollment against the admitted snapshot.
 

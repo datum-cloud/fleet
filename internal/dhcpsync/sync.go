@@ -110,8 +110,10 @@ func (s *Syncer) report(ctx context.Context, feed bootnet.Feed) error {
 	return nil
 }
 
-// config adds each reservation to the base subnet with exactly its prefix.
-// A reservation with no such subnet is an error: it is never dropped silently.
+// config adds each reservation to the one base subnet that contains its
+// address. The base subnet supplies the prefix, gateway and boot options. A
+// reservation with no such subnet, or with two, is an error: it is never
+// dropped silently.
 func (s *Syncer) config(feed bootnet.Feed) (map[string]any, error) {
 	b, err := os.ReadFile(s.Base)
 	if err != nil {
@@ -127,26 +129,28 @@ func (s *Syncer) config(feed bootnet.Feed) (map[string]any, error) {
 		return nil, errors.New("base Kea configuration has no Dhcp4 subnet4 list")
 	}
 	for _, r := range feed.Reservations {
-		p := netip.MustParsePrefix(r.Address)
-		if !p.Addr().Is4() {
+		address := netip.MustParseAddr(r.Address)
+		if !address.Is4() {
 			return nil, fmt.Errorf("reservation %s is not IPv4", r.MAC)
 		}
 		var subnet map[string]any
 		for _, v := range subnets {
 			m, _ := v.(map[string]any)
 			text, _ := m["subnet"].(string)
-			if sp, err := netip.ParsePrefix(text); err == nil && sp == p.Masked() {
-				subnet = m
+			sp, err := netip.ParsePrefix(text)
+			if err != nil || !sp.Contains(address) {
+				continue
 			}
+			if subnet != nil {
+				return nil, fmt.Errorf("two base subnets contain reservation %s", r.MAC)
+			}
+			subnet = m
 		}
 		if subnet == nil {
-			return nil, fmt.Errorf("no base subnet %s for reservation %s", p.Masked(), r.MAC)
+			return nil, fmt.Errorf("no base subnet contains reservation %s", r.MAC)
 		}
 		hosts, _ := subnet["reservations"].([]any)
-		subnet["reservations"] = append(hosts, map[string]any{
-			"hw-address": r.MAC, "ip-address": p.Addr().String(),
-			"option-data": []any{map[string]any{"name": "routers", "data": r.Gateway}},
-		})
+		subnet["reservations"] = append(hosts, map[string]any{"hw-address": r.MAC, "ip-address": address.String()})
 	}
 	return cfg, nil
 }

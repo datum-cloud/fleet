@@ -12,40 +12,29 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
-
-	"go.datum.net/fleet/internal/bootnet"
 )
 
-// Target is one enrolled server: the Device it is, its BMC endpoint, its
-// exact Redfish System, its boot NIC and, when the site's DHCP is
-// synchronized, the provisioning attachment the network owner assigned to
-// it. Console names the serial-console capture file for the target (a lab
-// seam; see the operations guide). Enrollment is site configuration and is
-// never inferred.
+// Target is one enrolled server: the Device it is, its BMC endpoint and its
+// exact Redfish System. Console names the serial-console capture file for the
+// target (a lab seam; see the operations guide). The boot NIC comes from
+// Device inventory through the admission snapshot, and the boot address from
+// IPAM through the operation's inputs. Enrollment is site configuration and
+// is never inferred.
 type Target struct {
 	// Device is "<namespace>/<name>" in the provider project.
-	Device       string       `json:"device"`
-	Endpoint     string       `json:"endpoint"`
-	SystemID     string       `json:"systemID"`
-	SystemUUID   string       `json:"systemUUID"`
-	MAC          string       `json:"mac"`
-	Provisioning Provisioning `json:"provisioning,omitzero"`
-	DiskBytes    int64        `json:"diskBytes"`
-	Console      string       `json:"console"`
+	Device     string `json:"device"`
+	Endpoint   string `json:"endpoint"`
+	SystemID   string `json:"systemID"`
+	SystemUUID string `json:"systemUUID"`
+	DiskBytes  int64  `json:"diskBytes"`
+	Console    string `json:"console"`
 }
 
-// Provisioning is the asset's address on the provisioning network, in prefix
-// form, and that network's gateway. Networking/IPAM allocates it; Fleet only
-// publishes it while the asset's network boot is admitted.
-type Provisioning struct {
-	Address string `json:"address"`
-	Gateway string `json:"gateway"`
-}
-
-// DHCP modes. Static: the site's DHCP is configured independently of Fleet.
-// Synced: Fleet publishes boot reservations and a network boot requires
-// evidence that DHCP applied the reservation and later withdrew it.
+// DHCP modes. Static: the site's DHCP is configured independently of Fleet,
+// and an operation with a boot address is refused. Synced: Fleet publishes
+// each operation's boot reservation, an operation without a boot address is
+// refused, and a network boot requires evidence that DHCP applied the
+// reservation and later withdrew it.
 const (
 	DHCPStatic = "static"
 	DHCPSynced = "synced"
@@ -67,10 +56,6 @@ func (e Enrollment) Target(device string) (Target, bool) {
 	return Target{}, false
 }
 
-func normalizeMAC(v string) (string, bool) {
-	return bootnet.NormalizeMAC(strings.ReplaceAll(v, "-", ":"))
-}
-
 func ParseEnrollment(b []byte) (Enrollment, error) {
 	var e Enrollment
 	d := json.NewDecoder(strings.NewReader(string(b)))
@@ -80,33 +65,15 @@ func ParseEnrollment(b []byte) (Enrollment, error) {
 	}
 	seen := map[string]bool{}
 	for i, t := range e.Targets {
-		mac, ok := normalizeMAC(t.MAC)
 		endpoint, err := ParseEndpoint(t.Endpoint)
 		// A Redfish System ID is unique only within its BMC.
 		system := "s" + endpoint + " " + t.SystemID
-		if !ok || err != nil || !validDevice(t.Device) || t.SystemID == "" || len(t.SystemUUID) != 36 || t.DiskBytes <= 0 || t.Console == "" || filepath.Base(t.Console) != t.Console ||
-			seen["a"+t.Device] || seen[system] || seen["u"+strings.ToLower(t.SystemUUID)] || seen["m"+mac] {
+		if err != nil || !validDevice(t.Device) || t.SystemID == "" || len(t.SystemUUID) != 36 || t.DiskBytes <= 0 || t.Console == "" || filepath.Base(t.Console) != t.Console ||
+			seen["a"+t.Device] || seen[system] || seen["u"+strings.ToLower(t.SystemUUID)] {
 			return Enrollment{}, errors.New("invalid or duplicate Redfish enrollment target")
 		}
-		seen["a"+t.Device], seen[system], seen["u"+strings.ToLower(t.SystemUUID)], seen["m"+mac] = true, true, true, true
-		e.Targets[i].MAC, e.Targets[i].Endpoint = mac, endpoint
-		if e.DHCP == DHCPStatic {
-			if t.Provisioning != (Provisioning{}) {
-				return Enrollment{}, errors.New("a static-DHCP enrollment carries no provisioning attachment")
-			}
-			continue
-		}
-		feed, err := bootnet.NewFeed([]bootnet.Reservation{{MAC: mac, Address: t.Provisioning.Address, Gateway: t.Provisioning.Gateway, Expires: time.Unix(1, 0)}})
-		if err != nil {
-			return Enrollment{}, errors.New("invalid provisioning attachment for enrolled target " + t.Device)
-		}
-		r := feed.Reservations[0]
-		address := "p" + strings.SplitN(r.Address, "/", 2)[0]
-		if seen[address] {
-			return Enrollment{}, errors.New("duplicate provisioning address")
-		}
-		seen[address] = true
-		e.Targets[i].Provisioning = Provisioning{Address: r.Address, Gateway: r.Gateway}
+		seen["a"+t.Device], seen[system], seen["u"+strings.ToLower(t.SystemUUID)] = true, true, true
+		e.Targets[i].Endpoint = endpoint
 	}
 	return e, nil
 }

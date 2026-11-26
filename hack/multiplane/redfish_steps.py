@@ -152,6 +152,9 @@ def enroll(s):
     if kubectl(s, 'get', 'namespace', CREDENTIALS, check=False).returncode != 0:
         kubectl(s, 'create', 'namespace', CREDENTIALS)
     enrollment = json.loads(next(l for l in pathlib.Path('config/site/redfish/graph/kustomization.yaml').read_text().splitlines() if l.strip().startswith("value: '{")).split("'")[1])
+    # The boot NIC is a Device inventory fact; the lab's VM definitions
+    # record it.
+    lab_macs = {t['system']: t['mac'] for t in json.loads(pathlib.Path('hack/redfish-lab/targets.json').read_text())}
     fixture = {}
     for target in enrollment['targets']:
         namespace, name = target['device'].split('/')
@@ -166,7 +169,7 @@ def enroll(s):
         # from one BMC with one TLS key, and custody refuses a key that
         # another active Device also records.
         if target['device'] == 'fleet-provider/synthetic-device-central-01':
-            fixture[target['device']] = {'bmcEndpoint': target['endpoint'], 'systemUUID': target['systemUUID'], 'bootMACAddress': target['mac'], 'bmcPublicKeySHA256': pin, 'disks': ['disk-0']}
+            fixture[target['device']] = {'bmcEndpoint': target['endpoint'], 'systemUUID': target['systemUUID'], 'bootMACAddress': lab_macs[target['systemID']], 'bmcPublicKeySHA256': pin, 'disks': ['disk-0']}
     write(d / 'fixture-enrollment.json', fixture)
     write(s / 'evidence' / 'redfish-enrollment.json', {
         'observedAt': now(), 'credentialSecrets': [CREDENTIALS + '/' + credential_name(t['device']) for t in enrollment['targets']], 'username': 'fleet-lab-operator',

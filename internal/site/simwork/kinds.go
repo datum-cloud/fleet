@@ -91,6 +91,9 @@ func (Installation) Check(_ context.Context, work *site.Work) *custody.Refusal {
 	if spec.Bootstrap != nil {
 		return &custody.Refusal{Reason: custody.ReasonBootstrapUnsupported, Message: "bootstrap payloads need the sealed store, which is not implemented"}
 	}
+	if refusal := custody.NoBootNetwork(spec.BootNetwork); refusal != nil {
+		return refusal
+	}
 	return checkDisks(work, spec.TargetDisks)
 }
 
@@ -160,6 +163,9 @@ func wipeSpec(work *site.Work) (ops.DeviceWipeSpec, *custody.Refusal) {
 func (Wipe) Check(_ context.Context, work *site.Work) *custody.Refusal {
 	spec, refusal := wipeSpec(work)
 	if refusal != nil {
+		return refusal
+	}
+	if refusal := custody.NoBootNetwork(spec.BootNetwork); refusal != nil {
 		return refusal
 	}
 	return checkDisks(work, spec.TargetDisks)

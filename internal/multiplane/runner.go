@@ -29,6 +29,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleet "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/bootaddress"
 	"go.datum.net/fleet/internal/controller"
 	"go.datum.net/fleet/internal/coordination"
 	"go.datum.net/fleet/internal/custody"
@@ -62,6 +63,10 @@ type Config struct {
 	State, HubKubeconfig, Cell, Image string
 	// Enrollment is the cell's fixture enrollment of each Device it serves.
 	Enrollment fixture.Enrollment
+	// BootAddressClass is the provisioning IPAM class for a site whose DHCP
+	// Fleet synchronizes. Empty means the site's DHCP is configured
+	// independently, as in the lab.
+	BootAddressClass string `json:",omitempty"`
 }
 
 type Project struct {
@@ -234,6 +239,9 @@ func New(ctx context.Context, c Config) (*Runner, error) {
 			return custody.SpecDigest(`{"method":"overwrite","disks":"all"}`)
 		},
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
+	}
+	if c.BootAddressClass != "" {
+		r.Allocator.BootAddresses = &bootaddress.Claimer{Class: c.BootAddressClass, Scope: map[string]bootaddress.ScopeRef{"location": {APIGroup: "networking.datumapis.com", Kind: "Location", Name: Location}}}
 	}
 	return r, nil
 }

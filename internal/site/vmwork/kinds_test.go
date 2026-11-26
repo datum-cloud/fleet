@@ -142,7 +142,7 @@ func installSpec() ops.DeviceInstallationSpec {
 }
 
 func wipeSpec() ops.DeviceWipeSpec {
-	return ops.DeviceWipeSpec{OperationEnvelope: envelope(), Step: 1, CleaningPolicyDigest: "sha256:" + key, TargetDisks: []string{"disk-0"}}
+	return ops.DeviceWipeSpec{OperationEnvelope: envelope(), Step: 1, CleaningPolicyDigest: "sha256:" + key, TargetDisks: []string{"disk-0"}, BootInterface: "primary"}
 }
 
 // TestInstallThenWipe installs directly, proves each phase by its receipt,
