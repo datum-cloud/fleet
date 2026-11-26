@@ -137,12 +137,13 @@ func rbacStatusWriter(object map[string]any) bool {
 
 // TestOnlyThePowerWriterCanWriteMachineStatus renders every root under config
 // and lists the roles that can write Machine status. Roles made outside
-// config, by a script or at runtime, are not covered. Kubernetes RBAC grants it only to
-// the standalone smoke runner, the power projector's identity there. Milo
-// grants updateStatus and status permissions only to the controller role,
-// the manager's. Milo's authorizer checks a status write against update and
-// patch, so the consumer roles can write status too; the Machine power
-// webhook refuses their power changes. A new holder of any of these fails.
+// config, by a script or at runtime, are not covered. Kubernetes RBAC grants
+// it only to the standalone smoke runner, the power projector's identity
+// there. Milo grants updateStatus and status permissions only to the
+// controller role, the manager's. Milo's authorizer checks a status write
+// against update and patch, so the consumer roles can write status too; the
+// Machine power webhook refuses their power changes. A new holder of any of
+// these fails.
 func TestOnlyThePowerWriterCanWriteMachineStatus(t *testing.T) {
 	kustomize, err := exec.LookPath("kustomize")
 	if err != nil {
