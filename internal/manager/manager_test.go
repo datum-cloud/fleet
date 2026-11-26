@@ -23,6 +23,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
+	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
+
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
 )
@@ -277,6 +279,39 @@ func TestQuotaRouteResolvesOnlyItsLabelledMachine(t *testing.T) {
 	unlabelled.Labels = nil
 	if routes := mapper.Route(RouteQuota)(context.Background(), unlabelled); len(routes) != 0 {
 		t.Fatalf("unlabelled quota routed: %v", routes)
+	}
+}
+
+// An interface claim wakes only the Machine its machine-uid label names, so
+// NSO's status reaches Machine network status; a claim without the label
+// routes nowhere.
+func TestInterfaceClaimRouteResolvesOnlyItsLabelledMachine(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := fleetv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := networkingv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	project := testProject("milo", "project")
+	owner := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "owner", UID: "owner-uid"}}
+	other := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "other", UID: "other-uid"}}
+	claim := &networkingv1.NetworkInterfaceClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "fleet-claim", UID: "claim-uid", Labels: map[string]string{"fleet.datumapis.com/machine-uid": "owner-uid"}}}
+	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(owner, other, claim).
+		WithIndex(&fleetv1.Machine{}, IndexClaimUID, func(object client.Object) []string { return []string{string(object.GetUID())} }).Build()
+	mapper := Mappers{Reader: kube, Project: project}
+	routes := mapper.Route(RouteInterfaceClaim)(context.Background(), claim)
+	if len(routes) != 1 {
+		t.Fatalf("claim routes = %v", routes)
+	}
+	requests, err := mapper.ResolveRoute(context.Background(), routes[0])
+	if err != nil || len(requests) != 1 || requests[0].UID != owner.UID {
+		t.Fatalf("claim requests=%v err=%v", requests, err)
+	}
+	unlabelled := claim.DeepCopy()
+	unlabelled.Labels = nil
+	if routes := mapper.Route(RouteInterfaceClaim)(context.Background(), unlabelled); len(routes) != 0 {
+		t.Fatalf("unlabelled claim routed: %v", routes)
 	}
 }
 

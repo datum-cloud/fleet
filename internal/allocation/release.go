@@ -67,11 +67,23 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 	if holder.Type == ops.HolderAllocation {
 		return false, a.Custody.BeginRelease(ctx, state.Name, allocation.Name)
 	}
-	// No mode provisions access, networks or addresses for a Machine, so
-	// those gates have nothing to release.
-	for _, gate := range []ops.ReleaseGate{ops.GateAccess, ops.GateNetwork, ops.GateAddress} {
-		if slices.Contains(holder.OpenGates, gate) {
-			return false, a.Custody.CloseGate(ctx, state.Name, allocation.Name, gate)
+	// No mode provisions access for a Machine, so that gate has nothing to
+	// release.
+	if slices.Contains(holder.OpenGates, ops.GateAccess) {
+		return false, a.Custody.CloseGate(ctx, state.Name, allocation.Name, ops.GateAccess)
+	}
+	// The network owner keeps each interface claim until it detached the
+	// port and returned or retained the addresses, so absence closes both
+	// gates.
+	if slices.Contains(holder.OpenGates, ops.GateNetwork) || slices.Contains(holder.OpenGates, ops.GateAddress) {
+		gone, err := a.releaseNetwork(ctx, allocation)
+		if err != nil || !gone {
+			return false, err
+		}
+		for _, gate := range []ops.ReleaseGate{ops.GateNetwork, ops.GateAddress} {
+			if slices.Contains(holder.OpenGates, gate) {
+				return false, a.Custody.CloseGate(ctx, state.Name, allocation.Name, gate)
+			}
 		}
 	}
 	if slices.Contains(holder.OpenGates, ops.GateOperations) {

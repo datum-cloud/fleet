@@ -109,6 +109,7 @@ func newSyntheticMilo(t *testing.T, scheme *runtime.Scheme, consumerProjects ...
 		cfg := startAPIServer(t,
 			filepath.Join("..", "..", "config", "base", "crd", "metal.datumapis.com.yaml"),
 			filepath.Join(nso, "networking.datumapis.com_networks.yaml"),
+			filepath.Join(nso, "networking.datumapis.com_networkinterfaceclaims.yaml"),
 			filepath.Join(miloCRDs, "quota", "quota.miloapis.com_resourceclaims.yaml"),
 			locations,
 			filepath.Join(catalog, "services.miloapis.com_serviceavailabilities.yaml"),

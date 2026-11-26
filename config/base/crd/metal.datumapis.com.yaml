@@ -439,6 +439,37 @@ spec:
                 properties:
                   name: {type: string, minLength: 1}
                   step: {type: integer, format: int32, minimum: 1}
+              network:
+                type: object
+                properties:
+                  interfaces:
+                    type: array
+                    maxItems: 16
+                    x-kubernetes-list-type: map
+                    x-kubernetes-list-map-keys: [name]
+                    items:
+                      type: object
+                      required: [name, network, attachment, claim]
+                      properties:
+                        name: {type: string, minLength: 1, maxLength: 63}
+                        network:
+                          type: object
+                          required: [namespace, name]
+                          properties: {namespace: {type: string, minLength: 1}, name: {type: string, minLength: 1}}
+                        attachment:
+                          type: object
+                          required: [macAddress, switch, port]
+                          properties:
+                            macAddress: {type: string, pattern: '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'}
+                            switch: {type: string, minLength: 1, maxLength: 253}
+                            port: {type: string, minLength: 1, maxLength: 63}
+                        claim:
+                          type: object
+                          required: [namespace, name]
+                          properties:
+                            namespace: {type: string, minLength: 1}
+                            name: {type: string, minLength: 1, maxLength: 253}
+                            uid: {type: string}
               conditions:
                 type: array
                 items: {type: object, x-kubernetes-preserve-unknown-fields: true}

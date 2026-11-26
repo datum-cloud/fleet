@@ -172,6 +172,7 @@ func Setup(ctx context.Context, mgr mcmanager.Manager, projects *Projects, optio
 		Watches(&fleetv1.Installation{}, routeHandler(projects, RouteInstallation), watchOptions(PrimaryPredicate())...).
 		Watches(&fleetv1.MachineCapacity{}, routeHandler(projects, RouteMachineCapacity), watchOptions(DependencyPredicate())...).
 		Watches(&networkingv1.Network{}, routeHandler(projects, RouteNetwork), watchOptions(DependencyPredicate())...).
+		Watches(&networkingv1.NetworkInterfaceClaim{}, routeHandler(projects, RouteInterfaceClaim), watchOptions(DependencyPredicate())...).
 		Watches(&quotav1alpha1.ResourceClaim{}, routeHandler(projects, RouteQuota), watchOptions(DependencyPredicate())...).
 		Watches(&locationsv1alpha1.Location{}, routeHandler(projects, RouteLocation), watchOptions(DependencyPredicate())...).
 		Watches(&servicesv1alpha1.ServiceAvailability{}, routeHandler(projects, RouteAvailability), watchOptions(DependencyPredicate())...)
