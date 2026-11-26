@@ -10,6 +10,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -35,6 +36,9 @@ const (
 	reasonExhausted        = "AddressPoolExhausted"
 	reasonRetainedConflict = "RetainedAddressConflict"
 	reasonRejected         = "AddressAllocationRejected"
+	// reasonFailed is NSO's catch-all for an IPAM error it does not
+	// classify. NSO keeps the claim and retries it, so Fleet waits.
+	reasonFailed = "AllocationFailed"
 )
 
 // BootReference is the typed reference an operation carries to its boot
@@ -65,6 +69,9 @@ type BootAttachments struct {
 	// to verify that a released claim's address is no longer allocated.
 	IPAM          client.Reader
 	IPAMNamespace string
+	// Location is the site's location, which NSO's IPAM claim names may
+	// carry.
+	Location string
 }
 
 var _ bootaddress.Source = BootAttachments{}
@@ -82,6 +89,10 @@ func (b BootAttachments) Requester(api client.Client, namespace, kind string) bo
 func (BootAttachments) ClaimKind() schema.GroupKind {
 	return schema.GroupKind{Group: BootClaimGroup, Kind: BootClaimKind}
 }
+
+// AddressOutlivesClaim marks the source as Lingering: NSO may remove its
+// claim before IPAM removes the address it claimed for it.
+func (BootAttachments) AddressOutlivesClaim() {}
 
 // AttachesBootNIC marks the source as the one that moves boot NICs.
 func (BootAttachments) AttachesBootNIC() {}
@@ -247,10 +258,15 @@ func (b BootAttachments) Release(ctx context.Context, operation string) (bool, e
 	if err != nil || !gone {
 		return false, err
 	}
-	if b.IPAM == nil || b.IPAMNamespace == "" {
-		return false, errors.New("nso: no IPAM reader to verify the boot address release")
+	if b.IPAM == nil || b.IPAMNamespace == "" || b.Location == "" {
+		return false, errors.New("nso: no IPAM reader, namespace and location to verify the boot address release")
 	}
-	return bootaddress.Unallocated(ctx, b.IPAM, b.IPAMNamespace, BootAddressIPClaim(bootaddress.ClaimName(operation)))
+	for _, name := range BootAddressIPClaims(bootaddress.ClaimName(operation), b.Location) {
+		if free, err := bootaddress.Unallocated(ctx, b.IPAM, b.IPAMNamespace, name); err != nil || !free {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // Detach returns true once the operation's claim is gone, which NSO allows
@@ -305,14 +321,27 @@ func (b BootAttachments) Operations(ctx context.Context, allocation string) ([]s
 }
 
 // BootAttachmentCheck is admission's check for NSO's boot attachment claim.
+// Only NewBootAttachmentCheck makes a usable one.
 type BootAttachmentCheck struct {
-	// Namespace holds the claims. Empty means the operation's namespace.
-	Namespace string
-	// Network is the provider-owned boot network.
-	Network string
+	namespace string
+	network   string
 }
 
 var _ custody.BootAddressCheck = BootAttachmentCheck{}.Verify
+
+// NewBootAttachmentCheck returns the check for claims in namespace, empty for
+// the operation's own, on the boot network. It fails when the admission
+// reader's scheme does not know NSO's claim, because every read would then
+// fail and leave operations Pending forever.
+func NewBootAttachmentCheck(scheme *runtime.Scheme, namespace, network string) (BootAttachmentCheck, error) {
+	if network == "" {
+		return BootAttachmentCheck{}, errors.New("nso: the boot network is required")
+	}
+	if scheme == nil || !scheme.Recognizes(networkingv1.GroupVersion.WithKind(BootClaimKind)) {
+		return BootAttachmentCheck{}, fmt.Errorf("nso: the admission reader's scheme does not know %s/%s", BootClaimGroup, BootClaimKind)
+	}
+	return BootAttachmentCheck{namespace: namespace, network: network}, nil
+}
 
 // Verify requires the input to name the operation's own boot attachment
 // claim, by its only name and its labels, created no later than the
@@ -321,14 +350,14 @@ var _ custody.BootAddressCheck = BootAttachmentCheck{}.Verify
 // NSO cannot be read for any reason but the claim's absence, and
 // bootaddress.ErrUnavailable otherwise.
 func (c BootAttachmentCheck) Verify(ctx context.Context, reader client.Reader, operation ops.Operation, kind string, input ops.BootNetworkInput) error {
-	if reader == nil || c.Network == "" {
-		return bootaddress.ErrUnavailable
+	if reader == nil || c.network == "" {
+		return fmt.Errorf("%w: the check was not made by NewBootAttachmentCheck", bootaddress.ErrUnavailable)
 	}
 	name := bootaddress.ClaimName(operation.GetName())
 	if input.AddressClaim != BootReference(name) {
 		return fmt.Errorf("%w: the claim is not the operation's own", bootaddress.ErrUnavailable)
 	}
-	namespace := c.Namespace
+	namespace := c.namespace
 	if namespace == "" {
 		namespace = operation.GetNamespace()
 	}
@@ -345,7 +374,7 @@ func (c BootAttachmentCheck) Verify(ctx context.Context, reader client.Reader, o
 	if claim.Labels[bootaddress.OperationLabel] != operation.GetName() || claim.Labels[bootaddress.KindLabel] != kind {
 		return fmt.Errorf("%w: the claim belongs to another operation", bootaddress.ErrUnavailable)
 	}
-	if claim.Spec.Network.Name != c.Network || claim.Spec.AttachmentMode != PhysicalMode || !programmed(claim) {
+	if claim.Spec.Network.Name != c.network || claim.Spec.AttachmentMode != PhysicalMode || !programmed(claim) {
 		return fmt.Errorf("%w: the boot NIC is not on the boot network", bootaddress.ErrUnavailable)
 	}
 	address, err := bootAddress(claim)
@@ -365,7 +394,9 @@ func programmed(claim *networkingv1.NetworkInterfaceClaim) bool {
 	return condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == claim.Generation
 }
 
-// refused maps NSO's report that IPAM refused the claim's address.
+// refused maps NSO's report that IPAM refused the claim's address. A
+// failure NSO retries is ErrPending with NSO's reason and message, so the
+// wait says why.
 func refused(claim *networkingv1.NetworkInterfaceClaim) error {
 	condition := apiMeta.FindStatusCondition(claim.Status.Conditions, networkingv1.NetworkInterfaceClaimAllocated)
 	if condition == nil || condition.Status != metav1.ConditionFalse || condition.ObservedGeneration != claim.Generation {
@@ -376,6 +407,8 @@ func refused(claim *networkingv1.NetworkInterfaceClaim) error {
 		return fmt.Errorf("%w: %s", bootaddress.ErrExhausted, condition.Message)
 	case reasonRetainedConflict, reasonRejected:
 		return fmt.Errorf("%w: %s", bootaddress.ErrRefused, condition.Message)
+	case reasonFailed:
+		return fmt.Errorf("%w: NSO retries the address: %s: %s", bootaddress.ErrPending, condition.Reason, condition.Message)
 	}
 	return nil
 }

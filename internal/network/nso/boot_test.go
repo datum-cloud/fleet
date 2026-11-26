@@ -2,6 +2,8 @@ package nso
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -28,6 +30,7 @@ const (
 	bootNamespace = "fleet-provider"
 	ipamNamespace = "ipam-provider"
 	bootNetwork   = "boot"
+	location      = "location-example-a"
 )
 
 // bootFixture is the provider's NSO API with one cabled Device, and an
@@ -50,7 +53,7 @@ func bootFixture(t *testing.T, funcs interceptor.Funcs) (BootAttachments, client
 	api := fake.NewClientBuilder().WithScheme(scheme).WithObjects(device, cable).WithStatusSubresource(&networkingv1.NetworkInterfaceClaim{}).WithInterceptorFuncs(funcs).Build()
 	allocation := &fleetv1.MachineAllocation{ObjectMeta: metav1.ObjectMeta{Name: "alloc-example", Namespace: bootNamespace},
 		Spec: fleetv1.MachineAllocationSpec{DeviceRef: fleetv1.AllocatedDeviceReference{Name: device.Name, UID: string(device.UID)}, BootInterface: "primary"}}
-	source := BootAttachments{Network: bootNetwork, IPAM: api, IPAMNamespace: ipamNamespace}
+	source := BootAttachments{Network: bootNetwork, IPAM: api, IPAMNamespace: ipamNamespace, Location: location}
 	return source.Requester(api, bootNamespace, "DeviceInstallation").(BootAttachments), api, allocation
 }
 
@@ -163,6 +166,7 @@ func TestNSORefusalsAreReported(t *testing.T) {
 		"RetainedAddressConflict":   bootaddress.ErrRefused,
 		"AddressAllocationRejected": bootaddress.ErrRefused,
 		"AllocationFailed":          bootaddress.ErrPending,
+		"SomethingNSOAddsLater":     bootaddress.ErrPending,
 	} {
 		source, api, allocation := bootFixture(t, interceptor.Funcs{})
 		_ = source.Attach(ctx, allocation, "alloc-example-install-1")
@@ -172,9 +176,43 @@ func TestNSORefusalsAreReported(t *testing.T) {
 		if err := source.Attach(ctx, allocation, "alloc-example-install-1"); !errors.Is(err, want) {
 			t.Errorf("%s: attach = %v, want %v", reason, err, want)
 		}
-		if _, err := source.Claim(ctx, allocation.Name, "alloc-example-install-1"); !errors.Is(err, want) {
+		_, err := source.Claim(ctx, allocation.Name, "alloc-example-install-1")
+		if !errors.Is(err, want) {
 			t.Errorf("%s: claim = %v, want %v", reason, err, want)
 		}
+		// NSO retries a failure it does not classify; the wait says why.
+		if reason == "AllocationFailed" && (!strings.Contains(err.Error(), "AllocationFailed") || !strings.Contains(err.Error(), "lab-provisioning")) {
+			t.Errorf("AllocationFailed: %v, want NSO's reason and message", err)
+		}
+	}
+}
+
+// TestBootAttachmentCheckNeedsNSOsTypes refuses to make the check for an
+// admission reader whose scheme does not know NSO's claim, which would leave
+// every operation Pending, and a check not made by its constructor fails
+// closed.
+func TestBootAttachmentCheckNeedsNSOsTypes(t *testing.T) {
+	if _, err := NewBootAttachmentCheck(runtime.NewScheme(), "", bootNetwork); err == nil {
+		t.Fatal("a check was made for a reader that cannot read NSO's claims")
+	}
+	if _, err := NewBootAttachmentCheck(nil, "", bootNetwork); err == nil {
+		t.Fatal("a check was made with no scheme")
+	}
+	scheme := runtime.NewScheme()
+	if err := networkingv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewBootAttachmentCheck(scheme, "", ""); err == nil {
+		t.Fatal("a check was made with no boot network")
+	}
+	if _, err := NewBootAttachmentCheck(scheme, "", bootNetwork); err != nil {
+		t.Fatal(err)
+	}
+	operation := &ops.DeviceInstallation{}
+	operation.Name, operation.Namespace = "alloc-example-install-1", bootNamespace
+	_, api, _ := bootFixture(t, interceptor.Funcs{})
+	if err := (BootAttachmentCheck{}).Verify(context.Background(), api, operation, "DeviceInstallation", ops.BootNetworkInput{}); !errors.Is(err, bootaddress.ErrUnavailable) {
+		t.Fatalf("a zero check: %v", err)
 	}
 }
 
@@ -219,7 +257,10 @@ func TestBootAttachmentCheckRequiresTheExactProgrammedClaim(t *testing.T) {
 			return c.Get(ctx, key, object, opts...)
 		},
 	})
-	check := BootAttachmentCheck{Network: bootNetwork}
+	check, err := NewBootAttachmentCheck(api.Scheme(), "", bootNetwork)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_ = source.Attach(ctx, allocation, "alloc-example-install-1")
 	claim := bootClaim(t, api, "alloc-example-install-1")
 	created := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
@@ -247,7 +288,7 @@ func TestBootAttachmentCheckRequiresTheExactProgrammedClaim(t *testing.T) {
 	refused("another kind", operation, "DeviceWipe", good)
 	refused("another address", operation, "DeviceInstallation", ops.BootNetworkInput{AddressClaim: good.AddressClaim, Address: "198.51.100.11"})
 	refused("IPAM's kind", operation, "DeviceInstallation", ops.BootNetworkInput{AddressClaim: bootaddress.Reference(claim.Name), Address: good.Address})
-	if err := (BootAttachmentCheck{Network: "customer-a"}).Verify(ctx, api, operation, "DeviceInstallation", good); !errors.Is(err, bootaddress.ErrUnavailable) {
+	if other, _ := NewBootAttachmentCheck(api.Scheme(), "", "customer-a"); !errors.Is(other.Verify(ctx, api, operation, "DeviceInstallation", good), bootaddress.ErrUnavailable) {
 		t.Errorf("a claim on another network verified: %v", err)
 	}
 	// Recreated after the operation, even with the same address.
@@ -342,6 +383,20 @@ func TestBootReleaseIsVerifiedInNSOAndIPAM(t *testing.T) {
 	if err := api.Delete(ctx, ipamAllocation); err != nil {
 		t.Fatal(err)
 	}
+	// NSO may have claimed the address under the name for the location.
+	located := ipamAllocation.DeepCopy()
+	located.SetResourceVersion("")
+	located.SetName("alloc-fedcba9876543210")
+	located.Object["spec"] = map[string]any{"claimRef": map[string]any{"name": BootAddressIPClaims(claim.Name, location)[1]}}
+	if err := api.Create(ctx, located); err != nil {
+		t.Fatal(err)
+	}
+	if gone, err := source.Release(ctx, "alloc-example-install-1"); !errors.Is(err, bootaddress.ErrReleaseUnverified) || gone {
+		t.Fatalf("a release with an allocation under the location's name: %v, %v", gone, err)
+	}
+	if err := api.Delete(ctx, located); err != nil {
+		t.Fatal(err)
+	}
 	if gone, err := source.Release(ctx, "alloc-example-install-1"); err != nil || !gone {
 		t.Fatalf("release = %v, %v", gone, err)
 	}
@@ -360,4 +415,14 @@ func TestBootAddressIPClaimFollowsNSOsNaming(t *testing.T) {
 	if long := BootAddressIPClaim(strings.Repeat("b", 260)); len(long) > 253 {
 		t.Fatalf("hashed name is %d characters", len(long))
 	}
+	// NSO's location name: the first eight hex digits of SHA-256("location-example-a").
+	names := BootAddressIPClaims("alloc-example-install-1-boot", location)
+	if len(names) != 2 || names[0] != "alloc-example-install-1-boot-f-ipv4" || names[1] != "alloc-example-install-1-boot-f-ipv4-l"+locationHash(location) {
+		t.Fatalf("names = %v", names)
+	}
+}
+
+func locationHash(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return hex.EncodeToString(sum[:])[:8]
 }

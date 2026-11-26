@@ -26,9 +26,12 @@ package nso
 //     status.addresses, is the operation's provisioning address.
 //  6. Detach before delete. NSO keeps a Physical claim until its port is off
 //     the claim's network, then releases its addresses.
-//  7. Verified release. NSO names the IPAM claim for a claim's IPv4 address
-//     as BootAddressIPClaim returns, in the IPAM namespace of the claim's
-//     project. That is NSO's naming today, but not a documented contract.
+//  7. Verified release. NSO makes the IPAM claim for a claim's IPv4 address
+//     under one of the names BootAddressIPClaims returns, in the IPAM
+//     namespace of the claim's project: the plain name, or one suffixed with
+//     a hash of the location. This mirrors NSO's code today (ipClaimNames in
+//     its interface claim controller), not a documented contract; NSO puts
+//     no labels on those IPAM claims, so the names are the only link.
 
 import (
 	"crypto/sha256"
@@ -73,11 +76,22 @@ func AttachmentPointOf(claim *networkingv1.NetworkInterfaceClaim) AttachmentPoin
 	return AttachmentPoint{MACAddress: claim.Annotations[AttachmentMACAnnotation], Switch: claim.Annotations[AttachmentSwitchAnnotation], Port: claim.Annotations[AttachmentPortAnnotation]}
 }
 
-// BootAddressIPClaim is the name of the IPAM claim NSO makes for a claim's
-// IPv4 interface address: the claim's name and the family, hashed when the
+// BootAddressIPClaims are the names NSO may make the IPAM claim for a claim's
+// IPv4 interface address under at a location: the plain name, then the name
+// suffixed with the first eight hex digits of the location name's SHA-256.
+func BootAddressIPClaims(claim, location string) []string {
+	sum := sha256.Sum256([]byte(location))
+	return []string{BootAddressIPClaim(claim), ipClaimName(claim, "f-ipv4-l"+hex.EncodeToString(sum[:])[:8])}
+}
+
+// BootAddressIPClaim is the plain name of the IPAM claim NSO makes for a
+// claim's IPv4 interface address.
+func BootAddressIPClaim(claim string) string { return ipClaimName(claim, "f-ipv4") }
+
+// ipClaimName is the claim's name and the discriminator, hashed when the
 // result would not be a valid name.
-func BootAddressIPClaim(claim string) string {
-	const discriminator, maxName, hashLen = "f-ipv4", 253, 12
+func ipClaimName(claim, discriminator string) string {
+	const maxName, hashLen = 253, 12
 	candidate := claim + "-" + discriminator
 	if len(candidate) <= maxName && len(validation.IsDNS1123Subdomain(candidate)) == 0 {
 		return candidate

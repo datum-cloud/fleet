@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -39,18 +38,53 @@ const (
 	customerNetwork = "customer-a"
 	detachFinalizer = "networking.datumapis.com/physical-detach"
 	sharedPort      = "switch-example-a/ethernet7"
+	siteLocation    = "location-example-a"
 )
+
+// nsoModule is the pinned NSO module.
+const nsoModule = "go.datum.net/network-services-operator"
+
+// nsoModuleDir finds the NSO module pinned in Fleet's go.mod in the module
+// cache, without running the go command. It skips the test when the module's
+// sources are not in the cache.
+func nsoModuleDir(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		if fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "require ")); len(fields) >= 2 && fields[0] == nsoModule {
+			version = fields[1]
+		}
+	}
+	cache := os.Getenv("GOMODCACHE")
+	if cache == "" {
+		gopath := os.Getenv("GOPATH")
+		if gopath == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				t.Skip("no module cache to find the NSO module")
+			}
+			gopath = filepath.Join(home, "go")
+		}
+		cache = filepath.Join(filepath.SplitList(gopath)[0], "pkg", "mod")
+	}
+	// The module path is lower case, so it needs no case escaping.
+	dir := filepath.Join(cache, filepath.FromSlash(nsoModule)+"@"+version)
+	if _, err := os.Stat(filepath.Join(dir, "config", "crd", "bases")); version == "" || err != nil {
+		t.Skipf("NSO module %s@%s is not in the module cache", nsoModule, version)
+	}
+	return dir
+}
 
 // nsoCRDs loads NSO's Network, NetworkInterfaceClaim and NetworkInterface
 // CRDs from the pinned module, with the assumed Physical attachment mode
 // added.
 func nsoCRDs(t *testing.T) []*apiextensionsv1.CustomResourceDefinition {
 	t.Helper()
-	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "go.datum.net/network-services-operator").Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := filepath.Join(strings.TrimSpace(string(out)), "config", "crd", "bases")
+	dir := filepath.Join(nsoModuleDir(t), "config", "crd", "bases")
 	var crds []*apiextensionsv1.CustomResourceDefinition
 	for _, name := range []string{"networks", "networkinterfaceclaims", "networkinterfaces"} {
 		data, err := os.ReadFile(filepath.Join(dir, "networking.datumapis.com_"+name+".yaml"))
@@ -83,11 +117,8 @@ func nsoCRDs(t *testing.T) []*apiextensionsv1.CustomResourceDefinition {
 // before what is gained, keeps a deleting claim until its port left the
 // claim's network, and holds one IPAM allocation per boot address.
 type realizer struct {
-	api client.Client
-	mu  sync.Mutex
-	// twoStep, for a guard trial, takes the port off its networks in one
-	// pass and attaches the new ones in the next.
-	twoStep bool
+	api     client.Client
+	mu      sync.Mutex
 	ports   map[string][]string
 	history map[string][][]string
 	next    int
@@ -171,9 +202,6 @@ func (r *realizer) pass(ctx context.Context) error {
 			sort.Strings(want)
 		}
 		if current := r.ports[port]; !slices.Equal(current, want) {
-			if r.twoStep && len(current) > 0 && len(want) > 0 {
-				want = nil
-			}
 			r.ports[port] = want
 			r.history[port] = append(r.history[port], want)
 		}
@@ -306,10 +334,14 @@ func nsoEnv(t *testing.T) (*env, *inventory.Device) {
 	e.create(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ipamNamespace}})
 	e.runner.Kinds["DeviceInstallation"] = syncedSite{simwork.Installation{}}
 	e.runner.Kinds["DeviceWipe"] = syncedSite{simwork.Wipe{}}
-	if err := e.loop.Coordinator.Registry.RegisterBootAddressClaim(nso.BootClaimGroup, nso.BootClaimKind, nso.BootAttachmentCheck{Network: bootNetworkName}.Verify); err != nil {
+	check, err := nso.NewBootAttachmentCheck(e.admin.Scheme(), "", bootNetworkName)
+	if err != nil {
 		t.Fatal(err)
 	}
-	e.allocator.BootAddresses = nso.BootAttachments{Network: bootNetworkName, IPAM: e.admin, IPAMNamespace: ipamNamespace}
+	if err := e.loop.Coordinator.Registry.RegisterBootAddressClaim(nso.BootClaimGroup, nso.BootClaimKind, check.Verify); err != nil {
+		t.Fatal(err)
+	}
+	e.allocator.BootAddresses = nso.BootAttachments{Network: bootNetworkName, IPAM: e.admin, IPAMNamespace: ipamNamespace, Location: siteLocation}
 	device := e.server(1)
 	e.create(&inventory.Cable{ObjectMeta: metav1.ObjectMeta{Name: "cable-example-1", Namespace: namespace}, Spec: inventory.CableSpec{
 		PhysicalMetadata: inventory.PhysicalMetadata{DisplayName: "Example"}, Medium: "Copper",
@@ -413,9 +445,6 @@ func (e *env) installed(allocation *fleetv1.MachineAllocation, request Installat
 func TestOneWriterPerPortThroughHandover(t *testing.T) {
 	e, device := nsoEnv(t)
 	r := newRealizer(e.admin)
-	if os.Getenv("FLEET_TRIAL_TWO_STEP") != "" {
-		r.twoStep = true
-	}
 	go r.run(e.ctx)
 	s := &sampler{}
 	go s.run(e.ctx, e.admin)
