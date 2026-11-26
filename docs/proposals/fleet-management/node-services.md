@@ -170,7 +170,7 @@ The node service controller reports each instance on its NodeClaim:
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: NodeClaim
 metadata:
-  name: us-central-1-alice-compute-0
+  name: region-2-cluster-a-compute-0
 status:
   nodeServices:
     - name: private-dns-resolver

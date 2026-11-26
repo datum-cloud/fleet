@@ -246,9 +246,9 @@ describe('name condensation', () => {
   it('prefers display names and human resource names, never generated ones', () => {
     expect(isGeneratedName('netbox-ca213d185ea9153b853f295e')).toBe(true);
     expect(isGeneratedName('00000000-0000-4000-8000-000000000001')).toBe(true);
-    expect(isGeneratedName('pdu-a.rk105.yul3')).toBe(false);
+    expect(isGeneratedName('pdu-a.rack-01.ex1')).toBe(false);
     expect(humanName(record('netbox-30ba6ae0ee289bda385a7a96', 'Leaf 1'))).toBe('Leaf 1');
-    expect(humanName(record('pdu-a.rk105.yul3'))).toBe('pdu-a.rk105.yul3');
+    expect(humanName(record('pdu-a.rack-01.ex1'))).toBe('pdu-a.rack-01.ex1');
     // Importers often copy the generated name into displayName.
     expect(humanName(record('netbox-30ba6ae0ee289bda385a7a96', 'netbox-30ba6ae0ee289bda385a7a96'))).toBeUndefined();
     const imported = device('netbox-30ba6ae0ee289bda385a7a96', [], { displayName: undefined, identity: { manufacturer: 'Example Networks', model: 'EX-1' } });

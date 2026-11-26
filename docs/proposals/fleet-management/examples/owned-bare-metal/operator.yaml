@@ -7,10 +7,10 @@
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Rack
 metadata:
-  name: iad1-r12
-  namespace: infra-ops
+  name: ex1-r12
+  namespace: fleet-ops
 spec:
-  facilityRef: {name: iad1}
+  facilityRef: {name: ex1}
   heightUnits: 42
 ---
 # OPERATOR: plan one physical installation before any Device is registered.
@@ -18,8 +18,8 @@ spec:
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: DeviceClaim
 metadata:
-  name: iad1-r12-u20-server
-  namespace: infra-ops
+  name: ex1-r12-u20-server
+  namespace: fleet-ops
 spec:
   role: Server
   expectedIdentity:
@@ -27,7 +27,7 @@ spec:
     model: PowerEdge-R650
     serialNumber: EXAMPLE-SERVER-001
   placement:
-    rackRef: {name: iad1-r12}
+    rackRef: {name: ex1-r12}
     position: 20
     heightUnits: 1
     face: Front
@@ -42,66 +42,66 @@ spec:
     - {id: psu1, type: PowerInlet, physicalLabel: PSU1}
     - {id: psu2, type: PowerInlet, physicalLabel: PSU2}
   cableRefs:
-    - {name: iad1-r12-srv01-management}
-    - {name: iad1-r12-srv01-data}
-    - {name: iad1-r12-srv01-power-a}
-    - {name: iad1-r12-srv01-power-b}
+    - {name: ex1-r12-srv01-management}
+    - {name: ex1-r12-srv01-data}
+    - {name: ex1-r12-srv01-power-a}
+    - {name: ex1-r12-srv01-power-b}
 ---
 # OPERATOR: BMC to the existing management switch.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
-  name: iad1-r12-srv01-management
-  namespace: infra-ops
+  name: ex1-r12-srv01-management
+  namespace: fleet-ops
 spec:
   medium: CopperEthernet
-  a: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: bmc}]
-  b: [{deviceRef: {name: iad1-oob01}, componentID: port12}]
+  a: [{deviceClaimRef: {name: ex1-r12-u20-server}, portID: bmc}]
+  b: [{deviceRef: {name: ex1-oob01}, componentID: port12}]
 ---
 # OPERATOR: the data NIC can serve protected provisioning and later tenant
 # connectivity. The network controller controls the transition between them.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
-  name: iad1-r12-srv01-data
-  namespace: infra-ops
+  name: ex1-r12-srv01-data
+  namespace: fleet-ops
 spec:
   medium: DirectAttachCopper
-  a: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: nic1-p1}]
-  b: [{deviceRef: {name: iad1-r12-leaf-a}, componentID: ethernet20}]
+  a: [{deviceClaimRef: {name: ex1-r12-u20-server}, portID: nic1-p1}]
+  b: [{deviceRef: {name: ex1-r12-leaf-a}, componentID: ethernet20}]
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
-  name: iad1-r12-srv01-power-a
-  namespace: infra-ops
+  name: ex1-r12-srv01-power-a
+  namespace: fleet-ops
 spec:
   medium: Power
-  a: [{deviceRef: {name: iad1-r12-pdu-a}, componentID: outlet20}]
-  b: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: psu1}]
+  a: [{deviceRef: {name: ex1-r12-pdu-a}, componentID: outlet20}]
+  b: [{deviceClaimRef: {name: ex1-r12-u20-server}, portID: psu1}]
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
-  name: iad1-r12-srv01-power-b
-  namespace: infra-ops
+  name: ex1-r12-srv01-power-b
+  namespace: fleet-ops
 spec:
   medium: Power
-  a: [{deviceRef: {name: iad1-r12-pdu-b}, componentID: outlet20}]
-  b: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: psu2}]
+  a: [{deviceRef: {name: ex1-r12-pdu-b}, componentID: outlet20}]
+  b: [{deviceClaimRef: {name: ex1-r12-u20-server}, portID: psu2}]
 ---
 # OPERATOR: existing network controller manages the leaf through this record.
 # Base fabric configuration and management-switch configuration already exist.
 apiVersion: networking.datumapis.com/v1alpha1
 kind: NetworkDevice
 metadata:
-  name: iad1-r12-leaf-a
-  namespace: infra-ops
+  name: ex1-r12-leaf-a
+  namespace: fleet-ops
 spec:
-  deviceRef: {name: iad1-r12-leaf-a}
+  deviceRef: {name: ex1-r12-leaf-a}
   management:
     protocol: GNMI
-    endpoint: leaf-a.r12.iad1.mgmt.example.invalid:9339
+    endpoint: leaf-a.r12.ex1.mgmt.example.invalid:9339
     credentialsSecretRef: {name: leaf-a-management}
     trustSecretRef: {name: network-management-ca}
 ---
@@ -110,8 +110,8 @@ spec:
 apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 metadata:
-  name: iad1-r12-srv01
-  namespace: infra-ops
+  name: ex1-r12-srv01
+  namespace: fleet-ops
   labels:
     fleet.datumapis.com/capacity-pool: general-metal
 spec:

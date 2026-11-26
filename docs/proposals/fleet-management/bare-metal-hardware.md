@@ -89,8 +89,8 @@ metadata:
   name: metal-standard
 spec:
   source:
-    project: datum-metal
-    name: datum-metal-standard
+    project: example-metal
+    name: example-metal-standard
 ```
 
 Definition and reference fields are mutually exclusive. The mode and source are
@@ -120,8 +120,8 @@ existing capacity.
 apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 metadata:
-  name: iad1-r12-srv01
-  namespace: infra-ops
+  name: ex1-r12-srv01
+  namespace: fleet-ops
   labels:
     fleet.datumapis.com/capacity-pool: general-metal
 spec:
@@ -184,7 +184,7 @@ spec:
   machineProfileRef:
     name: standard-metal
   locationRef:
-    name: us-east-1
+    name: region-1
   powerState: "On"
   networkAttachmentRefs:
     - name: db-01-primary

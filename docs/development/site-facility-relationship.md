@@ -10,9 +10,10 @@ record, Facility premises identifiers, observational readers, IAM declarations,
 and staff directory views. It does not install these
 changes, mutate live records or assert authenticated staging acceptance.
 
-The clarification **Datum Site DFW3 relates to DataBank premises DFW1** describes
-two concepts, not two Facilities. It is conceptual evidence only, not permission
-to migrate existing records. No DFW mapping is seeded by this change. Tests and
+A clarification of the form **operational Site EX3 relates to provider premises
+EX1** describes two concepts, not two Facilities. It is conceptual evidence only,
+not permission to migrate existing records. No such mapping is seeded by this
+change. Tests and
 preview records use synthetic `EX3` / `example-provider / EX1` identities.
 
 ## Ownership and cardinality
@@ -105,7 +106,7 @@ not an unrelated legacy API migration.
 
 `Facility.spec.identifiers` is an optional bounded list of
 `{provider, type, value}`. `provider` is a canonical provider namespace (for example
-`databank`), not its mutable display label. Types are `PremisesCode`, `PremisesAlias`
+`example-provider`), not its mutable display label. Types are `PremisesCode`, `PremisesAlias`
 and `PremisesID`. Multiple identifiers, aliases, and provider namespaces are
 supported. Identical code values under different providers are distinct; exact
 duplicate entries are rejected. These are sourced descriptive facts, not resource
@@ -152,8 +153,8 @@ remain observations, not available capacity or readiness.
    resourceVersion preconditions for corrections outside the spec. Review name
    reuse explicitly. No delete/recreate migration is required or allowed here.
 4. Independently review IAM and authenticated staging behavior before rollout.
-   This task changes no live counts or memberships and does not deploy. The nine
-   DFW3 reported-placement corrections and separate audit companion are out of scope.
+   This task changes no live counts or memberships and does not deploy. Existing
+   reported-placement corrections and their separate audit companion are out of scope.
 
 Future allocation policy, canonical provider namespace governance, cross-record
 identifier uniqueness adjudication, and atomic relationship admission remain

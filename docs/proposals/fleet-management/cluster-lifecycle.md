@@ -17,7 +17,7 @@ consumers use those same APIs without creating a Cluster or NodeClaim.
 Physical assets and commissioning belong to [Fleet inventory](inventory.md).
 Datum-owned hardware operations belong to
 [bare-metal provisioning](bare-metal-provisioning.md). For a managed cell,
-see [examples/us-east-1-alice.md](examples/us-east-1-alice.md). Resource shapes
+see [examples/rented-capacity-adoption.md](examples/rented-capacity-adoption.md). Resource shapes
 and field names below are proposed contracts, not implemented schemas.
 
 - [Summary](#summary)
@@ -80,22 +80,22 @@ label management.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Site
 metadata:
-  name: us-east-1
+  name: region-1
 spec:
-  locationRef: {name: us-east-1}
+  locationRef: {name: region-1}
   allocation:
     facilitySelector:
       matchLabels:
-        fleet.datumapis.com/allocation-group: us-east-1
+        fleet.datumapis.com/allocation-group: region-1
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cluster
 metadata:
-  name: us-east-1-alice
+  name: region-1-cluster-a
   labels:
     fleet.datumapis.com/wave: stable
 spec:
-  siteRef: {name: us-east-1}
+  siteRef: {name: region-1}
   clusterProviderRef:                               # connection and transport credentials
     apiGroup: omni.fleet.datumapis.com
     kind: OmniInstance
@@ -108,7 +108,7 @@ spec:
   environment: production
   version: v1.35.5
   zones:
-    - us-east-1a
+    - region-1a
   updatePolicy:
     admission: Staged
     controlPlane:
@@ -117,14 +117,14 @@ spec:
 status:
   phase: Ready
   machinePools:
-    - name: us-east-1-alice-controlplane
+    - name: region-1-cluster-a-controlplane
       desired: 3
       ready: 3
-    - name: us-east-1-alice-compute
+    - name: region-1-cluster-a-compute
       desired: 1
       ready: 1
   capabilities:                                    # observations projected to Karmada labels
-    infra.datum.net/gateways: "true"
+    infra.example.com/gateways: "true"
     compute.datumapis.com/runtime-class.unikernel: "true"
   configDelivered:
     revision: v0.72.0
@@ -156,11 +156,11 @@ alone does not change that recipe.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachinePool
 metadata:
-  name: us-east-1-alice-compute
+  name: region-1-cluster-a-compute
 spec:
-  clusterRef: {name: us-east-1-alice}
+  clusterRef: {name: region-1-cluster-a}
   role: compute
-  machineClassRef: {name: serverscom-compute-2u}
+  machineClassRef: {name: provider-a-compute-2u}
   machineProfileRef: {name: compute-2u}
   imageRef: {name: talos-1.13.7}
   replicas: 1
@@ -231,28 +231,28 @@ and from a customer Machine, whose private MachineAllocation reserves provider c
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: NodeClaim
 metadata:
-  name: us-east-1-alice-compute-0
+  name: region-1-cluster-a-compute-0
 spec:
-  poolRef: {name: us-east-1-alice-compute}
+  poolRef: {name: region-1-cluster-a-compute}
   role: compute
   desiredState: Running                            # Running | Cordoned | Drained
-  identityScopeRef: {name: alice-compute-0-addresses}
+  identityScopeRef: {name: cluster-a-compute-0-addresses}
   configurationAdmission:                          # written by the authorized progression controller
     recipeRef:
-      name: alice-compute-r1
+      name: cluster-a-compute-r1
       digest: sha256:<retained-recipe-digest>
     epoch: 1
 status:
   phase: Ready
-  machineRef: {name: alice-compute-0-hardware-01}
-  installationRef: {name: alice-compute-0-os-01}
+  machineRef: {name: cluster-a-compute-0-hardware-01}
+  installationRef: {name: cluster-a-compute-0-os-01}
   node:
-    name: us-east-1-alice-compute-0
+    name: region-1-cluster-a-compute-0
     ready: true
   interfaces:
     - name: fabric0
       addresses:
-        - 2607:ed40:10d::1/128
+        - 2001:db8:10d::1/128
 ```
 
 NodeClaim status also reports each [node service](node-services.md) instance
@@ -319,14 +319,14 @@ join an in-progress rollout.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Rollout
 metadata:
-  name: alice-r2
+  name: cluster-a-r2
 spec:
   desiredState: Running
   targets:
     - clusterRef:
-        name: us-east-1-alice
+        name: region-1-cluster-a
       recipeRef:
-        name: alice-r2
+        name: cluster-a-r2
         digest: sha256:<retained-target-recipe-digest>
       baseline:
         selectionEpoch: 1
@@ -461,11 +461,11 @@ to deploy whatever their dependencies happen to contain later:
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cluster
 metadata:
-  name: us-east-1-bob
+  name: region-1-cluster-b
   labels:
     fleet.datumapis.com/wave: canary
 spec:
-  siteRef: {name: us-east-1}
+  siteRef: {name: region-1}
   channel: beta
   environment: production
   version: v1.35.5
@@ -483,11 +483,11 @@ spec:
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachinePool
 metadata:
-  name: us-east-1-bob-controlplane
+  name: region-1-cluster-b-controlplane
 spec:
-  clusterRef: {name: us-east-1-bob}
+  clusterRef: {name: region-1-cluster-b}
   role: controlplane
-  machineClassRef: {name: netactuate-controlplane}
+  machineClassRef: {name: provider-b-controlplane}
   machineProfileRef: {name: controlplane-standard}
   imageRef: {name: talos-1.13.7}
   replicas: 3

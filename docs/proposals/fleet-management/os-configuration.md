@@ -18,7 +18,7 @@ See [shared machine allocation](bare-metal-hardware.md),
 [cluster orchestration](cluster-lifecycle.md), [physical inventory](inventory.md),
 and [owned-metal provisioning](bare-metal-provisioning.md). The
 [owned-server journey](examples/owned-bare-metal/README.md) shows standalone
-customer installation; the [us-east-1-alice example](examples/us-east-1-alice.md)
+customer installation; the [region-1-cluster-a example](examples/rented-capacity-adoption.md)
 shows a managed cell.
 Fields and resource shapes below are proposed contracts, not deployed schemas.
 
@@ -144,17 +144,17 @@ and power-on.
 apiVersion: metal.datumapis.com/v1alpha1
 kind: Installation
 metadata:
-  name: alice-compute-0-os-01
+  name: cluster-a-compute-0-os-01
   labels:
     fleet.datumapis.com/role: compute
-    fleet.datumapis.com/cluster: us-east-1-alice
-    fleet.datumapis.com/site: us-east-1
+    fleet.datumapis.com/cluster: region-1-cluster-a
+    fleet.datumapis.com/site: region-1
     fleet.datumapis.com/environment: production
 spec:
-  machineRef: {name: alice-compute-0-hardware-01}
+  machineRef: {name: cluster-a-compute-0-hardware-01}
   expectedPredecessor: {type: None}
   imageRef: {name: talos-1.13.7}
-  bootstrapConfigRef: {name: alice-compute-0-bootstrap-01}
+  bootstrapConfigRef: {name: cluster-a-compute-0-bootstrap-01}
 status:
   resolvedImageDigest: sha256:<exact-image-digest>
   conditions:
@@ -200,14 +200,14 @@ privately retains its exact local incarnation, for example:
 apiVersion: metal.datumapis.com/v1alpha1
 kind: Installation
 metadata:
-  name: alice-compute-0-os-02
+  name: cluster-a-compute-0-os-02
 spec:
-  machineRef: {name: alice-compute-0-hardware-01}
+  machineRef: {name: cluster-a-compute-0-hardware-01}
   expectedPredecessor:
     type: Installation
-    name: alice-compute-0-os-01
+    name: cluster-a-compute-0-os-01
   imageRef: {name: talos-next-qualified-release}
-  bootstrapConfigRef: {name: alice-compute-0-bootstrap-02}
+  bootstrapConfigRef: {name: cluster-a-compute-0-bootstrap-02}
 ```
 
 The coordinator checks the expected predecessor against the Machine's durable

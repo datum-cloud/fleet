@@ -8,8 +8,8 @@ metadata:
   name: metal-standard
 spec:
   source:
-    project: datum-metal
-    name: datum-metal-standard
+    project: example-metal
+    name: example-metal-standard
 status:
   resolvedClass:
     arch: amd64

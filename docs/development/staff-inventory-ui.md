@@ -899,7 +899,7 @@ Views never show a generated resource name (`netbox-ca213d185ea9153b853f295e`,
 or any name with a run of twelve or more hex digits, or a UID) by default.
 `humanName()` in `ui/provider/src/lib/display-names.ts`, the single home for
 name condensing, uses the display name, or the resource name when it reads as a
-human name (`pdu-a.rk105.yul3`). Without one, a Cable is named by its medium
+human name (`pdu-a.rack-01.ex1`). Without one, a Cable is named by its medium
 ("Copper cable") and a peer by its kind ("Unnamed device"). When two different
 records would read the same, `viewNames()` adds a short suffix from the
 resource name ("Copper cable #295e"). A denied peer is never named or

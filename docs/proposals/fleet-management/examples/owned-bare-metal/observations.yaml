@@ -6,8 +6,8 @@
 apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 metadata:
-  name: iad1-r12-srv01
-  namespace: infra-ops
+  name: ex1-r12-srv01
+  namespace: fleet-ops
 status:
   conditions:
     - {type: IdentityVerified, status: "True", reason: DeviceIdentityMatched}
