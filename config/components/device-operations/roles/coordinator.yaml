@@ -41,3 +41,10 @@ spec:
     - metal.datumapis.com/machinecapacities.get
     - metal.datumapis.com/machinecapacities.list
     - metal.datumapis.com/machinecapacities.watch
+    # The coordinator checks each payload at admission, the federation
+    # courier in it delivers payloads to sites, and it deletes them. No
+    # other role can read the sealed store.
+    - fleet.datumapis.com/sealedpayloads.get
+    - fleet.datumapis.com/sealedpayloads.list
+    - fleet.datumapis.com/sealedpayloads.watch
+    - fleet.datumapis.com/sealedpayloads.delete

@@ -42,7 +42,8 @@ smoke verifies it. The end-to-end failure scenarios (Increment D) are proposed.
 **implemented**: a provider-published, digest-pinned `MachineImage` that
 admission resolves through a publication record and checks against the
 server's architecture and firmware mode. The sealed bootstrap store is
-proposed.
+**implemented** through the simulator site; federation and the lab sites do
+not carry bootstrap data yet.
 
 The opt-in [multi-plane acceptance harness](../operations/multiplane.md) composes
 the [local VM site](../operations/local-vm.md) with native Milo project APIs, the
@@ -530,7 +531,7 @@ allocator selects again. An `Active` allocation that lost custody is not repaire
 
 Installation admission creates a `DeviceInstallation` named from the allocation
 and the Installation UID. The Installation's predecessor must be the Machine's
-current installation, and a bootstrap reference is refused. Response-loss
+current installation, and bootstrap data goes through the sealed store. Response-loss
 recovery is an exact lookup by name, not a second effect. Release moves the
 holder to `Release`, closes the gates, wipes the Device, deletes the quota claim,
 and only then returns the Device to `None`. The allocation, installations and
@@ -785,13 +786,14 @@ acceptance inventory.
   fence, consumer-project deletion recovery, or provider-project purge guard.
   Production cross-project allocation therefore fails closed, and the quota claim
   has no end-to-end run.
-- `LocalDigestImageResolver` is test-only. Production image authority,
-  namespace authorization, catalog lifetime identity, and digest resolution are
-  not implemented.
+- Image resolution uses a fixture authorizer; the Milo image-use check is not
+  implemented. See [OS images and bootstrap data](machine-images.md).
 - No container image or Kubernetes deployment is delivered in this increment.
 - There is no mTLS workload identity, target-level authorization, or production
   site credential protocol.
-- The capacity projector is unwired (O1) and bootstrap is refused (O10); see
-  [Device custody](device-custody.md#points-for-a-person).
+- The capacity projector is unwired (O1); see
+  [Device custody](device-custody.md#points-for-a-person). Bootstrap data
+  reaches only the simulator site; see [OS images and bootstrap
+  data](machine-images.md).
 - The site store is intended for a single site process per Device. Replication,
   migration, backup, and upgrade/downgrade compatibility are not implemented.

@@ -17,9 +17,9 @@ import (
 
 // Assignment is the handoff payload: one admitted operation, its fence and
 // deadline, the Device snapshot the coordinator captured at admission, and
-// the exact inputs. Bootstrap, when it is supported, arrives as a sealed
-// reference and digest, never as a payload. It replaces the request JSON of
-// the old handoff in Increment C.
+// the exact inputs. Bootstrap data is never in the assignment: the inputs
+// carry its sealed reference and digest, and the payload arrives beside the
+// assignment.
 type Assignment struct {
 	// Device is "<namespace>/<name>" in the provider project.
 	Device      string                 `json:"device"`
@@ -31,8 +31,7 @@ type Assignment struct {
 	InputDigest string                 `json:"inputDigest"`
 	// Inputs is the operation's spec exactly as admitted. Its SHA-256 is
 	// InputDigest.
-	Inputs json.RawMessage  `json:"inputs"`
-	Sealed *ops.SealedInput `json:"sealed,omitempty"`
+	Inputs json.RawMessage `json:"inputs"`
 }
 
 const maxInputs = 16 << 10
@@ -86,6 +85,7 @@ type Work struct {
 	Connection any
 	store      *Store
 	sent       bool
+	payload    *Payload
 }
 
 // Kind is the site worker contract for one operation kind.
@@ -231,6 +231,9 @@ type Runner struct {
 	// VM and simulator executors add their own in Increment C.
 	Access Access
 	Kinds  map[string]Kind
+	// Payloads holds delivered bootstrap payloads. A site without it
+	// refuses any operation that carries bootstrap data.
+	Payloads Payloads
 	// Poll is how often a worker checks for a newer fence and for the run
 	// lock. It defaults to one second.
 	Poll time.Duration
@@ -275,6 +278,13 @@ func (r *Runner) acquire(ctx context.Context, assignment Assignment) (*runLock, 
 	if err := r.Store.Raise(assignment.Device, assignment.Fence); err != nil {
 		return nil, err
 	}
+	// Nothing below the new fence may run, so no payload below it is read
+	// again: a recovery or a newer operation removes them.
+	if r.Payloads != nil {
+		if err := r.Payloads.Prune(ctx, assignment.Device); err != nil {
+			return nil, err
+		}
+	}
 	ctx, cancel := context.WithDeadline(ctx, assignment.Deadline)
 	defer cancel()
 	for {
@@ -310,6 +320,17 @@ var ErrAlreadyRunning = errors.New("site: another worker runs this assignment")
 // ErrStaleFence, and stores nothing, for an assignment below the Device's
 // stored fence.
 func (r *Runner) Run(ctx context.Context, assignment Assignment) (custody.SiteResult, error) {
+	result, err := r.run(ctx, assignment)
+	// Once a result is stored, or a newer fence passed the assignment, no
+	// worker reads the payload again. A worker stopped from outside keeps it
+	// for its replacement.
+	if err == nil || errors.Is(err, ErrStaleFence) {
+		r.dropPayload(ctx, assignment)
+	}
+	return result, err
+}
+
+func (r *Runner) run(ctx context.Context, assignment Assignment) (custody.SiteResult, error) {
 	if err := assignment.Validate(); err != nil {
 		return custody.SiteResult{}, err
 	}
@@ -471,6 +492,11 @@ func (r *Runner) prepare(ctx context.Context, work *Work) *custody.Refusal {
 	if sum := sha256.Sum256(assignment.Inputs); "sha256:"+hex.EncodeToString(sum[:]) != assignment.InputDigest {
 		return &custody.Refusal{Reason: ReasonInputMismatch, Message: "the inputs do not match the admitted digest"}
 	}
+	payload, refusal := r.payload(ctx, assignment)
+	if refusal != nil {
+		return refusal
+	}
+	work.payload = payload
 	connection, refusal := r.Access.Prepare(ctx, assignment)
 	if refusal != nil {
 		return refusal

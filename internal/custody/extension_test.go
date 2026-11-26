@@ -250,7 +250,7 @@ func TestRegistryValidatesDeclaredReasons(t *testing.T) {
 		}
 	}
 	registry := testRegistry(t)
-	if !registry.Declared("DeviceInstallation", ReasonBootstrapUnsupported, RaisedByWorker) || !registry.Declared("DeviceInstallation", ReasonBootInterfaceUnknown, RaisedByCoordinator) || registry.Declared("DeviceInstallation", ReasonBootInterfaceUnknown, RaisedByWorker) {
+	if !registry.Declared("DeviceInstallation", ReasonBootstrapUnsupported, RaisedByWorker) || !registry.Declared("DeviceInstallation", ReasonBootstrapUnavailable, RaisedByCoordinator) || !registry.Declared("DeviceInstallation", ReasonBootInterfaceUnknown, RaisedByCoordinator) || registry.Declared("DeviceInstallation", ReasonBootInterfaceUnknown, RaisedByWorker) {
 		t.Fatal("declared sources are not kept")
 	}
 	// A kind may settle no hold itself.

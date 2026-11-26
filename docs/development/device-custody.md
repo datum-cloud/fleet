@@ -236,7 +236,7 @@ update). A retry finds the same allocation by its name.
 - **Installation.** The `DeviceInstallation` is named from the allocation and the
   Installation UID, which its `fleet.datumapis.com/installation-uid` label
   records. Its predecessor must be the Machine's current installation.
-  A bootstrap reference is refused.
+  Bootstrap data goes through the [sealed store](machine-images.md).
 - **Release.** The allocation's holder moves to `Release` with all six gates
   open. Then:
   - Access, Network and Address close at once.
@@ -374,7 +374,8 @@ event.
 
 - The capacity projector stays unwired (O1), so the synthetic fixtures still write
   `Prepared`, `Healthy` and `Available`.
-- Bootstrap stays refused (O10).
+- Bootstrap data reaches only the simulator site. See
+  [OS images and bootstrap data](machine-images.md).
 - `DeviceRecovery` needs no second person.
 
 ## Implementation decisions
@@ -620,10 +621,10 @@ remains.
   a person](#points-for-a-person).
 - Staff roles may read MachineAllocations, because nothing secret is on them.
   Only the recovery operator role grants that read today.
-- Bootstrap stays refused. A `DeviceInstallation` that names a bootstrap
-  reference ends `Failed` with `BootstrapUnsupported`. No role can read a
-  Secret, a sealed store, or a bootstrap payload, and a test checks the role
-  definitions.
+- Bootstrap data lives in the [sealed store](machine-images.md). Only the
+  coordinator role can read it, the installation requester can only create
+  it, and no role reads a Secret or a bootstrap payload. A test walks every
+  role the repository ships to check this.
 
 ### Other decisions
 
@@ -773,8 +774,8 @@ These need a decision before the increment that depends on them.
 - **O1: the interim source of `Prepared` and `Healthy`.** Still open after C.
   The projector stays unwired, so the synthetic fixtures write `Prepared`,
   `Healthy` and `Available` themselves.
-- **O10: the sealed store for bootstrap payloads.** Bootstrap stays refused in
-  every increment until a store is chosen.
+- **O10: the sealed store for bootstrap payloads.** Chosen and implemented as
+  `SealedPayload`; see [OS images and bootstrap data](machine-images.md).
 - **A second person for `DeviceRecovery`.** Not required yet. A person
   accepted this for now, and it stays open for a later decision.
 - **Synthetic staging needs its records imported again, and two new
@@ -884,7 +885,7 @@ a real API server:
 
 | Area | Tests |
 | --- | --- |
-| Every admission precondition, names, kind checks, bootstrap refusal, staff expiry | `TestAdmissionPreconditions` |
+| Every admission precondition, names, kind checks, the sealed bootstrap payload check, staff expiry | `TestAdmissionPreconditions` |
 | Every holder transition, pending order, supersede, cancellation on holder change, stale fences, results, deadlines | `TestLifecycle`, `TestImportedDeviceGetsUnverifiedCustodyAndSendsNothing` |
 | Holds and settlement through the test-only kind, install and wipe holds, `Retry`, `Retire`, retention | `TestRecovery` |
 | Rebuild from each source, each conflict, `Resolve`, custody deleted and restored | `TestRebuild` |
@@ -919,7 +920,7 @@ Increment B's site tests run with `go test -race ./internal/site/...`:
 | One worker per assignment, final results, shutdown at each stage, an older worker that does not stop, a fence raised between journal and send | `TestARedeliveryWhileTheSameOperationRunsStoresNothing`, `TestACopyWaitingForTheLockReturnsTheStoredResult`, `TestAStoredResultSurvivesARedelivery`, `TestAWorkerStoppedFromOutsideStoresNoResult`, `TestAShutdownWhileWaitingForTheRunLockStoresNothing`, `TestAShutdownDuringTheChecksStoresNothing`, `TestANewerAssignmentThatCannotStopTheOlderWorkerSendsNothing`, `TestALostLockWithJournaledStepsIsUnknown`, `TestAFenceRaisedBetweenJournalAndSendStopsTheStep` |
 | Per-Device credentials, the fence report | `TestSecretCredentialsUseThePerDeviceContract`, `TestReportGivesTheCoordinatorSeenAndStoppedFences` |
 | Step payloads, the start-by window, identity separate from capabilities, a resumed worker reporting unknown | `TestAStepPayloadIsJournaledAndReadBack`, `TestALateStartIsStaleAndSendsNothing`, `TestIdentityIsSeparateFromInstallCapabilities`, `TestAResumedWorkerThatCannotReachTheBMCReportsUnknown` |
-| Install and wipe against a simulated BMC, one power-on per phase after an interruption in either phase, the power-off bound, fenced boot admission, bootstrap refused | `TestAWorkerInterruptedInTheDiskPhaseResumes`, `TestAServerThatNeverPowersOffEndsTheStep`, `TestInstallationRunsBothPhasesWithOneOnEach`, `TestWipeChecksTheEnrolledDisk`, `TestAnInterruptedWorkerResumesWithoutASecondOn`, `TestOnlyTheCurrentFenceHasAnOpenBootAdmission`, `TestBootstrapIsRefusedAtTheSiteToo` |
+| Install and wipe against a simulated BMC, one power-on per phase after an interruption in either phase, the power-off bound, fenced boot admission, bootstrap refused by a site that cannot hand it on | `TestAWorkerInterruptedInTheDiskPhaseResumes`, `TestAServerThatNeverPowersOffEndsTheStep`, `TestInstallationRunsBothPhasesWithOneOnEach`, `TestWipeChecksTheEnrolledDisk`, `TestAnInterruptedWorkerResumesWithoutASecondOn`, `TestOnlyTheCurrentFenceHasAnOpenBootAdmission`, `TestBootstrapIsRefusedAtTheSiteToo` |
 
 Increment C's tests run with `task test:envtest`, and the smoke runs with
 `task standalone:test`:

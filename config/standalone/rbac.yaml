@@ -58,6 +58,10 @@ rules:
   - apiGroups: [metal.datumapis.com]
     resources: [machineimagepublications]
     verbs: [get, create, delete]
+  # It copies bootstrap data into the sealed store and never reads it back.
+  - apiGroups: [fleet.datumapis.com]
+    resources: [sealedpayloads]
+    verbs: [create]
   - apiGroups: [fleet.datumapis.com]
     resources: [devices, devicecustodies]
     verbs: [get]
@@ -73,6 +77,12 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: {name: fleet-synthetic-consumer-writer, namespace: fleet-project-a}
 rules:
+  # The Installation's bootstrap Secret. The fixture stands in for reading it
+  # under the Installation creator's authority.
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [debian-12-bootstrap]
+    verbs: [get]
   # The publisher's copy of the provider image.
   - apiGroups: [metal.datumapis.com]
     resources: [machineimages]
@@ -162,6 +172,10 @@ rules:
   - apiGroups: [metal.datumapis.com]
     resources: [machineallocations]
     verbs: [get, list, watch]
+  # The only reader of the sealed store: it checks, delivers and deletes.
+  - apiGroups: [fleet.datumapis.com]
+    resources: [sealedpayloads]
+    verbs: [get, list, watch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

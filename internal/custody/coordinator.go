@@ -31,6 +31,14 @@ type Sites interface {
 	Fence(ctx context.Context, site string, device *inventory.Device) (SiteFence, bool, error)
 }
 
+// PayloadCarriers is implemented by Sites that can tell whether every site
+// serving a Device can receive bootstrap payloads. Admission refuses an
+// operation with bootstrap data for a Device one of them cannot serve, so
+// it never holds the Device only to fail at its deadline.
+type PayloadCarriers interface {
+	CarriesPayloads(device *inventory.Device) bool
+}
+
 // SiteFence is one site's fence report for one Device.
 type SiteFence struct {
 	// Seen is the highest fence the site has stored. Admission and rebuild
@@ -792,7 +800,7 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 		}
 		return fail(ReasonOperationInProgress, "another operation is running, and staff operations never wait")
 	}
-	admission := &Admission{Operation: operation, Custody: custody.DeepCopy(), Device: device, Row: row, Registry: c.Registry, Reader: c.Client, Now: now, DiscoveryInterval: cfg.DiscoveryInterval}
+	admission := &Admission{Operation: operation, Custody: custody.DeepCopy(), Device: device, Row: row, Registry: c.Registry, Reader: c.Client, Sites: c.Sites, Now: now, DiscoveryInterval: cfg.DiscoveryInterval}
 	// Rule 7, the kind's own checks, runs before the shared identity and
 	// key checks, so a kind's more specific reason, such as a system UUID
 	// that is not recorded, is the one reported.

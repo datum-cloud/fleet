@@ -1,0 +1,15 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: ProtectedResource
+metadata:
+  name: fleet.datumapis.com-sealedpayload
+spec:
+  serviceRef:
+    name: fleet.datumapis.com
+  kind: SealedPayload
+  plural: sealedpayloads
+  singular: sealedpayload
+  # The spec never changes, so there is no update or patch.
+  permissions: [list, get, watch, create, delete]
+  parentResources:
+    - apiGroup: resourcemanager.miloapis.com
+      kind: Project

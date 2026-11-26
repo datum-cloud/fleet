@@ -1,0 +1,41 @@
+# The sealed store for customer bootstrap data (#184). A dedicated kind, not a
+# Secret, because Milo grants permissions per kind or per object, never per
+# namespace: only roles that name this kind can read it.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: sealedpayloads.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: SealedPayload
+    listKind: SealedPayloadList
+    plural: sealedpayloads
+    singular: sealedpayload
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion: {type: string}
+          kind: {type: string}
+          metadata: {type: object}
+          spec:
+            type: object
+            x-kubernetes-validations:
+            - {rule: 'self == oldSelf', message: a sealed payload never changes}
+            required: [operationName, allocationName, digest, salt, data]
+            properties:
+              operationName: {type: string, minLength: 1, maxLength: 253}
+              allocationName: {type: string, minLength: 1, maxLength: 253}
+              digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+              # 32 random bytes, base64.
+              salt: {type: string, format: byte, minLength: 44, maxLength: 44}
+              # At most 96 KiB of encoded bootstrap data, base64.
+              data: {type: string, format: byte, minLength: 1, maxLength: 131072}

@@ -13,7 +13,7 @@ proposal's API names are provisional. Each piece below is marked
 | Increment | What it covers | Status |
 | --- | --- | --- |
 | 1: image catalog | `MachineImage` and `MachineImagePublication` kinds, publication, admission-time resolution to a pinned digest, architecture and firmware mode checks, the worker's firmware mode check, and IAM | **Implemented and verified.** The CRD rules are checked with the API server's own schema validator, resolution and publication with a fake API server, and installs of a resolved image against a real API server and in the standalone smoke. The multi-plane runs are not yet verified. |
-| 2: sealed bootstrap store | `SealedPayload`, delivery to the operation's worker, deletion | **Proposed** |
+| 2: sealed bootstrap store | `SealedPayload`, the coordinator's check and sweep, delivery to the operation's worker, deletion at the site, IAM | **Implemented and verified** through the simulator site, by unit tests, tests against a real API server, and the standalone smoke. Admission refuses bootstrap data for a Device served through federation, which the local VM and Redfish labs use. |
 | 3: lab proof | A chosen image with bootstrap data installs in the local VM and Redfish labs, and the guest reports the data it received | **Proposed** |
 
 ## What increment 1 adds
@@ -68,6 +68,50 @@ proposal's API names are provisional. Each piece below is marked
   publisher roles write images, only the publisher writes records, and only
   the publisher and the Fleet provider read records.
 
+## What increment 2 adds
+
+- **Bootstrap Secret.** A Secret of type `metal.datumapis.com/bootstrap` with
+  `userData`, `sshAuthorizedKeys`, or both, as UTF-8 text, at most 64 KiB and
+  at most 96 KiB once encoded, so a site always receives it whole. Admission
+  refuses anything else with `BootstrapInvalid`, and a missing or unreadable
+  Secret with `BootstrapNotFound`.
+- **Sealed store.** `SealedPayload` in `fleet.datumapis.com`, in the provider
+  project. Its spec never changes. It holds a random 32-byte salt and the data,
+  and its digest covers both. Its name derives from the operation name and the
+  digest.
+- **Admission.** If the DeviceInstallation already exists, admission returns
+  it and reads nothing. Otherwise the Fleet provider seals the data, creates
+  the payload, then creates the operation, which carries only the payload's
+  name and digest. Of two concurrent admissions, one operation wins and the
+  other's payload is swept.
+- **Coordinator check.** At the custody update, every site serving the Device
+  must be able to receive payloads, or the operation fails with
+  `BootstrapUnsupported`. The payload must exist under the derived name, name
+  the operation, and match a digest recomputed from its salt and data, or the
+  operation fails with `BootstrapUnavailable`. Either way nothing is sent. The
+  coordinator reads through to the API server, and a failed read refuses, as
+  in every kind check.
+- **Sweep.** Each coordinator pass deletes, with a UID precondition, every
+  payload whose operation ended, whose operation names another payload, or
+  that has no operation and an allocation that is not `Active`.
+- **Delivery.** The courier reads the payload, checks it again, and sends it to
+  the site beside the assignment. The site takes the payload reference from
+  the admitted inputs, not from the transport, stores the payload only if it
+  matches, and the runner checks it again before anything is sent.
+- **Site deletion.** The site deletes the payload when the result is stored,
+  when the coordinator answers the result, and whenever it raises the Device's
+  fence, for a newer operation or a recovery, which removes every payload
+  below it, including one whose worker never ran. A worker stopped from
+  outside keeps it for its replacement.
+- **Evidence.** A successful install's evidence names the digest of the data
+  the worker handed to the server, recomputed from what it handed. Custody
+  accepts a success only if that equals the admitted digest, and only if it is
+  empty when there was no bootstrap data.
+- **IAM.** Only the coordinator role reads `SealedPayload`; the installation
+  requester may only create it. A test walks every Milo role the repository
+  ships, resolves inheritance, and fails if any other role can read it or holds
+  a wildcard.
+
 ## Not implemented yet
 
 - The validating webhook that rejects image writes from anyone but the
@@ -78,3 +122,10 @@ proposal's API names are provisional. Each piece below is marked
 - Artifact mirroring by digest from a provider registry. Each lab site holds
   one pinned image and serves only that one.
 - Firmware mode from BMC discovery. Lab fixtures write it on the capacity.
+- Federation delivery of bootstrap payloads to a cell, and handing them to a
+  local VM or Redfish server. Admission refuses such an operation with
+  `BootstrapUnsupported` before the Device's fence moves.
+- The Milo check that the Installation's creator can read the bootstrap
+  Secret. The lab compositions read it with their own identity.
+- Encryption at rest for `SealedPayload` and an audit policy that omits its
+  bodies.

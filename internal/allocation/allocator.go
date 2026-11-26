@@ -32,6 +32,7 @@ import (
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/catalog"
 	"go.datum.net/fleet/internal/custody"
+	"go.datum.net/fleet/internal/sealed"
 	"go.datum.net/fleet/internal/tenancy"
 )
 
@@ -47,8 +48,8 @@ var (
 	ErrCustodyLost = errors.New("the allocation no longer holds its Device")
 	// ErrPredecessor means an Installation does not follow the current one.
 	ErrPredecessor = errors.New("the installation does not name the current installation as its predecessor")
-	// ErrUnsupported means a request Fleet does not implement, such as a
-	// bootstrap payload.
+	// ErrUnsupported means a request Fleet cannot act on, such as an
+	// Installation whose image or bootstrap data the caller did not resolve.
 	ErrUnsupported = errors.New("unsupported request")
 )
 
@@ -348,6 +349,10 @@ func (a *Allocator) setPhase(ctx context.Context, allocation *fleetv1.MachineAll
 
 // Installation is one Installation an allocation's Machine requested.
 type Installation struct {
+	// Bootstrap is the bootstrap data the caller read, under the
+	// Installation creator's authority, from its bootstrap Secret. It is
+	// set exactly when the Installation names one.
+	Bootstrap    *sealed.Payload
 	Installation *fleetv1.Installation
 	// Current is the Machine's current installation, or empty.
 	Current string
@@ -364,8 +369,8 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 	if allocation.Status.Phase != fleetv1.AllocationActive {
 		return nil, ErrReleased
 	}
-	if installation.Spec.BootstrapConfigRef != nil {
-		return nil, fmt.Errorf("%w: bootstrap payloads need the sealed store, which is not implemented", ErrUnsupported)
+	if (installation.Spec.BootstrapConfigRef != nil) != (request.Bootstrap != nil) {
+		return nil, fmt.Errorf("%w: the bootstrap data is not read", ErrUnsupported)
 	}
 	predecessor := installation.Spec.ExpectedPredecessor
 	if (request.Current == "" && predecessor.Type != "None") || (request.Current != "" && (predecessor.Type != "Installation" || predecessor.Name != request.Current)) {
@@ -378,10 +383,11 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 	if err := catalog.Compatible(image.Definition, allocation.Spec.Hardware, installation.Spec.BootstrapConfigRef != nil); err != nil {
 		return nil, err
 	}
+	name := custody.InstallationName(allocation.Name, string(installation.UID))
 	labels := operationLabels(allocation)
 	labels[ops.LabelInstallationUID] = string(installation.UID)
 	operation := &ops.DeviceInstallation{
-		ObjectMeta: metav1.ObjectMeta{Name: custody.InstallationName(allocation.Name, string(installation.UID)), Namespace: a.Namespace, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: a.Namespace, Labels: labels},
 		Spec: ops.DeviceInstallationSpec{
 			OperationEnvelope: a.envelope(allocation, a.ProviderCreator),
 			Image:             ops.ImageInput{Name: image.Name, Digest: image.Definition.Digest, FirmwareModes: slices.Clone(image.Definition.FirmwareModes)},
@@ -389,7 +395,69 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 			TargetDisks:       slices.Clone(allocation.Spec.TargetDisks),
 		},
 	}
-	return operation, a.createOnce(ctx, a.Provider, operation, &ops.DeviceInstallation{})
+	// Admission is final once the operation exists: a retry returns it and
+	// never reads or seals the bootstrap data again, but only if it is this
+	// request's operation.
+	existing := &ops.DeviceInstallation{}
+	if err := a.Provider.Get(ctx, client.ObjectKeyFromObject(operation), existing); err == nil {
+		return sameInstallation(operation, request.Bootstrap != nil, existing)
+	} else if !apierrors.IsNotFound(err) {
+		return nil, err
+	}
+	if request.Bootstrap != nil {
+		// The payload is written before the operation that names it. A
+		// payload left by a crash is named by no operation, and the
+		// coordinator's sweep deletes it.
+		payload, err := sealed.Seal(*request.Bootstrap, name, allocation.Name, a.Namespace)
+		if err != nil {
+			return nil, err
+		}
+		if err := a.Provider.Create(ctx, payload); err != nil {
+			return nil, err
+		}
+		operation.Spec.Bootstrap = &ops.SealedInput{Ref: payload.Name, Digest: payload.Spec.Digest}
+	}
+	if err := a.Provider.Create(ctx, operation); apierrors.IsAlreadyExists(err) {
+		// A concurrent admission won. Its payload is the admitted one, and
+		// the sweep deletes this one.
+		if err := a.Provider.Get(ctx, client.ObjectKeyFromObject(operation), existing); err != nil {
+			return nil, err
+		}
+		return sameInstallation(operation, request.Bootstrap != nil, existing)
+	} else if err != nil {
+		return nil, err
+	}
+	return operation, nil
+}
+
+// sameInstallation returns an existing installation only if it is the one
+// this request would create: the same spec and the same incarnation labels,
+// so one for another Device or Installation incarnation is a conflict. Each
+// seal has a fresh salt, so of the sealed reference only its presence is
+// compared.
+func sameInstallation(want *ops.DeviceInstallation, bootstrap bool, existing *ops.DeviceInstallation) (*ops.DeviceInstallation, error) {
+	if (existing.Spec.Bootstrap != nil) != bootstrap {
+		return nil, fmt.Errorf("%w: %s exists with other bootstrap data", ErrConflict, want.Name)
+	}
+	mine, theirs := *want, *existing
+	mine.Spec.Bootstrap, theirs.Spec.Bootstrap = nil, nil
+	wantDigest, err := specDigest(&mine)
+	if err != nil {
+		return nil, err
+	}
+	gotDigest, err := specDigest(&theirs)
+	if err != nil {
+		return nil, err
+	}
+	if wantDigest != gotDigest {
+		return nil, fmt.Errorf("%w: %s exists with other inputs", ErrConflict, want.Name)
+	}
+	for key, value := range want.Labels {
+		if existing.Labels[key] != value {
+			return nil, fmt.Errorf("%w: %s exists for another %s", ErrConflict, want.Name, key)
+		}
+	}
+	return existing, nil
 }
 
 func (a *Allocator) envelope(allocation *fleetv1.MachineAllocation, creator ops.Creator) ops.OperationEnvelope {

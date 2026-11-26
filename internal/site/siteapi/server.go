@@ -82,6 +82,12 @@ func (d *Dispatcher) Dispatch(assignment site.Assignment) error {
 // Wait returns once every worker stopped.
 func (d *Dispatcher) Wait() { d.wg.Wait() }
 
+// Delivery is one assignment and, beside it, its bootstrap payload.
+type Delivery struct {
+	Assignment site.Assignment `json:"assignment"`
+	Payload    *site.Payload   `json:"payload,omitempty"`
+}
+
 // FenceReport is the site's fence report for one Device.
 type FenceReport struct {
 	Seen    int64 `json:"seen"`
@@ -92,10 +98,30 @@ type FenceReport struct {
 func Handler(dispatcher *Dispatcher, store *site.Store, results *site.Results, token func() (string, error)) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /v1/assignments", func(w http.ResponseWriter, r *http.Request) {
-		var assignment site.Assignment
-		if err := decode(r, &assignment); err != nil {
+		var delivery Delivery
+		if err := decode(r, &delivery); err != nil {
 			http.Error(w, "the assignment could not be decoded", http.StatusBadRequest)
 			return
+		}
+		assignment := delivery.Assignment
+		if err := assignment.Validate(); err != nil {
+			http.Error(w, "the assignment is invalid", http.StatusBadRequest)
+			return
+		}
+		// The payload is stored before the worker starts, and only if it is
+		// the one the admitted inputs name.
+		if (delivery.Payload != nil) != (assignment.Sealed() != nil) {
+			http.Error(w, "the payload does not match the assignment", http.StatusBadRequest)
+			return
+		}
+		if delivery.Payload != nil {
+			if err := (site.StorePayloads{Store: store}).Put(assignment, *delivery.Payload); errors.Is(err, site.ErrStaleFence) {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			} else if err != nil {
+				http.Error(w, "the payload was refused", http.StatusBadRequest)
+				return
+			}
 		}
 		if err := dispatcher.Dispatch(assignment); err != nil {
 			http.Error(w, "the assignment is invalid", http.StatusBadRequest)
@@ -132,6 +158,12 @@ func Handler(dispatcher *Dispatcher, store *site.Store, results *site.Results, t
 			http.Error(w, "the result could not be deleted", http.StatusInternalServerError)
 			return
 		}
+		// An answered operation never runs again, so a payload a late
+		// redelivery stored is not needed either.
+		if err := (site.StorePayloads{Store: store}).Delete(r.Context(), site.Assignment{Device: stored.Device, Operation: stored.Result.Operation, Fence: stored.Result.Fence}); err != nil {
+			http.Error(w, "the payload could not be deleted", http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -154,7 +186,9 @@ func bearer(token func() (string, error), next http.Handler) http.Handler {
 	})
 }
 
-const maxBody = 64 << 10
+// maxBody bounds a request: an assignment's 16 KiB of inputs and a 64 KiB
+// bootstrap payload, both base64 or JSON encoded.
+const maxBody = 256 << 10
 
 func decode(r *http.Request, into any) error {
 	decoder := json.NewDecoder(io.LimitReader(r.Body, maxBody))
