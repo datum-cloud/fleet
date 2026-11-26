@@ -140,18 +140,26 @@ requester uses the new source, or it fails the new kind's operations with
 
 Switching a requester to another source changes only where new claims go.
 Each claim an operation already holds is released, listed and verified
-through the source of its own claim kind. IPAM's claimer always takes part as
-the default, so an IPAM claim made before the switch is still released only
-once IPAM's claim is gone and no `IPAllocation` names it, and release does not
-finish while it remains. Each source touches only its own kind's claims.
+through the source of its own claim kind: the configured source, the sources
+it replaced, which stay configured as previous sources until no operation
+names their kind, and IPAM's claimer, which always takes part as the default.
+An IPAM claim made before the switch is still released only once IPAM's
+claim is gone and no `IPAllocation` names it, and release does not finish
+while it remains. Each source touches only its own kind's claims. A provider
+API that does not serve IPAM's kinds has no IPAM claims, so the default
+claimer has nothing to release there; a source someone configured still
+reports every error.
 
 ### The NSO boot attachment source
 
 A second source attaches the boot NIC through NSO and takes the address from
-NSO. It is off by default: nothing configures it, the coordinator has no
-check for its claim kind unless one is registered, and the synchronized lab
-keeps IPAM's claimer. It is tested only against NSO's real types with a test
-realizer that stands in for the NSO behavior below.
+NSO. It is off by default, and no deployment wires it on purpose: nothing
+configures it, the coordinator has no check for its claim kind unless one is
+registered, and the synchronized lab keeps IPAM's claimer. The check refuses
+to be made for an admission reader that cannot read NSO's claims, which
+would otherwise leave every operation `Pending`. The source is tested only
+against NSO's real types with a test realizer that stands in for the NSO
+behavior below.
 
 For each installation and wipe, the requester creates one NSO
 `NetworkInterfaceClaim` named `<operation>-boot`, in the namespace Fleet
@@ -164,7 +172,9 @@ reference to the claim, kind `networking.datumapis.com/NetworkInterfaceClaim`,
 and the address into the operation. While NSO cannot be read or has not
 programmed the port, no address is read and no operation is created. When
 NSO reports that IPAM refused the address, such as a full pool, the requester
-reports it as for an IPAM claim and creates no operation.
+reports it as for an IPAM claim and creates no operation. A failure NSO does
+not classify and retries itself, `AllocationFailed`, keeps the request
+waiting with NSO's reason and message.
 
 Admission checks the claim with the same rules as an IPAM claim: the
 operation's own name and labels, created no later than the operation, not
@@ -177,22 +187,29 @@ Release follows the same rules as for an IPAM claim, so a held operation
 keeps its claim, and its port stays on the boot network, until the hold is
 settled. The requester deletes the claim. The release counts only once a read
 finds NSO's claim gone and IPAM holds no allocation for the address NSO
-claimed for it. While an allocation is active, a hand-over step releases the
-claims of ended, unheld operations under the same rules, so NSO can hand a
-shared boot NIC to the customer.
+claimed for it. NSO may remove its claim before IPAM removes that address, so
+the requester checks again for every ended operation of the allocation that
+names NSO's claim kind, from its own record of the operation, until IPAM
+holds nothing for it. While an allocation is active, a hand-over step
+releases the claims of ended, unheld operations under the same rules, so NSO
+can hand a shared boot NIC to the customer.
 
-Fleet writes only claims and never a switch port. NSO alone decides a port's
-membership: while a boot attachment claim names the port, the port is on the
-boot network only, and the customer's claims for it stay unprogrammed; once
-the claim is released, NSO moves the port to the customer's networks in one
-step. While a boot attachment claim holds a boot NIC that also carries the
-Machine's networks, the allocator gives the Machine's `NetworkReady=False`,
-with reason `BootNetworkAttached`, or `RecoveryHold` while its operation is
-held. Release closes the `Network` gate, after the customer's claims are
-gone, before it creates the wipe and its boot attachment claim. Customer
-network attachment, which calls the hand-over step and reports
-`NetworkReady`, is not part of this source; the tests stand in for its
-claims.
+Fleet writes only claims and never a switch port. Fleet's own guarantees are
+the order of release, which closes the `Network` gate after the customer's
+claims are gone and before it creates the wipe and its boot attachment
+claim, and keeping a held operation's claim until the hold is settled. That
+a port is on the boot network only while a boot attachment claim names it,
+that the customer's claims for it stay unprogrammed meanwhile, and that NSO
+moves the port to the customer's networks in one step are assumption 4
+below, proven only against the test realizer.
+
+The allocator has a check that reports whether a boot attachment claim of
+any known source holds a boot NIC that also carries the Machine's networks,
+and the `NetworkReady=False` condition for it, with reason
+`BootNetworkAttached`, or `RecoveryHold` while its operation is held.
+Nothing calls it yet: the Machine's customer network attachment must call it
+and the hand-over step once it lands. The tests stand in for that
+attachment's claims.
 
 #### Assumed NSO contract
 
@@ -214,8 +231,11 @@ list in one place in its code:
 5. The provisioning address as the claim's IPv4 interface address.
 6. A `Physical` claim kept until its port left the claim's network, then its
    addresses released.
-7. NSO's IPAM claim for that address named `<claim>-f-ipv4` in the project's
-   IPAM namespace, which is NSO's naming today but not a documented contract.
+7. NSO's IPAM claim for that address made under one of two names in the
+   project's IPAM namespace: `<claim>-f-ipv4`, or the same suffixed with
+   `-l` and eight hex digits of a hash of the location. This mirrors NSO's
+   code today, not a documented contract. NSO labels neither, so Fleet
+   checks both names.
 
 ## Enrollment
 
