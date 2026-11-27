@@ -144,9 +144,6 @@ import json,pathlib,sys
 s=pathlib.Path(sys.argv[1]).resolve()
 enrollment=json.loads((s/'redfish'/'fixture-enrollment.json').read_text() if sys.argv[2]=='redfish' else pathlib.Path('config/site/base/enrollment.json').read_text())
 c={'State':str(s),'HubKubeconfig':str(s/'management-hub.json'),'Cell':(s/'prefix').read_text().strip()+'-cell','Image':(s/'image').read_text().strip(),'Enrollment':enrollment,
-   # The cell's declared boot delivery methods: network boot only. The
-   # virtual media suite adds virtual media as an operator would.
-   'DeliveryMethods':[{'method':'NetworkBoot'}],
    # The central media service, as lab Pods and guests reach the workstation.
    'MediaService':'https://192.168.5.2:28443'}
 if sys.argv[3]=='1':c['BootAddressClass']='lab-provisioning'

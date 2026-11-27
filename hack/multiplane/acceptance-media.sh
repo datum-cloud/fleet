@@ -22,12 +22,15 @@ run allocate 900
 # refused at admission and nothing is delivered.
 run media-not-offered 600
 ph media-central 300 bash hack/multiplane/media-central.sh start "$state"
-md offer 300
+# The operator adds virtual media to the site enrollment as revision 3; the
+# coordinator reads it from the cell's report, with no restart.
+md offer 900
+run media-offered 600
 # An installer download by tag, not digest, is refused at admission.
 run media-unpinned 600
 # Dispatch is a source revision the cell's Flux reconciles, as in the
 # Redfish suite; kro then creates a worker Job per delivered operation.
-ph dispatch 900 python3 hack/multiplane/flux.py publish "$state" --revision 3 --site dispatch --purpose 'enable dispatch' --cluster cell --timeout 600
+ph dispatch 900 python3 hack/multiplane/flux.py publish "$state" --revision 4 --site dispatch --purpose 'enable dispatch' --cluster cell --timeout 600
 # The first install's report carries another token: it is held.
 md arm-corrupt-token 120
 run media-install-held 3000

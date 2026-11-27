@@ -291,6 +291,12 @@ with tempfile.TemporaryDirectory() as tmp:
     clients = re.search(r'--clients "?(\S+?)"? ', central)
     check('the central media service admits the site\'s report range as clients',
           report_from is not None and clients is not None and report_from.group(1) in clients.group(1).split(','))
+    media = (root / 'hack/multiplane/media_steps.py').read_text()
+    observer = (root / 'config/site/services/services.yaml').read_text()
+    check('the delivery declaration is site enrollment, changed by a source revision',
+          "'--delivery-methods'" in media and 'coordinator.sh' not in media and 'DeliveryMethods' not in run_sh
+          and 'name: fleet-site-delivery' in observer and "methods: '${FLEET_SITE_DELIVERY_METHODS}'" in observer
+          and '--delivery-methods, /etc/fleet-site-delivery/methods' in observer)
     check('fault injection suspends Flux first', 'suspend milo-consumer-a true' in steps and '"suspend":true' in (root / 'hack/multiplane/reflection-faults.py').read_text())
     check('RBAC revocation repaired by Flux, not the harness', "'apply'" not in (root / 'hack/multiplane/verify-rbac.py').read_text())
     for path in ('config/site/base/site.yaml', 'config/site/graph/rgd.yaml', 'config/site/instance/dispatcher.yaml', 'config/multiplane/coordination/crd.yaml',
