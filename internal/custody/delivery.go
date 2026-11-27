@@ -1,9 +1,12 @@
 package custody
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -45,6 +48,45 @@ func (o OfferedMethod) Input() ops.DeliveryInput {
 		report = o.ReportWindow
 	}
 	return ops.DeliveryInput{Method: o.Method, Addresses: o.Addresses, MediaService: o.MediaService, FetchWindow: fetch, ReportWindow: report}
+}
+
+// ParseOffered reads a site enrollment's delivery declaration: a JSON list
+// of offers in the site's order of preference. Each method appears once,
+// network boot carries nothing else, and virtual media names its address
+// mode and an https media service.
+func ParseOffered(data []byte) ([]OfferedMethod, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var offered []OfferedMethod
+	if err := decoder.Decode(&offered); err != nil {
+		return nil, fmt.Errorf("custody: the delivery declaration is not a list of offers: %w", err)
+	}
+	if decoder.More() {
+		return nil, fmt.Errorf("custody: the delivery declaration has trailing data")
+	}
+	seen := map[ops.DeliveryMethod]bool{}
+	for _, offer := range offered {
+		if !slices.Contains(ops.DeliveryMethods, offer.Method) || seen[offer.Method] {
+			return nil, fmt.Errorf("custody: the delivery declaration offers %q not exactly once as a known method", offer.Method)
+		}
+		seen[offer.Method] = true
+		if offer.Method == ops.DeliveryNetworkBoot {
+			if offer != (OfferedMethod{Method: ops.DeliveryNetworkBoot}) {
+				return nil, fmt.Errorf("custody: the delivery declaration gives network boot virtual media settings")
+			}
+			continue
+		}
+		service, err := url.Parse(offer.MediaService)
+		if offer.Addresses != ops.AddressesDataNetwork || err != nil || service.Scheme != "https" || service.Host == "" || service.Path != "" {
+			return nil, fmt.Errorf("custody: the delivery declaration's virtual media needs DataNetwork addresses and an https media service")
+		}
+		for _, window := range []*metav1.Duration{offer.FetchWindow, offer.ReportWindow} {
+			if window != nil && window.Duration <= 0 {
+				return nil, fmt.Errorf("custody: the delivery declaration's virtual media windows must be positive")
+			}
+		}
+	}
+	return offered, nil
 }
 
 // DeliveryDeadline is how long an installation may run: the sum of its
@@ -182,28 +224,37 @@ func SelectMethod(offered []OfferedMethod, qualified []ops.DeliveryMethod, custo
 	return ops.DeliveryInput{}, false
 }
 
-// offered returns the methods every site serving the Device offers, in the
-// first site's order. A Device no site serves is offered nothing.
-func offered(sites Sites, device *inventory.Device) []OfferedMethod {
+// Offered returns the methods every site serving the Device declares, in
+// the first site's order, and whether every serving site reported a current
+// declaration. A Device no site serves is offered nothing.
+func Offered(ctx context.Context, sites Sites, device *inventory.Device) ([]OfferedMethod, bool, error) {
 	if sites == nil || device == nil {
-		return nil
+		return nil, true, nil
 	}
 	serving := sites.Serving(device)
 	if len(serving) == 0 {
-		return nil
+		return nil, true, nil
+	}
+	declared := make([][]OfferedMethod, len(serving))
+	for index, site := range serving {
+		methods, known, err := sites.DeliveryMethods(ctx, site, device)
+		if err != nil || !known {
+			return nil, false, err
+		}
+		declared[index] = methods
 	}
 	var out []OfferedMethod
-	for _, offer := range sites.DeliveryMethods(serving[0]) {
+	for _, offer := range declared[0] {
 		everywhere := true
-		for _, other := range serving[1:] {
+		for _, other := range declared[1:] {
 			// Offers hold window pointers, so they compare by value.
-			everywhere = everywhere && slices.ContainsFunc(sites.DeliveryMethods(other), func(o OfferedMethod) bool { return equalInput(o.Input(), offer.Input()) })
+			everywhere = everywhere && slices.ContainsFunc(other, func(o OfferedMethod) bool { return equalInput(o.Input(), offer.Input()) })
 		}
 		if everywhere {
 			out = append(out, offer)
 		}
 	}
-	return out
+	return out, true, nil
 }
 
 // checkDelivery is the installation's delivery check. An installation that
@@ -247,6 +298,12 @@ func checkDelivery(admission *Admission, spec *ops.DeviceInstallationSpec) *Refu
 	// A settling installation still takes its inputs from the site's offer;
 	// only the qualification check, which the held operation passed, is
 	// skipped.
+	if !admission.OfferedKnown {
+		// Undecided, not refused: the site's declaration is not current.
+		refusal := refuse(ReasonDeliveryNotOffered, "waiting: a site serving the Device has not reported its delivery methods")
+		refusal.Retry = true
+		return refusal
+	}
 	index := slices.IndexFunc(admission.Offered, func(offer OfferedMethod) bool { return offer.Method == method })
 	if index < 0 {
 		return refuse(ReasonDeliveryNotOffered, "no site serving the Device offers %s", method)
@@ -317,7 +374,12 @@ func (c *Coordinator) holdWaiting(ctx context.Context, custody *ops.DeviceCustod
 	}
 	var want *ops.HoldWaiting
 	if method, held := HeldMethod(custody, "DeviceInstallation"); held {
-		if !slices.ContainsFunc(offered(c.Sites, device), func(offer OfferedMethod) bool { return offer.Method == method }) {
+		offers, known, err := Offered(ctx, c.Sites, device)
+		if err != nil || !known {
+			// Without a current declaration nothing changes.
+			return Outcome{}, err
+		}
+		if !slices.ContainsFunc(offers, func(offer OfferedMethod) bool { return offer.Method == method }) {
 			want = &ops.HoldWaiting{Reason: ReasonHoldMethodNotOffered, Message: fmt.Sprintf("waits for a site serving the Device to offer %s again", method)}
 		}
 	}

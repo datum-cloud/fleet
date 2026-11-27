@@ -67,10 +67,6 @@ type Config struct {
 	// Fleet synchronizes. Empty means the site's DHCP is configured
 	// independently, as in the lab.
 	BootAddressClass string `json:",omitempty"`
-	// DeliveryMethods is the cell's declared boot delivery methods, in its
-	// order of preference. The coordinator admits against it and the Metal
-	// provider selects from it. A cell that declares none offers none.
-	DeliveryMethods []custody.OfferedMethod `json:",omitempty"`
 	// MediaService is the central media service's endpoint, as BMCs and
 	// installed servers reach it, when the acceptance runs one.
 	MediaService string `json:",omitempty"`
@@ -155,7 +151,7 @@ func coordinator(ctx context.Context, c Config, registry *custody.Registry) (*cu
 		return nil, nil, nil, nil, err
 	}
 	hub := &coordination.Hub{API: dynamicHub, Namespace: "fleet-coordination", Cell: c.Cell, MaxAge: time.Minute}
-	sites := &delivery.Sites{Sites: map[string]delivery.Site{c.Cell: hub}, Devices: map[string][]string{}, Methods: map[string][]custody.OfferedMethod{c.Cell: c.DeliveryMethods}}
+	sites := &delivery.Sites{Sites: map[string]delivery.Site{c.Cell: hub}, Devices: map[string][]string{}}
 	for key := range c.Enrollment {
 		namespace, name, _ := strings.Cut(key, "/")
 		if namespace == DeviceNamespace {
@@ -202,7 +198,7 @@ func New(ctx context.Context, c Config) (*Runner, error) {
 	if err != nil {
 		return nil, err
 	}
-	coord, hub, _, _, err := coordinator(ctx, c, registry)
+	coord, hub, sites, _, err := coordinator(ctx, c, registry)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +242,7 @@ func New(ctx context.Context, c Config) (*Runner, error) {
 			return custody.SpecDigest(`{"method":"overwrite","disks":"all"}`)
 		},
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
-		DeliveryMethods: c.DeliveryMethods,
+		Sites: sites,
 	}
 	if c.BootAddressClass != "" {
 		// IPAM, aggregated by the provider project's Milo API, binds each claim

@@ -84,11 +84,26 @@ func main() {
 		Cleaning:  fixtureCleaning,
 		// The fixture Device's boot NIC and the simulator's one enrolled disk.
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
-		// The simulator site offers only network boot.
-		DeliveryMethods: custody.NetworkBootOnly,
+		Sites: simulatorOffer{site: siteName},
 	}
 	must(standalone.Runner{Client: provider, Allocator: allocator, Options: options}.Run(ctx, phase))
 	fmt.Printf("standalone synthetic smoke phase %s completed\n", phase)
+}
+
+// simulatorOffer is the phases' view of the simulator site, which declares
+// only network boot. The phases hold no site credential, so they do not
+// read the declaration; the coordinator reads it from the site's API and
+// refuses an installation recording any other method.
+type simulatorOffer struct{ site string }
+
+func (s simulatorOffer) Serving(*inventory.Device) []string { return []string{s.site} }
+
+func (s simulatorOffer) Fence(context.Context, string, *inventory.Device) (custody.SiteFence, bool, error) {
+	return custody.SiteFence{}, false, nil
+}
+
+func (s simulatorOffer) DeliveryMethods(context.Context, string, *inventory.Device) ([]custody.OfferedMethod, bool, error) {
+	return custody.NetworkBootOnly, true, nil
 }
 
 // coordinate is the coordinator process: the custody loop with the simulator
@@ -105,7 +120,7 @@ func coordinate(ctx context.Context, config *rest.Config, registry *custody.Regi
 	if err != nil {
 		return err
 	}
-	sites := &delivery.Sites{Sites: map[string]delivery.Site{siteName: remote}, Devices: map[string][]string{}, Methods: map[string][]custody.OfferedMethod{siteName: custody.NetworkBootOnly}}
+	sites := &delivery.Sites{Sites: map[string]delivery.Site{siteName: remote}, Devices: map[string][]string{}}
 	for _, device := range devices {
 		if device = strings.TrimSpace(device); device != "" {
 			sites.Devices[device] = []string{siteName}

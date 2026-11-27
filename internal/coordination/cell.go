@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
 
+	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/site"
 )
 
@@ -26,6 +27,9 @@ type Cell struct {
 	Namespace string
 	Name      string
 	Now       func() time.Time
+	// Delivery reads the site enrollment's delivery declaration each time
+	// the observer publishes a report. An error publishes no declaration.
+	Delivery func() ([]custody.OfferedMethod, error)
 }
 
 func (c *Cell) now() time.Time {
@@ -101,6 +105,11 @@ func (c *Cell) Publish(ctx context.Context, object *unstructured.Unstructured, s
 			return ErrNotDelivered
 		}
 		device = spec.Device
+		if c.Delivery != nil {
+			if methods, err := c.Delivery(); err == nil {
+				observation.Delivery = &DeliveryDeclaration{Methods: methods}
+			}
+		}
 	default:
 		return ErrNotDelivered
 	}

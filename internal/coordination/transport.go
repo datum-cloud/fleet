@@ -79,6 +79,15 @@ type Observation struct {
 	ObservedAt       time.Time           `json:"observedAt"`
 	Fence            FenceReport         `json:"fence"`
 	Result           *custody.SiteResult `json:"result,omitempty"`
+	// Delivery is the site enrollment's delivery declaration, on a report
+	// handoff. Nil means the site could not read a valid one.
+	Delivery *DeliveryDeclaration `json:"delivery,omitempty"`
+}
+
+// DeliveryDeclaration is the delivery methods the site's enrollment
+// declares, in its order of preference. An empty list offers none.
+type DeliveryDeclaration struct {
+	Methods []custody.OfferedMethod `json:"methods"`
 }
 
 // CellStatus is the status the cell writes.
@@ -221,6 +230,21 @@ func (h *Hub) Fence(ctx context.Context, device string) (custody.SiteFence, bool
 		return custody.SiteFence{}, false, nil
 	}
 	return custody.SiteFence{Seen: observation.Fence.Seen, Stopped: observation.Fence.Stopped}, true, nil
+}
+
+// DeliveryMethods reads the site's delivery declaration from the Device's
+// report handoff. A missing, stale or foreign report, or one with no valid
+// declaration, is no declaration: the coordinator then decides nothing.
+func (h *Hub) DeliveryMethods(ctx context.Context, device string) ([]custody.OfferedMethod, bool, error) {
+	object, err := h.ensure(ctx, ReportName(device), RoleReport, Spec{Cell: h.Cell, Device: device})
+	if err != nil {
+		return nil, false, err
+	}
+	spec, observation, err := h.reflected(object)
+	if err != nil || spec.Device != device || observation.AssignmentDigest != "" || h.now().Sub(observation.ObservedAt) > h.MaxAge || observation.Delivery == nil {
+		return nil, false, nil
+	}
+	return observation.Delivery.Methods, true, nil
 }
 
 // Results returns each unanswered assignment's reflected result. A result

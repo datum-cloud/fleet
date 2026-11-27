@@ -115,7 +115,7 @@ func startEnvWith(t *testing.T, crds ...*apiextensionsv1.CustomResourceDefinitio
 		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}}, Poll: 20 * time.Millisecond}
 	e.runner = runner
 	dispatcher := &siteapi.Dispatcher{Runner: runner, Context: ctx}
-	server := httptest.NewServer(siteapi.Handler(dispatcher, e.store, runner.Results, func() (string, error) { return siteToken, nil }))
+	server := httptest.NewServer(siteapi.Handler(dispatcher, e.store, runner.Results, custody.NetworkBootOnly, func() (string, error) { return siteToken, nil }))
 	t.Cleanup(func() { cancel(); server.Close(); dispatcher.Wait() })
 	remote, err := siteapi.NewClient(server.URL, func() (string, error) { return siteToken, nil }, server.Client())
 	if err != nil {
@@ -125,7 +125,7 @@ func startEnvWith(t *testing.T, crds ...*apiextensionsv1.CustomResourceDefinitio
 	if err != nil {
 		t.Fatal(err)
 	}
-	sites := &delivery.Sites{Sites: map[string]delivery.Site{siteName: remote}, Devices: map[string][]string{}, Methods: map[string][]custody.OfferedMethod{siteName: custody.NetworkBootOnly}}
+	sites := &delivery.Sites{Sites: map[string]delivery.Site{siteName: remote}, Devices: map[string][]string{}}
 	coordinator := &custody.Coordinator{Client: admin, Registry: registry, Sites: sites, Config: custody.Config{Namespace: namespace, Principals: custody.Principals{
 		custody.CreatorMetalProvider: {{Username: providerUser}}, custody.CreatorReleaseController: {{Username: releaseUser}},
 	}}}
@@ -137,7 +137,7 @@ func startEnvWith(t *testing.T, crds ...*apiextensionsv1.CustomResourceDefinitio
 		Custody: coordinator, Namespace: namespace,
 		Cleaning:      func(string) (string, error) { return policyDigest, nil },
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
-		DeliveryMethods: custody.NetworkBootOnly,
+		Sites: sites,
 	}
 	e.class = &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "class-example"}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: "profile-example"}}}, Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: namespace, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "example"}}}}}}
 	e.create(e.class)

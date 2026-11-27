@@ -74,15 +74,20 @@ type fakeSites struct {
 	// methods, when set, replaces the site's declared delivery methods,
 	// which default to network boot then virtual media.
 	methods []OfferedMethod
+	// unknown makes the site report no current declaration.
+	unknown bool
 }
 
-func (s *fakeSites) DeliveryMethods(string) []OfferedMethod {
+func (s *fakeSites) DeliveryMethods(context.Context, string, *inventory.Device) ([]OfferedMethod, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.methods != nil {
-		return s.methods
+	if s.unknown {
+		return nil, false, nil
 	}
-	return []OfferedMethod{{Method: ops.DeliveryNetworkBoot}, {Method: ops.DeliveryVirtualMedia, Addresses: ops.AddressesDataNetwork, MediaService: "https://192.0.2.10:8443"}}
+	if s.methods != nil {
+		return s.methods, true, nil
+	}
+	return []OfferedMethod{{Method: ops.DeliveryNetworkBoot}, {Method: ops.DeliveryVirtualMedia, Addresses: ops.AddressesDataNetwork, MediaService: "https://192.0.2.10:8443"}}, true, nil
 }
 
 func newFakeSites() *fakeSites {

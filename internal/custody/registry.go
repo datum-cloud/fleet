@@ -172,8 +172,10 @@ type Admission struct {
 	// DiscoveryInterval is how often BMC discovery reads each BMC.
 	DiscoveryInterval time.Duration
 	// Offered is the boot delivery methods every site serving the Device
-	// offers, in the first site's order of preference.
-	Offered []OfferedMethod
+	// offers, in the first site's order of preference. OfferedKnown is
+	// false while a serving site has not reported a current declaration.
+	Offered      []OfferedMethod
+	OfferedKnown bool
 }
 
 // RecoverySettleContext is what a held kind's settle hook sees. Hold carries

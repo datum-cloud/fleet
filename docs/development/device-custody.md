@@ -287,10 +287,14 @@ operations guide describes how it runs in the [Redfish lab](../operations/redfis
   it is still bound to the operation's own claim. The media service takes the
   first-boot report only from it. A virtual
   media installation's deadline is the sum of its windows.
-- **Sites declare their methods.** `custody.Sites` gains `DeliveryMethods`,
-  the site's methods in its order of preference. Admission sees the methods
-  every serving site offers. The Metal provider selects from the same
-  declaration.
+- **Sites declare their methods in their enrollment.** Each site's
+  enrollment lists its methods in its order of preference. The site reports
+  that declaration with its fence report, and `custody.Sites` returns it
+  through `DeliveryMethods`. The coordinator keeps no copy. Admission sees
+  the methods every serving site offers, and the Metal provider selects from
+  the same report. A site that has not reported a current, valid
+  declaration decides nothing: admission leaves the operation `Pending`, and
+  the provider creates no installation until the site reports one.
 - **Admission checks the method** under the custody update: offered,
   qualified, consistent with the other inputs, and every installer download
   pinned by digest. The admission snapshot records the method, so a

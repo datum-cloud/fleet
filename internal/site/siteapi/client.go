@@ -88,6 +88,18 @@ func (c *Client) Fence(ctx context.Context, device string) (custody.SiteFence, b
 	return custody.SiteFence{Seen: report.Seen, Stopped: report.Stopped}, true, nil
 }
 
+// DeliveryMethods reads the site's declared delivery methods. The simulator
+// site declares one set for every Device it serves.
+func (c *Client) DeliveryMethods(ctx context.Context, _ string) ([]custody.OfferedMethod, bool, error) {
+	var declared struct {
+		Methods []custody.OfferedMethod `json:"methods"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/delivery-methods", nil, &declared); err != nil {
+		return nil, false, err
+	}
+	return declared.Methods, true, nil
+}
+
 func (c *Client) Results(ctx context.Context) ([]site.Stored, error) {
 	var held []site.Stored
 	return held, c.do(ctx, http.MethodGet, "/v1/results", nil, &held)

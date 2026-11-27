@@ -66,11 +66,11 @@ type Report struct {
 	Methods []custody.OfferedMethod
 }
 
-func (r Report) DeliveryMethods(site string) []custody.OfferedMethod {
+func (r Report) DeliveryMethods(_ context.Context, site string, _ *inventory.Device) ([]custody.OfferedMethod, bool, error) {
 	if site != r.Site {
-		return nil
+		return nil, false, nil
 	}
-	return r.Methods
+	return r.Methods, true, nil
 }
 
 var _ custody.Sites = Report{}

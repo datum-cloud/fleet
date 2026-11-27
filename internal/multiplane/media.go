@@ -39,7 +39,11 @@ import (
 // provider that skipped selection would. Admission refuses it before
 // anything is delivered, with custody's fence unchanged.
 func (r *Runner) MediaNotOffered(ctx context.Context) error {
-	for _, offer := range r.Config.DeliveryMethods {
+	declared, err := r.declared(ctx)
+	if err != nil {
+		return err
+	}
+	for _, offer := range declared {
 		if offer.Method == ops.DeliveryVirtualMedia {
 			return fmt.Errorf("%w: the cell already offers virtual media", errTerminal)
 		}
@@ -48,13 +52,34 @@ func (r *Runner) MediaNotOffered(ctx context.Context) error {
 	return r.refusedInstallation(ctx, "00000000-0000-4000-8000-000000000227", delivery, nil, custody.ReasonDeliveryNotOffered)
 }
 
+// MediaOffered waits until the coordinator reads, from the cell's report,
+// a site enrollment that offers virtual media through the acceptance's
+// central media service. The coordinator keeps no copy and is not
+// restarted.
+func (r *Runner) MediaOffered(ctx context.Context) error {
+	declared, err := r.declared(ctx)
+	if err != nil {
+		return err
+	}
+	for _, offer := range declared {
+		if offer.Method == ops.DeliveryVirtualMedia && offer.MediaService == r.Config.MediaService {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: the cell declares %d methods, none of them virtual media", errPending, len(declared))
+}
+
 // MediaUnpinned creates, once the cell offers virtual media, a virtual
 // media installation whose installer would download an image by tag, as an
 // image like Talos's would without a digest. Admission refuses it before
 // anything is delivered.
 func (r *Runner) MediaUnpinned(ctx context.Context) error {
+	declared, err := r.declared(ctx)
+	if err != nil {
+		return err
+	}
 	index := -1
-	for i, offer := range r.Config.DeliveryMethods {
+	for i, offer := range declared {
 		if offer.Method == ops.DeliveryVirtualMedia {
 			index = i
 		}
@@ -63,7 +88,20 @@ func (r *Runner) MediaUnpinned(ctx context.Context) error {
 		return fmt.Errorf("%w: the cell does not offer virtual media", errTerminal)
 	}
 	downloads := []ops.DownloadInput{{Name: "installer", Reference: "registry.example/installer:v1.0.0"}}
-	return r.refusedInstallation(ctx, "00000000-0000-4000-8000-000000000228", r.Config.DeliveryMethods[index].Input(), downloads, custody.ReasonDownloadUnpinned)
+	return r.refusedInstallation(ctx, "00000000-0000-4000-8000-000000000228", declared[index].Input(), downloads, custody.ReasonDownloadUnpinned)
+}
+
+// declared reads the cell's delivery declaration as the coordinator does,
+// from target A's report handoff.
+func (r *Runner) declared(ctx context.Context) ([]custody.OfferedMethod, error) {
+	methods, known, err := r.Hub.DeliveryMethods(ctx, DeviceNamespace+"/"+Device)
+	if err != nil {
+		return nil, err
+	}
+	if !known {
+		return nil, fmt.Errorf("%w: the cell has not reported its delivery declaration", errPending)
+	}
+	return methods, nil
 }
 
 // unclaimedReportAddress gives a refused installation the report address

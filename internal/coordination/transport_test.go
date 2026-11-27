@@ -3,6 +3,7 @@ package coordination
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -291,5 +292,45 @@ func TestTheCellRunsOnlyItsOwnAssignments(t *testing.T) {
 				t.Fatalf("journal = %+v", journal)
 			}
 		})
+	}
+}
+
+// TestTheHubReadsTheSiteDeliveryDeclaration reads the declaration the
+// site's observer publishes on the report handoff, follows its changes, and
+// counts a missing, unreadable or stale one as no declaration.
+func TestTheHubReadsTheSiteDeliveryDeclaration(t *testing.T) {
+	f := newFixture(t)
+	if _, _, err := f.hub.DeliveryMethods(f.ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	f.fed.sync()
+	f.observe()
+	if _, known, err := f.hub.DeliveryMethods(f.ctx, device); err != nil || known {
+		t.Fatalf("a site with no declaration declared one: %v %v", known, err)
+	}
+	media := custody.OfferedMethod{Method: ops.DeliveryVirtualMedia, Addresses: ops.AddressesDataNetwork, MediaService: "https://192.0.2.10:8443"}
+	declared := []custody.OfferedMethod{{Method: ops.DeliveryNetworkBoot}, media}
+	var unreadable error
+	f.cell.Delivery = func() ([]custody.OfferedMethod, error) { return declared, unreadable }
+	f.observe()
+	if methods, known, err := f.hub.DeliveryMethods(f.ctx, device); err != nil || !known || len(methods) != 2 || methods[1] != media {
+		t.Fatalf("declaration = %+v, %v, %v", methods, known, err)
+	}
+	// The site removes network boot; the next report carries only media.
+	declared = []custody.OfferedMethod{media}
+	f.observe()
+	if methods, known, _ := f.hub.DeliveryMethods(f.ctx, device); !known || len(methods) != 1 || methods[0] != media {
+		t.Fatalf("a removed method is still declared: %+v", methods)
+	}
+	unreadable = errors.New("unreadable")
+	f.observe()
+	if _, known, _ := f.hub.DeliveryMethods(f.ctx, device); known {
+		t.Fatal("an unreadable declaration keeps the last one")
+	}
+	unreadable = nil
+	f.observe()
+	f.hub.Now = func() time.Time { return time.Now().Add(2 * time.Minute) }
+	if _, known, _ := f.hub.DeliveryMethods(f.ctx, device); known {
+		t.Fatal("a stale declaration counts")
 	}
 }
