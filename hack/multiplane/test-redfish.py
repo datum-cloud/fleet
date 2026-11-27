@@ -149,9 +149,9 @@ check('ownership audit expects the BMC', ('deployments', 'fleet-site', 'fleet-si
 sequence = (root / 'hack/multiplane/acceptance-redfish.sh').read_text()
 steps = (root / 'hack/multiplane/steps.sh').read_text()
 redfish_steps = (root / 'hack/multiplane/redfish_steps.py').read_text()
-for name in re.findall(r'^step (\S+)', sequence, re.M):
+for name in re.findall(r'^\s*step (\S+)', sequence, re.M):
     check('step implemented: ' + name, ' %s)' % name in steps or '|%s)' % name in steps or ' %s|' % name in steps)
-for name in re.findall(r'^rf (\S+)', sequence, re.M):
+for name in re.findall(r'^\s*rf (\S+)', sequence, re.M):
     check('redfish step implemented: ' + name, "'%s':" % name in redfish_steps)
 order = ['baseline', 'discovery-faults', 'allocate', 'arm-lost-response', 'dispatch', 'bmc-interrupt', 'interrupt-pod', 'interrupt-job', 'lost-response', 'resume', 'release',
          'reuse', 'delivery-faults', 'deadline-admit', 'machine-delete', 'deadline-hold', 'release-b', 'deadline-settled', 'rebuild', 'boot-denials', 'isolation', 'evidence']
@@ -170,6 +170,11 @@ check('Python dependencies hash-pinned', all('==' in l for l in lock.splitlines(
 check('no OpenStack dependency', not re.search(r'sushy|openstack|ironic', (lock + adapter + (root / 'hack/redfish-lab/Containerfile').read_text()).lower()))
 
 run_sh = (root / 'hack/multiplane/run.sh').read_text()
+# Isolation runs in every group; only the groups that release target A may
+# require its disk zeroed and every target off.
+iso = redfish_steps.split('def isolation(s):')[1].split('\ndef ')[0]
+check('isolation requires a wiped target A only where a release ran', "released = harness.GROUP != 'flux'" in iso
+      and "if released and a['diskSHA256']" in iso and "if released and record['runningDomains']" in iso)
 # $state/provider is the Milo provider project's credential directory.
 check('site provider marker does not collide with the provider project state', '"$state/site-provider"' in run_sh and '> "$state/provider"' not in run_sh)
 
