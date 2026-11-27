@@ -20,7 +20,7 @@ import argparse, base64, json, os, pathlib, secrets, subprocess, time
 p=argparse.ArgumentParser();p.add_argument('state');p.add_argument('prefix');a=p.parse_args()
 root=pathlib.Path(a.state).resolve();root.mkdir(mode=0o700,parents=True,exist_ok=True)
 if not a.prefix.startswith('fleet-mp-'):raise SystemExit('task-owned fleet-mp- prefix required')
-os.environ['DOCKER_CONTEXT']='colima-fleet-acceptance-tcg'
+os.environ['DOCKER_CONTEXT']=os.environ.get('FLEET_MULTIPLANE_DOCKER_CONTEXT','colima-fleet-acceptance-tcg')
 platform=root/'platform-admin.yaml'
 ports=json.loads((root/'platform-ports.json').read_text())
 def run(*args,**kw):return subprocess.run(args,check=True,text=True,**kw)

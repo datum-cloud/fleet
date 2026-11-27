@@ -25,6 +25,9 @@ spec:
       # Workers are created only after dispatch is enabled. The acceptance uses
       # this to prove delivery and retention before any effect can start.
       dispatch: boolean | default=false
+      # The shared runtime's accelerator. Workers refuse a runtime that
+      # published another, and each installation's journal binds it.
+      accelerator: string | required=true
     status:
       bootOrigin: ${"http://" + bootService.spec.clusterIP + ":8080"}
       workerImage: ${hypervisor.spec.template.spec.containers[0].image}
@@ -201,7 +204,7 @@ spec:
                   imagePullPolicy: IfNotPresent
                   command: [fleet-multiplane, site-worker, --handoff, "${handoff.metadata.name}", --cell, "${schema.spec.cell}"]
                   env:
-                    - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
+                    - {name: FLEET_LOCAL_VM_ACCEL, value: "${schema.spec.accelerator}"}
                     # The site's enrollment of the Devices it serves.
                     - name: FLEET_SITE_ENROLLMENT
                       valueFrom:
