@@ -108,6 +108,11 @@ with tempfile.TemporaryDirectory() as tmp:
         out = subprocess.run(['kustomize', 'build', str(s / 'gitops' / ('r%d' % rev) / 'environment' / cluster)], text=True, capture_output=True, check=True).stdout
         return out
 
+    pushed = 'local@sha256:' + 'd' * 64
+    check('a layer counts at the pushed revision only', flux.at_revision('flux-system/fleet-site-base', pushed, pushed)
+          and not flux.at_revision('flux-system/fleet-site-base', 'sha256:' + 'e' * 64, pushed))
+    check('IPAM\'s apiserver layer counts at its own pinned manifests', flux.at_revision('flux-system/ipam-apiserver', flux.IPAM_KUSTOMIZE_DIGEST, pushed)
+          and not flux.at_revision('flux-system/ipam-apiserver', pushed, pushed) and not flux.at_revision('flux-system/ipam-apiserver', None, pushed))
     check('stage platform revision', flux.stage(ns(revision=1)) == 0)
     cell1 = render(1, 'cell')
     check('r1 has no site layers', 'name: fleet-site-services' not in cell1 and 'name: fleet-site-dispatch' not in cell1 and 'name: fleet-site-base' in cell1)

@@ -427,6 +427,15 @@ def kustomizations(state, cluster):
     return {i['metadata']['namespace'] + '/' + i['metadata']['name']: i for i in kget(state, cluster, 'get', 'kustomizations.kustomize.toolkit.fluxcd.io', '-A')['items']}
 
 
+def at_revision(name, applied, revision):
+    """Whether a Kustomization applied what this run expects: the pushed
+    revision, or for IPAM's apiserver layer, which reconciles IPAM's own
+    published manifests, their pinned digest."""
+    if name == 'flux-system/ipam-apiserver':
+        return str(applied or '').endswith(IPAM_KUSTOMIZE_DIGEST)
+    return applied == revision
+
+
 def wait_cluster(state, cluster, timeout, names=None, revision=None, skip=(), observe_also=()):
     """All named (default: every) Kustomizations Ready, current generation, at the pushed revision.
 
@@ -462,7 +471,7 @@ def wait_cluster(state, cluster, timeout, names=None, revision=None, skip=(), ob
                 except SystemExit:
                     pass  # an unreachable cluster is sampled on the next poll
         if ready(source) and source.get('status', {}).get('lastHandledReconcileAt') == source_token and source.get('status', {}).get('artifact', {}).get('revision') == revision and all(
-                v['ready'] and v['revision'] == revision and v['requestedAt'] is not None and v['lastHandledReconcileAt'] == v['requestedAt'] for v in last.values()):
+                v['ready'] and at_revision(n, v['revision'], revision) and v['requestedAt'] is not None and v['lastHandledReconcileAt'] == v['requestedAt'] for n, v in last.items()):
             path = pathlib.Path(state) / 'evidence' / 'flux-reconciles.json'
             records = json.loads(path.read_text()) if path.exists() else []
             records.append({'cluster': cluster, 'revision': revision, 'observedAt': now(), 'sourceRequestedAt': source_token, 'sourceLastHandledReconcileAt': source['status']['lastHandledReconcileAt'], 'kustomizations': last,
@@ -677,7 +686,7 @@ def verify(args):
             problems.append('%s source at %s, pushed %s' % (cluster, src.get('artifactRevision'), rev['fluxRevision']))
         for n in ['flux-system/fleet-cluster'] + EXPECTED[cluster] + (SITE_LAYERS if cluster == 'cell' else []):
             k = snap['kustomizations'].get(n)
-            if not k or ['Ready', 'True', 'ReconciliationSucceeded'] not in k['conditions'] or k['generation'] != k['observedGeneration'] or k['lastAppliedRevision'] != rev['fluxRevision']:
+            if not k or ['Ready', 'True', 'ReconciliationSucceeded'] not in k['conditions'] or k['generation'] != k['observedGeneration'] or not at_revision(n, k['lastAppliedRevision'], rev['fluxRevision']):
                 problems.append('%s %s not Ready at the pushed revision: %s' % (cluster, n, k and (k['conditions'], k['lastAppliedRevision'])))
         for n in HELMRELEASES.get(cluster, []):
             h = snap['helmReleases'].get(n)

@@ -58,9 +58,21 @@ def ipam(d,config):
  wait(lambda:subprocess.run(['kubectl','--kubeconfig',str(config),'--request-timeout=10s','get','ipclasses.ipam.miloapis.com'],capture_output=True).returncode==0,300,'IPAM is not served through the provider project')
  # Kea's base subnet is 192.168.77.0/24 and the bridge is .1: the pool
  # withholds .0-.99 and .200-.255, so IPAM hands out only .100-.199.
- apply(config,{'apiVersion':'ipam.miloapis.com/v1alpha1','kind':'IPClass','metadata':{'name':'lab-provisioning'},
+ def write(obj):
+  # IPAM's first writes reach its fresh database through the provider API's
+  # aggregation and may take longer than a request's usual bound; retry
+  # them, and say why the last was refused.
+  last=''
+  for _ in range(12):
+   r=subprocess.run(['kubectl','--kubeconfig',str(config),'--request-timeout=60s','apply','-f','-'],input=json.dumps(obj),capture_output=True,text=True)
+   if r.returncode==0:return
+   last=(r.stderr or r.stdout).strip()[-600:]
+   print('ipam: %s %s not applied yet: %s'%(obj['kind'],obj['metadata']['name'],last),flush=True)
+   time.sleep(10)
+  raise SystemExit('IPAM refused %s %s: %s'%(obj['kind'],obj['metadata']['name'],last))
+ write({'apiVersion':'ipam.miloapis.com/v1alpha1','kind':'IPClass','metadata':{'name':'lab-provisioning'},
                'spec':{'ipFamily':'IPv4','addressScope':'Private','allowedPrefixLengths':{'min':32,'max':32},'defaultPrefixLength':32,'reclaimPolicy':'Delete'}})
- apply(config,{'apiVersion':'ipam.miloapis.com/v1alpha1','kind':'IPPool','metadata':{'name':'lab-provisioning'},
+ write({'apiVersion':'ipam.miloapis.com/v1alpha1','kind':'IPPool','metadata':{'name':'lab-provisioning'},
                'spec':{'cidr':'192.168.77.0/24','ipFamily':'IPv4','classNames':['lab-provisioning'],'scope':{'location':LOCATION},
                        'allocation':{'minPrefixLength':32,'maxPrefixLength':32,'strategy':'FirstFit'},'reservations':{'leading':100,'trailing':56,'unitPrefixLength':32}}})
  get=lambda *a:json.loads(kubectl(config,'get',*a,'-o','json',capture_output=True).stdout)
