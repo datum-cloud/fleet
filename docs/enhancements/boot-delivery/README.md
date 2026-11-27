@@ -200,9 +200,9 @@ for every one of them:
 
 - An installation or a wipe prepares one method, so its settling operation
   uses that method. The requester reads it from the hold. Admission skips the
-  site, class, and qualification checks for it, because the held operation
-  passed them. A settling installation or wipe that records another method is
-  refused with `DeliveryMethodMismatch`.
+  class and qualification checks for it, because the held operation passed
+  them. A settling installation or wipe that records another method is refused
+  with `DeliveryMethodMismatch`.
 - A commissioning exercises every method its operation lists. A settling
   commissioning must list every method in the hold, or it is refused with
   `DeliveryMethodMismatch`.
@@ -210,7 +210,10 @@ for every one of them:
 Other operations wait or are refused exactly as custody defines today.
 
 A hold therefore waits for its own method. A network boot hold at a site whose
-WAN link is down stays until the link returns.
+WAN link is down stays until the link returns. A hold whose method the site
+stopped offering waits until the site offers it again. The coordinator admits
+no settling operation for it until then, and staff see the hold with the
+reason `HeldMethodNotOffered`.
 
 ### Network boot
 
@@ -257,10 +260,18 @@ operation and holds two URLs:
 The URL capability and the report token are different values. A BMC learns the
 capability. Only the config medium's contents carry the report token.
 
+Workers authenticate to the media service with client certificates. The
+service refuses any window operation from a client that presents no
+certificate, or one whose identity is not the worker for that Device's site.
+
 The media service follows the site's stored fence for each Device. It opens a
 window only for the operation that holds the Device's stored fence. It closes
 every window of a Device when the fence rises, and closes each window at its
 deadline, which is never later than the operation's deadline.
+
+The media service also sweeps in the background. It deletes each config medium
+and its capability once the report deadline passes or custody moves past the
+operation, whether or not anyone reads it again.
 
 ```mermaid
 sequenceDiagram
@@ -323,7 +334,8 @@ Fleet's first-boot service. The first-boot service runs centrally, with the
 media service. The report carries:
 
 - the report token;
-- the image digest;
+- the boot medium's content digest, which the operation's recorded image
+  digest pins through the image's artifact manifest;
 - the salted bootstrap digest of the payload the OS applied, as
   [#184][images-pr] defines it; and
 - the digest of every artifact the installer downloaded.
@@ -404,8 +416,13 @@ deliveryMethods:
     deadlines: {media: 15m, firstBoot: 30m}
 ```
 
-Adding a method takes effect for new operations. Removing a method is refused
-while an operation that used it has not ended or still holds the Device.
+The site's enrollment is the only place a site declares its methods. The
+coordinator reads the declaration from the enrollment, at admission and when
+it evaluates a hold.
+
+Adding a method takes effect for new operations. Removing a method stops new
+operations from selecting it. A running operation finishes with its method,
+and a held one waits as [Settling a hold](#settling-a-hold) describes.
 
 Network boot needs synchronized DHCP, because its release proof needs DHCP
 reports. A site whose DHCP is configured outside Fleet, the static mode in
@@ -588,9 +605,12 @@ customer's networks.
     pool for provider addresses and a route to the first-boot service. NSO
     keeps ports on it isolated from each other, and no customer network
     reaches it.
-- **Media service access.** The media service accepts requests only from BMC
-  network addresses, and serves a config URL only to the Device's BMC address
-  from the snapshot.
+- **Media service access.** The media service accepts media requests only
+  from BMC network addresses, and window operations only from workers with a
+  valid client certificate. It serves a config URL only to the Device's BMC
+  address from the snapshot. That address restriction must be verified on a
+  real site network before production, because address translation on the
+  path would defeat it.
 - **Public boot media.** A boot medium holds no customer or operation data.
 - **Scoped config media.** A config medium with bootstrap data is served only
   over HTTPS that the BMC verifies, at its capability URL, while its window is
@@ -607,7 +627,7 @@ customer's networks.
 
 | Failure | Outcome |
 | --- | --- |
-| The media service refuses to open a window | Nothing was sent, so the operation fails. |
+| The media service refuses to open a window | `Failed` if nothing was sent to the BMC yet. `OutcomeUnknown` otherwise. |
 | The open times out, so a window may exist | The operation ends `OutcomeUnknown`. The worker tries to close the window. |
 | The BMC accepts an insert but never reports the media inserted | The operation ends `OutcomeUnknown`. The worker tries to eject. |
 | The BMC reports media after an eject | Release is unproven. The operation ends `OutcomeUnknown`. |
@@ -642,12 +662,36 @@ The product owner decided these on 2026-11-26:
 | Sites whose DHCP is configured outside Fleet | No network boot, with no exception. They use virtual media. |
 | Wipes, burn-ins, and probes under virtual media | A provider address from IPAM and an NSO attachment to a provider network, for one operation, proven detached on release. |
 
+The product owner decided these on 2026-11-27, from the first prototype:
+
+| Question | Decision |
+| --- | --- |
+| How workers reach the media service | With client certificates. The service refuses window operations from any other client. |
+| Where a site declares its methods | Its enrollment. The coordinator reads the declaration from there. |
+| A refused window open | `Failed` before anything reaches the BMC, `OutcomeUnknown` after. |
+| What the report proves about the image | It carries the boot medium's content digest, which the recorded image digest pins. |
+| A hold whose method the site stopped offering | It waits until the site offers the method again, and staff see why. |
+| Expired config media | The media service sweeps them and their capabilities in the background. |
+| Restricting a config medium to the BMC address | Verified on a real site network before production. |
+
 ### Acceptance tests
 
 These tests are required and not implemented:
 
 - A virtual media install succeeds. Afterwards the BMC reports every device
   empty and no override, and the media service reports no open window.
+- A client with no certificate, or with another site's certificate, tries to
+  open or close a window, and the media service refuses it.
+- The media service refuses a window before anything reaches the BMC, and the
+  operation ends `Failed`. It refuses one after the worker has sent a step to
+  the BMC, and the operation ends `OutcomeUnknown`.
+- A report whose boot medium digest does not match the one the image digest
+  pins does not succeed.
+- The site stops offering a held operation's method. No settling operation is
+  admitted, staff see `HeldMethodNotOffered`, and settlement resumes once the
+  site offers the method again.
+- A config medium passes its report deadline with no further reads, and the
+  sweep deletes it and its capability.
 - A first-boot report carries another operation's token, comes from an address
   that is not the Machine's, or names a download digest not in the inputs, and
   the operation does not succeed.
@@ -732,6 +776,7 @@ report.
 - 2026-11-26: Proposed.
 - 2026-11-26: Product decisions recorded, including operations with no
   Machine.
+- 2026-11-27: Decisions from the first prototype recorded.
 
 ## Drawbacks
 
