@@ -349,7 +349,7 @@ The phases are then:
    one succeeded Pod, and the observer to publish the stored `Succeeded` result.
    The Device's journal must show the installer boot requested exactly once. Evidence later proves exactly one
    firmware-network installer start followed by exactly one disk-only start.
-   It uses libvirt's append-only QEMU log, plus one `sfdisk`, one installer
+   It uses libvirt's append-only QEMU log, plus one partition marker, one installer
    receipt and one disk-boot receipt in the guest serial logs. `worker-rbac`
    then proves the worker token can read only its own handoff: no list, no
    other names, no status or spec writes, no Secrets, no site writes.
