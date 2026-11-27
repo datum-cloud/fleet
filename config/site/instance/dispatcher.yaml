@@ -16,3 +16,4 @@ metadata:
 spec:
   cell: "${FLEET_CELL}"
   dispatch: ${FLEET_SITE_DISPATCH}
+  accelerator: "${FLEET_LOCAL_VM_ACCEL}"

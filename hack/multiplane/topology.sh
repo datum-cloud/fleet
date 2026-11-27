@@ -8,7 +8,7 @@ umask 077
 state=${1:?private state directory required}
 prefix=$(cat "$state/prefix")
 [[ $prefix =~ ^fleet-mp-[a-f0-9]{8}$ ]] || { echo "unexpected prefix" >&2; exit 1; }
-export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker
+export DOCKER_CONTEXT=${FLEET_MULTIPLANE_DOCKER_CONTEXT:-colima-fleet-acceptance-tcg} KIND_EXPERIMENTAL_PROVIDER=docker
 node='kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f'
 registry_image=$(python3 -c 'import sys; sys.path.insert(0, "hack/multiplane"); import flux; print(flux.REGISTRY_IMAGE)')
 free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'; }

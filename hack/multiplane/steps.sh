@@ -8,7 +8,7 @@ step=${1:?step required}
 state=${2:?private state directory required}
 prefix=$(cat "$state/prefix")
 [[ $prefix =~ ^fleet-mp-[a-f0-9]{8}$ ]] || { echo "unexpected prefix" >&2; exit 1; }
-export DOCKER_CONTEXT=colima-fleet-acceptance-tcg
+export DOCKER_CONTEXT=${FLEET_MULTIPLANE_DOCKER_CONTEXT:-colima-fleet-acceptance-tcg}
 harness=(python3 hack/multiplane/harness.py)
 host="$state/fleet-multiplane-host"
 ns=fleet-coordination
@@ -49,6 +49,9 @@ print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
 installer_step=installer-start
 [[ $(cat "$state/site-provider" 2>/dev/null) != redfish ]] || installer_step=installer-power-on
 scenario() { python3 hack/multiplane/scenarios.py "$@"; }
+libvirt='qemu:///system?socket=/run/fleet-libvirt/libvirt-sock'
+# The local VM installer hold (hold-installer, release-installer).
+hold_file=/tmp/fleet-installer-hold
 redfish() { [[ $(cat "$state/site-provider" 2>/dev/null) == redfish ]]; }
 # Effects on servers, independent of the site journal: the hypervisor's
 # running domains and its append-only QEMU logs, in both modes, and the lab
@@ -223,8 +226,43 @@ JSON
   py worker-rbac "$state" "$name"
   rm -f "$state/worker-kubeconfig.json"
   ;;
+ hold-installer)
+  # Local VM mode: hold the installer guest paused as soon as its kernel
+  # prints, so the worker interruptions below always land mid-install,
+  # however fast the accelerator. A watcher in the runtime Pod suspends it;
+  # a guest that printed its receipt first is reported missed, never held.
+  runtime sh -c "[ ! -e $hold_file.pid ] && rm -f $hold_file" || { echo 'an installer hold is already armed' >&2; exit 1; }
+  runtime sh -c 'setsid sh -c "$1" sh >/dev/null 2>&1 </dev/null & echo $! > "$2.pid"' sh "$(cat <<'SH'
+uri='qemu:///system?socket=/run/fleet-libvirt/libvirt-sock' out=/tmp/fleet-installer-hold
+end=$(($(date +%s) + 1500))
+while [ "$(date +%s)" -lt "$end" ]; do
+ for d in $(virsh --connect "$uri" list --name); do
+  case "$d" in fleet-local-*) ;; *) continue ;; esac
+  for log in /var/lib/fleet-local/vm/*/"${d#fleet-local-}"/installer.log; do
+   [ -f "$log" ] && grep -q 'Linux version' "$log" || continue
+   if virsh --connect "$uri" suspend "$d" >/dev/null 2>&1 && [ "$(virsh --connect "$uri" domstate "$d")" = paused ] && ! grep -q 'FLEET-INSTALLED:' "$log"; then
+    printf 'held %s %s\n' "$d" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$out.tmp"
+   else
+    printf 'missed %s\n' "$d" > "$out.tmp"
+   fi
+   mv "$out.tmp" "$out"; exit 0
+  done
+ done
+ sleep 0.1
+done
+echo expired > "$out"
+SH
+)" "$hold_file"
+  printf 'hold-installer: armed; the installer guest is suspended once its kernel starts and before any receipt\n'
+  ;;
  interrupt-pod)
   name=$(cat "$state/install-handoff")
+  if ! redfish; then
+   held=
+   for _ in $(seq 1 900); do held=$(runtime sh -c "cat $hold_file 2>/dev/null || true"); [[ -z $held ]] || break; sleep 1; done
+   [[ $held == held\ fleet-local-* ]] || { echo "installer guest was not held mid-install: ${held:-no hold}" >&2; exit 1; }
+   printf '%s\n' "$held" > "$state/installer-hold"
+  fi
   "${harness[@]}" wait-stage --state "$state" --stage "$installer_step" --timeout 900 --interval 0.5 > "$state/interrupt-observed.json"
   before=$(wait_running_pod "$name" 30)
   py job "$state" "$name" > "$state/interrupt-job-before-pod.json"
@@ -242,7 +280,8 @@ JSON
   py job "$state" "$name" > "$state/interrupt-job-after-pod.json"
   "${harness[@]}" journal --state "$state" > "$state/interrupt-after.json"
   py record-pod-interrupt "$state" "$before" "$after"
-  printf 'interrupt-pod: worker Pod force-deleted after the installer boot was journaled with its domain running; Job controller replaced it; no local result\n'
+  if redfish; then state_word=running; else state_word='held paused'; fi
+  printf 'interrupt-pod: worker Pod force-deleted after the installer boot was journaled with its domain %s; Job controller replaced it; no local result\n' "$state_word"
   ;;
  interrupt-job)
   name=$(cat "$state/install-handoff")
@@ -266,6 +305,27 @@ JSON
   "${harness[@]}" journal --state "$state" > "$state/interrupt-job-after.json"
   py record-job-interrupt "$state" "$old_job" "$new_job" "$(cat "$state/interrupt-job-pod-before")" "$pod"
   printf 'interrupt-job: running worker Job deleted mid-install; kro recreated it under a new UID for the same operation\n'
+  ;;
+ release-installer)
+  # The guest is still paused with no receipt; resume it for the replacement
+  # worker to observe, and record the hold in the interruption evidence.
+  read -r _ domain held_at < "$state/installer-hold"
+  [[ $(runtime virsh --connect "$libvirt" domstate "$domain" | head -1) == paused ]] || { echo 'held installer guest is no longer paused' >&2; exit 1; }
+  runtime sh -c "! grep -q FLEET-INSTALLED: /var/lib/fleet-local/vm/*/${domain#fleet-local-}/installer.log" || { echo 'held installer printed a receipt while paused' >&2; exit 1; }
+  runtime virsh --connect "$libvirt" resume "$domain" >/dev/null
+  [[ $(runtime virsh --connect "$libvirt" domstate "$domain" | head -1) == running ]] || { echo 'held installer guest did not resume' >&2; exit 1; }
+  python3 - "$state/evidence/interrupt.json" "$domain" "$held_at" <<'PY'
+import datetime,json,sys
+p,domain,held=sys.argv[1:]
+i=json.load(open(p))
+if i.get('domain')!=domain:raise SystemExit('held guest is not the interrupted operation domain')
+i['installerHold']={'held':True,'domain':domain,'heldAt':held,'releasedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+ 'domainStateDuringInterruptions':'paused',
+ 'method':'runtime Pod watcher suspended the guest once its kernel printed and before any receipt; resumed after the Pod and Job interruptions'}
+json.dump(i,open(p,'w'),indent=2,sort_keys=True)
+PY
+  runtime rm -f "$hold_file" "$hold_file.pid"
+  printf 'release-installer: the held installer guest resumed with no receipt printed during the interruptions\n'
   ;;
  resume)
   name=$(cat "$state/install-handoff")

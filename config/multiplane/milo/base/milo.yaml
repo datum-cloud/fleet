@@ -75,8 +75,10 @@ spec:
       enableServiceLinks: false
       containers:
         - name: apiserver
-          # Milo v0.32.5 (go.mod pin), native arm64 image.
-          image: ghcr.io/milo-os/milo@sha256:ec90618ecc723d6e175fbf49bc14292fd930be3e0251acb161c1166e6224279f
+          # Milo v0.32.5 (go.mod pin): the multi-arch index. It resolves to the arm64
+          # manifest sha256:ec90618e… on Colima and the amd64 manifest
+          # sha256:5db875d3… in CI mode.
+          image: ghcr.io/milo-os/milo@sha256:3b4f2890491220c4c79731d9e9b350881ce15dcca9de15b9f511cd7e5323f609
           args:
             - apiserver
             - --etcd-servers=http://milo-etcd-0.milo-etcd:2379
