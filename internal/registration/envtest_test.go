@@ -79,8 +79,15 @@ func (api *liveAPI) actor(name string, groups ...string) client.Client {
 // actorIn impersonates a caller routed through the named project.
 func (api *liveAPI) actorIn(project, name string, groups ...string) client.Client {
 	api.t.Helper()
+	return api.actorWithUID(project, name, name+"-uid", groups...)
+}
+
+// actorWithUID impersonates a caller with the given UID, empty for a
+// credential that carries none.
+func (api *liveAPI) actorWithUID(project, name, uid string, groups ...string) client.Client {
+	api.t.Helper()
 	config := rest.CopyConfig(api.config)
-	config.Impersonate = rest.ImpersonationConfig{UserName: name, UID: name + "-uid", Groups: groups, Extra: map[string][]string{iam.ParentKindExtraKey: {"Project"}, iam.ParentAPIGroupExtraKey: {"resourcemanager.miloapis.com"}, iam.ParentNameExtraKey: {project}}}
+	config.Impersonate = rest.ImpersonationConfig{UserName: name, UID: uid, Groups: groups, Extra: map[string][]string{iam.ParentKindExtraKey: {"Project"}, iam.ParentAPIGroupExtraKey: {"resourcemanager.miloapis.com"}, iam.ParentNameExtraKey: {project}}}
 	actor, err := client.New(config, client.Options{Scheme: api.scheme})
 	if err != nil {
 		api.t.Fatal(err)
@@ -254,6 +261,22 @@ func TestRegistrationAgainstLiveDevices(t *testing.T) {
 	t.Run("missing Device is denied", func(t *testing.T) {
 		missing := &metal.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: CapacityName("9d0c3c2e-1f5b-4f37-9e43-2f5c6a1b7d80"), Namespace: "default", Annotations: map[string]string{DeviceUIDAnnotation: "9d0c3c2e-1f5b-4f37-9e43-2f5c6a1b7d80", DeviceVersionAnnotation: "1", OperationAnnotation: "missing"}}, Spec: metal.MachineCapacitySpec{DeviceRef: metal.LocalReference{Name: "never-recorded"}, AllocationPolicy: "Disabled", ReclaimPolicy: "Retain"}}
 		requireDenied(t, operator.Create(ctx, missing), "does not exist")
+	})
+	t.Run("a caller without a UID is authorized by username", func(t *testing.T) {
+		target := api.device("username-target", "default", "username-serial", "77777777-7777-7777-7777-777777777771")
+		// RBAC binds the username alone; the caller's credential carries no UID.
+		if err := api.admin.Create(ctx, &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: "username-registrar", Namespace: "default"}, Rules: []rbacv1.PolicyRule{{APIGroups: []string{"metal.datumapis.com"}, Resources: []string{"machinecapacities"}, Verbs: []string{"create"}}, {APIGroups: []string{inventory.GroupVersion.Group}, Resources: []string{"devices"}, Verbs: []string{"get"}}}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := api.admin.Create(ctx, &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "username-registrar", Namespace: "default"}, RoleRef: rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "Role", Name: "username-registrar"}, Subjects: []rbacv1.Subject{{APIGroup: "rbac.authorization.k8s.io", Kind: "User", Name: "service-example"}}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := api.actorWithUID("datum-cloud", "unbound-example", "").Create(ctx, api.registration(target)); !apierrors.IsForbidden(err) {
+			t.Fatalf("an unbound caller without a UID registered: %v", err)
+		}
+		if err := api.actorWithUID("datum-cloud", "service-example", "").Create(ctx, api.registration(target)); err != nil {
+			t.Fatalf("a bound caller without a UID was denied: %v", err)
+		}
 	})
 	t.Run("unauthorized caller is denied", func(t *testing.T) {
 		limited := api.actor("limited")
