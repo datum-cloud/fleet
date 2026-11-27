@@ -172,6 +172,9 @@ type Boot struct {
 	Expires   time.Time `json:"expires"`
 	Open      bool      `json:"open,omitempty"`
 	Closed    bool      `json:"closed,omitempty"`
+	// Accelerator is the one the installation runs under, fixed before any
+	// boot, so a replacement worker never resumes it under another.
+	Accelerator string `json:"accelerator"`
 }
 
 const bootRecords = "vmboot"
@@ -191,7 +194,7 @@ func (k Installation) boot(work *site.Work) (Boot, error) {
 	if _, err := rand.Read(token); err != nil {
 		return boot, err
 	}
-	boot = Boot{Operation: work.Operation.UID, Fence: work.Fence, Receipt: hex.EncodeToString(receipt), Token: hex.EncodeToString(token), Expires: k.now().Add(k.window())}
+	boot = Boot{Operation: work.Operation.UID, Fence: work.Fence, Receipt: hex.EncodeToString(receipt), Token: hex.EncodeToString(token), Expires: k.now().Add(k.window()), Accelerator: k.Accelerator}
 	return boot, k.save(work, boot)
 }
 
@@ -206,6 +209,9 @@ func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 	boot, err := k.boot(work)
 	if err != nil {
 		return nil, err
+	}
+	if boot.Accelerator != k.Accelerator {
+		return nil, fmt.Errorf("the installation is bound to accelerator %q, not %q", boot.Accelerator, k.Accelerator)
 	}
 	dir := k.directory(work.Device, work.Operation.UID)
 	var evidence ops.InstallationEvidence

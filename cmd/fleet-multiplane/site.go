@@ -98,14 +98,15 @@ func vmConfig() (vmwork.Config, fixture.Enrollment, error) {
 	default:
 		return vmwork.Config{}, nil, errors.New("FLEET_LOCAL_VM_ACCEL must be kvm or tcg")
 	}
-	if accelerator == "kvm" {
-		if _, err := os.Stat("/dev/kvm"); err != nil {
-			return vmwork.Config{}, nil, err
-		}
-	}
 	uri := os.Getenv("FLEET_LIBVIRT_URI")
 	if !strings.HasPrefix(uri, "qemu:///system?socket="+libvirtSocketDir+"/") {
 		return vmwork.Config{}, nil, errors.New("FLEET_LIBVIRT_URI must name the site's libvirt socket")
+	}
+	// The worker starts no hypervisor itself: the runtime behind the socket
+	// does, and it checks its own device. A worker runs only against a
+	// runtime that published the same accelerator.
+	if err := runtimeAccelerator(libvirtSocketDir, accelerator); err != nil {
+		return vmwork.Config{}, nil, err
 	}
 	var enrollment fixture.Enrollment
 	decoder := json.NewDecoder(strings.NewReader(os.Getenv("FLEET_SITE_ENROLLMENT")))
@@ -115,6 +116,19 @@ func vmConfig() (vmwork.Config, fixture.Enrollment, error) {
 	}
 	config.Accelerator, config.URI = accelerator, uri
 	return config, enrollment, nil
+}
+
+// runtimeAccelerator checks that the VM runtime sharing dir published
+// accelerator.
+func runtimeAccelerator(dir, accelerator string) error {
+	data, err := os.ReadFile(filepath.Join(dir, "accelerator"))
+	if err != nil {
+		return errors.New("the site's VM runtime has not published its accelerator")
+	}
+	if published := strings.TrimSpace(string(data)); published != accelerator {
+		return fmt.Errorf("the site's VM runtime runs %s guests, not %s", published, accelerator)
+	}
+	return nil
 }
 
 // redfishBootServer is what the Redfish boot server needs: the artifacts it

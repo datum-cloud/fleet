@@ -135,6 +135,7 @@ with tempfile.TemporaryDirectory() as tmp:
         for f in (root / layer).glob('*.yaml'):
             used |= set(re.findall(r'\$\{(FLEET_[A-Z_]+)\}', f.read_text()))
     check('substituted variables defined', used and used <= env_keys, str(sorted(used - env_keys)))
+    check('site accelerator is the run parameter, TCG by default', 'FLEET_LOCAL_VM_ACCEL: tcg\n' in cell3.replace('"', ''))
     check('graph uses no Flux variables', not re.findall(r'\$\{FLEET_', (root / 'config/site/graph/rgd.yaml').read_text()))
     check('stage off revision', flux.stage(ns(revision=2, site='off')) == 0 and 'FLEET_SITE_DISPATCH: "false"' in render(2, 'cell'))
     def declared(rev):

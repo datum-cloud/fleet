@@ -20,3 +20,4 @@ spec:
   # empty where no media service runs. It is public; workers verify the
   # service with it.
   mediaCA: "${FLEET_MEDIA_CA}"
+  accelerator: "${FLEET_LOCAL_VM_ACCEL}"

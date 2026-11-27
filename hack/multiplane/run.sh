@@ -38,7 +38,12 @@ done
 # media suite, for each install's report address.
 lab_ipam=0
 [[ $lab_dhcp == static && $media == 0 ]] || lab_ipam=1
-export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker FLEET_SITE_PROVIDER=$provider FLEET_LAB_DHCP=$lab_dhcp FLEET_LAB_IPAM=$lab_ipam
+# Run parameters (docs/operations/multiplane.md#ci-mode). The defaults are the
+# task-owned Colima profile: arm64 runtime, TCG guest. Preflight validates them
+# before any resource exists.
+export FLEET_MULTIPLANE_RUNTIME=${FLEET_MULTIPLANE_RUNTIME:-colima} FLEET_MULTIPLANE_DOCKER_CONTEXT=${FLEET_MULTIPLANE_DOCKER_CONTEXT:-colima-fleet-acceptance-tcg}
+export FLEET_MULTIPLANE_ARCH=${FLEET_MULTIPLANE_ARCH:-arm64} FLEET_MULTIPLANE_ACCEL=${FLEET_MULTIPLANE_ACCEL:-tcg}
+export DOCKER_CONTEXT=$FLEET_MULTIPLANE_DOCKER_CONTEXT KIND_EXPERIMENTAL_PROVIDER=docker FLEET_SITE_PROVIDER=$provider FLEET_LAB_DHCP=$lab_dhcp FLEET_LAB_IPAM=$lab_ipam
 harness=(python3 hack/multiplane/harness.py)
 state=$(mktemp -d "${FLEET_MULTIPLANE_STATE_ROOT:-/tmp}/fleet-multiplane.XXXXXX")
 mkdir -m 0700 "$state/evidence"
@@ -106,13 +111,13 @@ PY
 flux=(python3 hack/multiplane/flux.py)
 # The site binary is built into its own directory: it is the only build context
 # input besides hack/local-vm, so no private state can enter the image.
-ph build 600 sh -c 'mkdir -m 0700 "$1/site-bin" && go build -o "$1/fleet-multiplane-host" ./cmd/fleet-multiplane && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o "$1/site-bin/fleet-multiplane" ./cmd/fleet-multiplane && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o "$1/site-bin/fleet-dhcp-sync" ./cmd/fleet-dhcp-sync && cp "$1/site-bin/fleet-multiplane" "$1/fleet-multiplane"' sh "$state"
+ph build 600 sh -c 'mkdir -m 0700 "$1/site-bin" && go build -o "$1/fleet-multiplane-host" ./cmd/fleet-multiplane && CGO_ENABLED=0 GOOS=linux GOARCH="$FLEET_MULTIPLANE_ARCH" go build -o "$1/site-bin/fleet-multiplane" ./cmd/fleet-multiplane && CGO_ENABLED=0 GOOS=linux GOARCH="$FLEET_MULTIPLANE_ARCH" go build -o "$1/site-bin/fleet-dhcp-sync" ./cmd/fleet-dhcp-sync && cp "$1/site-bin/fleet-multiplane" "$1/fleet-multiplane"' sh "$state"
 ph site-image 2400 docker build --target site --build-context "fleetbin=$state/site-bin" -t "$prefix-site-image" -f hack/local-vm/Containerfile hack/local-vm
 ph site-image-verify 120 sh -c '
  sum=$(shasum -a 256 "$2/site-bin/fleet-multiplane" | cut -d" " -f1)
  sync=$(shasum -a 256 "$2/site-bin/fleet-dhcp-sync" | cut -d" " -f1)
  printf "%s  /usr/local/bin/fleet-multiplane\n%s  /usr/local/bin/fleet-dhcp-sync\n" "$sum" "$sync" | docker run --rm -i --entrypoint sha256sum "$1-site-image" -c - >/dev/null
- docker run --rm -e FLEET_LOCAL_VM_ACCEL=tcg --entrypoint fleet-multiplane "$1-site-image" image > "$2/image"
+ docker run --rm -e "FLEET_LOCAL_VM_ACCEL=$FLEET_MULTIPLANE_ACCEL" --entrypoint fleet-multiplane "$1-site-image" image > "$2/image"
  echo "site image: checksum-verified executable; artifact reference recorded"' sh "$prefix" "$state"
 if [[ $provider == redfish ]]; then
  # The unmodified upstream emulator, verified before extraction, plus the
