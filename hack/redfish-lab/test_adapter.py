@@ -18,7 +18,7 @@ WORK = pathlib.Path(tempfile.mkdtemp())
 (WORK / 'creds').mkdir()
 (WORK / 'creds' / 'username').write_text('lab-operator\n')
 (WORK / 'creds' / 'password').write_text('synthetic-test-password\n')
-os.environ.update(FLEET_VIRSH=str(HERE / 'fake_virsh.py'), FAKE_VIRSH_STATE=str(WORK / 'virsh.json'), FLEET_BMC_STATE=str(WORK / 'state'))
+os.environ.update(FLEET_VIRSH=str(HERE / 'fake_virsh.py'), FAKE_VIRSH_STATE=str(WORK / 'virsh.json'), FLEET_BMC_STATE=str(WORK / 'state'), FLEET_BMC_MEDIA=str(WORK / 'media'))
 sys.path.insert(0, str(HERE))
 import fleet_lab_adapter as adapter  # noqa: E402
 
@@ -54,14 +54,15 @@ class AdapterTest(unittest.TestCase):
         s = self.app.get('/redfish/v1/Systems/System-1', headers=AUTH).json
         self.assertEqual(s['UUID'], '7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0a')
         self.assertEqual(s['PowerState'], 'Off')
-        self.assertEqual(s['Boot']['BootSourceOverrideTarget@Redfish.AllowableValues'], ['None', 'Pxe', 'Hdd'])
+        self.assertEqual(s['Boot']['BootSourceOverrideTarget@Redfish.AllowableValues'], ['None', 'Pxe', 'Hdd', 'Cd'])
+        self.assertEqual(s['VirtualMedia'], {'@odata.id': '/redfish/v1/Systems/System-1/VirtualMedia'})
         info = self.app.get(s['Actions']['#ComputerSystem.Reset']['@Redfish.ActionInfo'], headers=AUTH).json
         self.assertEqual(info['Parameters'][0]['AllowableValues'], ['On', 'ForceOff', 'ForceRestart'])
 
     def test_4_boot_once_is_consumed_by_power_on(self):
         r = self.app.patch('/redfish/v1/Systems/System-1', headers=AUTH, json={'Boot': {'BootSourceOverrideTarget': 'Pxe', 'BootSourceOverrideEnabled': 'Once'}})
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(self.app.patch('/redfish/v1/Systems/System-1', headers=AUTH, json={'Boot': {'BootSourceOverrideTarget': 'Cd'}}).status_code, 400)
+        self.assertEqual(self.app.patch('/redfish/v1/Systems/System-1', headers=AUTH, json={'Boot': {'BootSourceOverrideTarget': 'Usb'}}).status_code, 400)
         r = self.app.post('/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset', headers=AUTH, json={'ResetType': 'On'})
         self.assertEqual(r.status_code, 204)
         d = virsh_state()['domains']
@@ -98,6 +99,74 @@ class AdapterTest(unittest.TestCase):
         text = (WORK / 'state' / 'audit.log').read_text()
         self.assertNotIn('synthetic-test-password', text)
         self.assertNotIn('Authorization', text)
+
+    def test_8_virtual_media_insert_boot_eject(self):
+        fetched = []
+
+        def fake_fetch(url, path):
+            fetched.append(url)
+            pathlib.Path(path).write_bytes(b'medium')
+            return 6
+        adapter.fetch, real = fake_fetch, adapter.fetch
+        os.makedirs(adapter.MEDIA_DIR, exist_ok=True)
+        try:
+            base = '/redfish/v1/Systems/System-1/VirtualMedia'
+            members = self.app.get(base, headers=AUTH).json['Members']
+            self.assertEqual([m['@odata.id'] for m in members], [base + '/CD1', base + '/CD2'])
+            self.assertEqual(self.app.get(base, headers=BAD).status_code, 401)
+            cd1 = self.app.get(base + '/CD1', headers=AUTH).json
+            self.assertEqual((cd1['Inserted'], cd1['Image']), (False, None))
+            insert = cd1['Actions']['#VirtualMedia.InsertMedia']['target']
+            url = 'https://10.96.0.80:8443/media/k/boot/d/boot.iso'
+            self.assertEqual(self.app.post(insert, headers=AUTH, json={'Image': url, 'TransferProtocolType': 'NFS'}).status_code, 400)
+            self.assertEqual(self.app.post(insert, headers=AUTH, json={'Image': url, 'Inserted': True, 'WriteProtected': True, 'TransferProtocolType': 'HTTPS'}).status_code, 204)
+            self.assertEqual(self.app.post(insert, headers=AUTH, json={'Image': url}).status_code, 400)
+            self.assertEqual(fetched, [url])
+            cd1 = self.app.get(base + '/CD1', headers=AUTH).json
+            self.assertEqual((cd1['Inserted'], cd1['Image']), (True, url))
+            self.assertNotIn(url, (WORK / 'state' / 'audit.log').read_text())
+            # Boot once from CD attaches the inserted medium.
+            self.app.post('/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset', headers=AUTH, json={'ResetType': 'ForceOff'})
+            self.app.patch('/redfish/v1/Systems/System-1', headers=AUTH, json={'Boot': {'BootSourceOverrideTarget': 'Cd', 'BootSourceOverrideEnabled': 'Once'}})
+            self.app.post('/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset', headers=AUTH, json={'ResetType': 'On'})
+            self.assertEqual(virsh_state()['domains']['fleet-lab-target-a']['starts'][-1], 'cdrom')
+            self.app.post('/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset', headers=AUTH, json={'ResetType': 'ForceOff'})
+            # A corrupted config medium carries another report token.
+            def config_fetch(url, path):
+                pathlib.Path(path).write_bytes(b'FLEET-CONFIG-V1\ntoken=' + b'a' * 64 + b'\nend\n')
+                return 1
+            adapter.fault_cli(['corrupt-config', 'System-1'])
+            # A boot medium does not consume the fault.
+            cd2 = self.app.get(base + '/CD2', headers=AUTH).json
+            self.assertEqual(self.app.post(cd2['Actions']['#VirtualMedia.InsertMedia']['target'], headers=AUTH, json={'Image': url}).status_code, 204)
+            self.assertNotIn('fault', self.audit()[-1])
+            self.app.post(cd2['Actions']['#VirtualMedia.EjectMedia']['target'], headers=AUTH, json={})
+            adapter.fetch = config_fetch
+            self.assertEqual(self.app.post(cd2['Actions']['#VirtualMedia.InsertMedia']['target'], headers=AUTH, json={'Image': url}).status_code, 204)
+            self.assertEqual(self.audit()[-1].get('fault'), 'corrupt-config-token')
+            held = (WORK / 'media' / 'fleet-lab-target-a-CD2.img').read_bytes()
+            self.assertIn(b'token=', held)
+            self.assertNotIn(b'a' * 64, held)
+            self.app.post(cd2['Actions']['#VirtualMedia.EjectMedia']['target'], headers=AUTH, json={})
+            # A config medium can gain a download the operation never pinned.
+            adapter.fault_cli(['add-download', 'System-1'])
+            self.assertEqual(self.app.post(cd2['Actions']['#VirtualMedia.InsertMedia']['target'], headers=AUTH, json={'Image': url}).status_code, 204)
+            self.assertEqual(self.audit()[-1].get('fault'), 'add-config-download')
+            held = (WORK / 'media' / 'fleet-lab-target-a-CD2.img').read_bytes().rstrip(b'\0')
+            self.assertIn(b'\ndownload=extension registry.example/extension@sha256:', held)
+            self.assertTrue(held.endswith(b'\nend\n'))
+            self.app.post(cd2['Actions']['#VirtualMedia.EjectMedia']['target'], headers=AUTH, json={})
+            # A withheld eject response still ejects.
+            adapter.fault_cli(['drop-eject', 'System-1', 'CD1', '0'])
+            eject = cd1['Actions']['#VirtualMedia.EjectMedia']['target']
+            self.assertEqual(self.app.post(eject, headers=AUTH, json={}).status_code, 204)
+            self.assertEqual(self.audit()[-1].get('fault'), 'drop-response-after-effect')
+            cd1 = self.app.get(base + '/CD1', headers=AUTH).json
+            self.assertEqual((cd1['Inserted'], cd1['Image']), (False, None))
+            self.assertEqual(self.app.post(eject, headers=AUTH, json={}).status_code, 204)
+            self.assertEqual(self.audit()[-1]['effect'], 'none')
+        finally:
+            adapter.fetch = real
 
     def test_7_synced_dhcp_network_has_no_dhcp_server(self):
         targets = {'System-1': {'mac': '52:54:00:77:01:0a', 'ip': '192.168.77.10'}}

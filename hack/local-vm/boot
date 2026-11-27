@@ -6,5 +6,23 @@ exec >/dev/ttyS0 2>&1
 if grep -Eq '^/dev/vda1 / ext4 ' /proc/mounts && test -s /fleet-receipt; then
  printf 'FLEET-DISK-BOOT:%s\n' "$(cat /fleet-receipt)"
 fi
+# A virtual media install: at first boot the installed OS brings up its
+# data network over DHCP and posts its install report over HTTPS, verifying
+# the media service. The console shows only the outcome.
+if grep -Eq '^/dev/vda1 / ext4 ' /proc/mounts && test -s /fleet-report/token; then
+ mount -t sysfs sys /sys 2>/dev/null || true
+ mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+ mount -t tmpfs tmpfs /run 2>/dev/null || true
+ modprobe e1000 || true
+ # The initramfs may rename the NIC; the data network is the one NIC.
+ iface=$(ls /sys/class/net | grep -vx lo | head -n 1)
+ /bin/busybox ip link set "$iface" up
+ /bin/busybox udhcpc -i "$iface" -n -q -t 20 -s /fleet-dhcp >/dev/null 2>&1
+ downloads=$(/bin/busybox awk 'BEGIN{ORS=""} {if (NR>1) print ","; printf "{\"name\":\"%s\",\"digest\":\"%s\"}", $1, $2}' /fleet-report/downloads 2>/dev/null)
+ body=$(printf '{"token":"%s","image":"%s","bootstrap":"%s","downloads":[%s]}' "$(cat /fleet-report/token)" "$(cat /fleet-report/image)" "$(cat /fleet-report/bootstrap)" "$downloads")
+ printf 'fleet: data network %s\n' "$(/bin/busybox ip -4 -o addr show dev "$iface" 2>&1 | /bin/busybox awk '{print $4}')"
+ status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 --retry 5 --retry-all-errors --cacert /fleet-report/ca.pem -H 'Content-Type: application/json' --data "$body" "$(cat /fleet-report/url)" 2>/run/curl.err || true)
+ printf 'fleet: first-boot report HTTP %s %s\n' "$status" "$(head -c 200 /run/curl.err)"
+fi
 sync
 /bin/busybox poweroff -f

@@ -10,8 +10,12 @@ authentication. This module, loaded into the same Flask process, adds only:
   * HTTP Basic authentication against a mounted synthetic credential;
   * ComputerSystem.Reset (On, ForceOff, ForceRestart) applied to an exact
     persistent libvirt domain per System, and PowerState read from libvirt;
-  * Boot source override (Pxe or Hdd, Once) persisted like BMC NVRAM and
+  * Boot source override (Pxe, Hdd or Cd, Once) persisted like BMC NVRAM and
     consumed when the domain is started;
+  * VirtualMedia on each System: two CD devices with InsertMedia, which
+    fetches the image over HTTPS verifying the lab media service's CA, and
+    EjectMedia, persisted like BMC state; inserted media are attached to the
+    domain as CD-ROMs;
   * an append-only request audit log (no bodies, no credentials);
   * bounded, one-shot lab fault injection driven by a state file.
 
@@ -22,7 +26,10 @@ socket and reach the lab hardware only through Redfish.
 import base64
 import datetime
 import fcntl
+import hashlib
 import hmac
+import ipaddress
+import ssl
 import json
 import os
 import re
@@ -31,6 +38,8 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
+import urllib.request
 
 UPSTREAM = os.environ.get('FLEET_BMC_UPSTREAM', '/opt/redfish-emulator')
 CONFIG_DIR = os.environ.get('FLEET_BMC_CONFIG', '/etc/fleet-bmc')
@@ -43,7 +52,14 @@ PORT = int(os.environ.get('FLEET_BMC_PORT', '8443'))
 # workers reach it only over a connection pinned to that key.
 TLS_DIR = os.environ.get('FLEET_BMC_TLS', '/etc/fleet-bmc-tls')
 RESET_TYPES = ('On', 'ForceOff', 'ForceRestart')
-BOOT_TARGETS = ('None', 'Pxe', 'Hdd')
+BOOT_TARGETS = ('None', 'Pxe', 'Hdd', 'Cd')
+# Virtual media: two CD devices per System, attached to the domain as IDE
+# CD-ROMs in this order. Fetched media live on a volume the hypervisor also
+# mounts at the same path.
+MEDIA_DEVICES = (('CD1', 'hdc'), ('CD2', 'hdd'))
+MEDIA_DIR = os.environ.get('FLEET_BMC_MEDIA', '/var/lib/fleet-lab-media')
+MEDIA_CA = os.environ.get('FLEET_BMC_MEDIA_CA', '/etc/fleet-bmc-media-ca/ca.crt')
+MEDIA_LIMIT = 1 << 30
 BOOT_ENABLED = ('Disabled', 'Once')
 NETWORK = 'fleet-lab-pxe'
 # Lab DHCP mode. static: libvirt's dnsmasq hands each target a fixed lease.
@@ -112,7 +128,12 @@ class LibvirtError(Exception):
     pass
 
 
-def domain_xml(t, boot):
+def media_xml(media):
+    return ''.join("<disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='%s'/><target dev='%s' bus='ide'/><readonly/></disk>"
+                   % (media[dev]['file'], target) for dev, target in MEDIA_DEVICES if media.get(dev, {}).get('Inserted'))
+
+
+def domain_xml(t, boot, media=None):
     # Persistent lab target: fixed UUID, MAC, disk and console. Only the boot
     # device changes, from the Redfish boot override at power-on.
     return ("<domain type='qemu'><name>{domain}</name><uuid>{uuid}</uuid><memory unit='MiB'>2048</memory><vcpu>2</vcpu>"
@@ -124,6 +145,7 @@ def domain_xml(t, boot):
             "<source file='{disk}'/><target dev='vda' bus='virtio'/></disk>"
             "<interface type='network'><source network='" + NETWORK + "'/><mac address='{mac}'/><model type='e1000'/></interface>"
             "<serial type='file'><source path='{console}' append='on'/><target port='0'/></serial>"
+            + media_xml(media or {}).replace('{', '{{').replace('}', '}}') +
             "</devices></domain>").format(boot=boot, **t)
 
 
@@ -147,9 +169,14 @@ class Lab:
         self.targets, self.state, self.boot_ip = targets, state, boot_ip
         self.nvram_path = os.path.join(state, 'nvram.json')
         self.nvram = read_json(self.nvram_path, {})
+        self.media_path = os.path.join(state, 'media.json')
+        self.media = read_json(self.media_path, {})
         for sid in targets:
             self.nvram.setdefault(sid, {'BootSourceOverrideEnabled': 'Disabled', 'BootSourceOverrideTarget': 'None'})
+            for dev, _ in MEDIA_DEVICES:
+                self.media.setdefault(sid, {}).setdefault(dev, {'Inserted': False, 'Image': None, 'file': None})
         atomic_write(self.nvram_path, self.nvram)
+        atomic_write(self.media_path, self.media)
 
     def ensure(self, sid):
         """Define lost libvirt objects (the runtime Pod's libvirt config is not durable)."""
@@ -179,18 +206,81 @@ class Lab:
 
     def save(self):
         atomic_write(self.nvram_path, self.nvram)
+        atomic_write(self.media_path, self.media)
 
     def power_on(self, sid):
         t, boot = self.targets[sid], 'hd'
         override = self.nvram[sid]
-        if override['BootSourceOverrideEnabled'] == 'Once' and override['BootSourceOverrideTarget'] in ('Pxe', 'Hdd'):
-            boot = 'network' if override['BootSourceOverrideTarget'] == 'Pxe' else 'hd'
+        if override['BootSourceOverrideEnabled'] == 'Once' and override['BootSourceOverrideTarget'] in ('Pxe', 'Hdd', 'Cd'):
+            boot = {'Pxe': 'network', 'Hdd': 'hd', 'Cd': 'cdrom'}[override['BootSourceOverrideTarget']]
             # Once is consumed by this boot. Persisted before start, like NVRAM.
             self.nvram[sid] = {'BootSourceOverrideEnabled': 'Disabled', 'BootSourceOverrideTarget': 'None'}
             self.save()
-        virsh('define', '/dev/stdin', input=domain_xml(t, boot))
+        virsh('define', '/dev/stdin', input=domain_xml(t, boot, self.media[sid]))
         virsh('start', t['domain'])
         return boot
+
+
+def is_config(path):
+    """Whether a fetched medium is a config medium."""
+    with open(path, 'rb') as f:
+        return f.read(15) == b'FLEET-CONFIG-V1'
+
+
+def corrupt_token(path):
+    """Replace a config medium's report token with another value of the
+    same shape, in place. Returns False for any other medium."""
+    with open(path, 'r+b') as f:
+        data = f.read()
+        m = re.search(rb'\ntoken=([0-9a-f]{64})\n', data)
+        if not data.startswith(b'FLEET-CONFIG-V1') or not m:
+            return False
+        other = hashlib.sha256(m.group(1)).hexdigest().encode()
+        f.seek(0)
+        f.write(data[:m.start(1)] + other + data[m.end(1):])
+    return True
+
+
+def add_download(path):
+    """Add a download line the operation never pinned to a config medium,
+    in place, within its padded size. Returns False for any other medium."""
+    with open(path, 'r+b') as f:
+        data = f.read()
+        if not data.startswith(b'FLEET-CONFIG-V1') or b'\nend\n' not in data:
+            return False
+        line = b'download=extension registry.example/extension@sha256:' + hashlib.sha256(b'unpinned').hexdigest().encode() + b'\n'
+        text = data.rstrip(b'\x00').replace(b'\nend\n', b'\n' + line + b'end\n')
+        if len(text) > len(data):
+            return False
+        f.seek(0)
+        f.write(text.ljust(len(data), b'\x00'))
+    return True
+
+
+def fetch(url, path):
+    """Fetch a medium the way a BMC does: HTTPS only, to a literal IPv4
+    endpoint, verifying the lab media service's certificate. Returns the
+    byte count."""
+    u = urllib.parse.urlsplit(url)
+    if u.scheme != 'https' or u.username or u.password or u.query or u.fragment:
+        raise ValueError('media must be fetched over HTTPS without credentials or a query')
+    ipaddress.IPv4Address(u.hostname)
+    context = ssl.create_default_context(cafile=MEDIA_CA)
+    tmp = path + '.part'
+    with urllib.request.urlopen(url, context=context, timeout=25) as r, open(tmp, 'wb') as f:
+        n = 0
+        while True:
+            chunk = r.read(1 << 20)
+            if not chunk:
+                break
+            n += len(chunk)
+            if n > MEDIA_LIMIT:
+                raise ValueError('medium exceeds the size bound')
+            f.write(chunk)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    return n
 
 
 def error(status, message):
@@ -223,6 +313,7 @@ def create_app(targets, state, credentials, boot_ip):
         m['Name'] = targets[sid]['name']
         m['Manufacturer'] = 'DMTF Redfish Interface Emulator (Fleet lab adapter)'
         m['Model'] = 'libvirt/QEMU lab target'
+        m['VirtualMedia'] = {'@odata.id': '/redfish/v1/Systems/%s/VirtualMedia' % sid}
         m['Boot'] = dict(lab.nvram[sid], BootSourceOverrideMode='Legacy', **{
             'BootSourceOverrideTarget@Redfish.AllowableValues': list(BOOT_TARGETS),
             'BootSourceOverrideEnabled@Redfish.AllowableValues': list(BOOT_ENABLED)})
@@ -281,6 +372,9 @@ def create_app(targets, state, credentials, boot_ip):
             request_context.principal, request_context.detail = 'rejected', {'fault': 'reject-auth'}
             return challenge()
         request_context.principal = 'authenticated'
+        v = re.fullmatch(r'/redfish/v1/Systems/([^/]+)/VirtualMedia(?:/([^/]+)(/Actions/VirtualMedia\.(InsertMedia|EjectMedia))?)?', path)
+        if v and v.group(1) in targets:
+            return virtual_media(v.group(1), v.group(2), v.group(4))
         m = re.fullmatch(r'/redfish/v1/Systems/([^/]+)(/Actions/ComputerSystem\.Reset|/ResetActionInfo)?', path)
         if not m:
             return None
@@ -318,6 +412,84 @@ def create_app(targets, state, credentials, boot_ip):
             publish(sid)
         request_context.detail = {'boot': current}
         return cs.members[sid], 200
+
+    def media_resource(sid, dev):
+        state = lab.media[sid][dev]
+        base = '/redfish/v1/Systems/%s/VirtualMedia/%s' % (sid, dev)
+        return {'@odata.id': base, '@odata.type': '#VirtualMedia.v1_6_0.VirtualMedia', 'Id': dev, 'Name': 'Virtual ' + dev,
+                'MediaTypes': ['CD', 'DVD'], 'Inserted': state['Inserted'], 'Image': state['Image'], 'WriteProtected': True,
+                'TransferProtocolType': 'HTTPS' if state['Inserted'] else None, 'ConnectedVia': 'URI' if state['Inserted'] else 'NotConnected',
+                'Actions': {'#VirtualMedia.InsertMedia': {'target': base + '/Actions/VirtualMedia.InsertMedia'},
+                            '#VirtualMedia.EjectMedia': {'target': base + '/Actions/VirtualMedia.EjectMedia'}}}
+
+    def virtual_media(sid, dev, action):
+        devices = [d for d, _ in MEDIA_DEVICES]
+        if dev is None:
+            if request.method != 'GET':
+                return error(405, 'method not allowed')
+            base = '/redfish/v1/Systems/%s/VirtualMedia' % sid
+            return {'@odata.id': base, '@odata.type': '#VirtualMediaCollection.VirtualMediaCollection', 'Name': 'Virtual media',
+                    'Members': [{'@odata.id': base + '/' + d} for d in devices], 'Members@odata.count': len(devices)}, 200
+        if dev not in devices:
+            return error(404, 'no such virtual media device')
+        if action is None:
+            if request.method != 'GET':
+                return error(405, 'method not allowed')
+            return media_resource(sid, dev), 200
+        if request.method != 'POST':
+            return error(405, 'method not allowed')
+        body = request.get_json(force=True, silent=True)
+        if not isinstance(body, dict):
+            return error(400, 'a JSON object is required')
+        state = lab.media[sid][dev]
+        if action == 'InsertMedia':
+            if not set(body) <= {'Image', 'Inserted', 'WriteProtected', 'TransferProtocolType', 'TransferMethod'} or not isinstance(body.get('Image'), str) or body.get('Inserted', True) is not True:
+                return error(400, 'unsupported InsertMedia parameters')
+            if body.get('TransferProtocolType', 'HTTPS') != 'HTTPS':
+                return error(400, 'only HTTPS media are accepted')
+            if state['Inserted']:
+                return error(400, 'a medium is already inserted')
+            url = body['Image']
+            path = os.path.join(MEDIA_DIR, '%s-%s.img' % (targets[sid]['domain'], dev))
+            request_context.detail = {'media': dev, 'urlSHA256': hashlib.sha256(url.encode()).hexdigest()}
+            try:
+                n = fetch(url, path)
+            except Exception as e:  # noqa: BLE001  the class of failure only, never the URL
+                request_context.detail.update({'effect': 'fetch-failed', 'error': type(e).__name__})
+                return error(400, 'the medium could not be fetched')
+            if is_config(path) and take('corruptConfig', lambda f: f.get('system') == sid) and corrupt_token(path):
+                # Lab fault: the medium the BMC holds carries another
+                # report token than the one the media service served.
+                request_context.detail['fault'] = 'corrupt-config-token'
+            elif is_config(path) and take('addDownload', lambda f: f.get('system') == sid) and add_download(path):
+                # Lab fault: the medium the BMC holds lists a download the
+                # operation never pinned.
+                request_context.detail['fault'] = 'add-config-download'
+            with LOCK:
+                lab.media[sid][dev] = {'Inserted': True, 'Image': url, 'file': path}
+                lab.save()
+            request_context.detail.update({'effect': 'inserted', 'bytes': n})
+            return '', 204
+        if set(body) - {'Inserted'}:
+            return error(400, 'unsupported EjectMedia parameters')
+        drop = take('dropEject', lambda f: f.get('system') == sid and f.get('device') == dev) if state['Inserted'] else None
+        effect = 'none'
+        if state['Inserted']:
+            with LOCK:
+                if state.get('file'):
+                    try:
+                        os.remove(state['file'])
+                    except FileNotFoundError:
+                        pass
+                lab.media[sid][dev] = {'Inserted': False, 'Image': None, 'file': None}
+                lab.save()
+            effect = 'ejected'
+        request_context.detail = {'media': dev, 'effect': effect}
+        if drop:
+            # Lab fault: the eject is applied, the response is withheld past the client timeout.
+            request_context.detail['fault'] = 'drop-response-after-effect'
+            time.sleep(min(int(drop.get('seconds', 45)), 120))
+        return '', 204
 
     def reset(sid):
         body = request.get_json(force=True, silent=True)
@@ -370,6 +542,12 @@ def fault_cli(args):
     if args[:1] == ['drop-response'] and len(args) in (4, 5):
         skip = int(args[4]) if len(args) == 5 else 0
         faults.update(lambda v: v.setdefault('dropResponse', []).append({'system': args[1], 'resetType': args[2], 'seconds': int(args[3]), 'skip': skip}))
+    elif args[:1] == ['drop-eject'] and len(args) == 4:
+        faults.update(lambda v: v.setdefault('dropEject', []).append({'system': args[1], 'device': args[2], 'seconds': int(args[3])}))
+    elif args[:1] == ['add-download'] and len(args) == 2:
+        faults.update(lambda v: v.setdefault('addDownload', []).append({'system': args[1]}))
+    elif args[:1] == ['corrupt-config'] and len(args) == 2:
+        faults.update(lambda v: v.setdefault('corruptConfig', []).append({'system': args[1]}))
     elif args[:1] == ['reject-auth'] and len(args) == 2:
         faults.update(lambda v: v.__setitem__('rejectAuth', int(args[1])))
     elif args[:1] == ['hide-reset'] and len(args) == 2:
@@ -379,7 +557,7 @@ def fault_cli(args):
     elif args == ['show']:
         pass
     else:
-        raise SystemExit('usage: fault drop-response SYSTEM RESETTYPE SECONDS [SKIP] | reject-auth COUNT | hide-reset TYPE | clear | show')
+        raise SystemExit('usage: fault drop-response SYSTEM RESETTYPE SECONDS [SKIP] | drop-eject SYSTEM DEVICE SECONDS | corrupt-config SYSTEM | add-download SYSTEM | reject-auth COUNT | hide-reset TYPE | clear | show')
     print(json.dumps(faults.read(), sort_keys=True))
 
 

@@ -1,0 +1,31 @@
+# The site workers' own identity for the central media service: one client
+# certificate Secret per site worker identity, fleet-site-worker-media. The
+# harness enrolls it; it is never part of a source revision. It holds no BMC
+# credential, and no BMC credential Secret holds it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet-site-worker-identity
+  annotations:
+    # Deleting the namespace deletes the enrolled identity. Never prune it.
+    kustomize.toolkit.fluxcd.io/prune: disabled
+---
+# To create a per-operation Role that gets the identity Secret, kro itself
+# must hold get on it. kro cannot list or watch Secrets here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-site-kro-worker-identity, namespace: fleet-site-worker-identity}
+rules:
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: [create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-site-kro-worker-identity, namespace: fleet-site-worker-identity}
+subjects:
+  - {kind: ServiceAccount, name: kro, namespace: kro-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-site-kro-worker-identity}

@@ -10,7 +10,51 @@ modprobe virtio_pci
 modprobe virtio_blk
 modprobe ext4
 mode=install
-for arg in $(cat /proc/cmdline); do case "$arg" in fleet.receipt=*) receipt=${arg#fleet.receipt=};; fleet.mode=*) mode=${arg#fleet.mode=};; esac; done
+delivery=network
+for arg in $(cat /proc/cmdline); do case "$arg" in fleet.receipt=*) receipt=${arg#fleet.receipt=};; fleet.mode=*) mode=${arg#fleet.mode=};; fleet.delivery=*) delivery=${arg#fleet.delivery=};; esac; done
+if [ "$delivery" = media ]; then
+ # Virtual media: the boot medium carries nothing operation specific. The
+ # config medium, rendered for one operation, carries the report token, the
+ # bootstrap salt and payload, how the OS gets addresses, and where the
+ # installed OS posts its report. The installer brings up no network and
+ # reports nothing itself: only the installed OS's report proves the install.
+ modprobe ata_piix || true
+ modprobe sr_mod
+ modprobe isofs
+ config= boot=
+ for _ in $(seq 1 30); do
+  for dev in /dev/sr0 /dev/sr1; do
+   [ -b "$dev" ] || continue
+   if [ "$(dd if="$dev" bs=2048 count=1 2>/dev/null | head -c 15)" = FLEET-CONFIG-V1 ]; then config=$dev; else boot=$dev; fi
+  done
+  [ -n "$config" ] && [ -n "$boot" ] && break
+  sleep 1
+ done
+ [ -n "$config" ] && [ -n "$boot" ] || /bin/busybox poweroff -f
+ dd if="$config" bs=2048 count=4 2>/dev/null | tr -d '\000' > /fleet-config
+ # The console is diagnostics only and must carry no secret: tracing
+ # would print the token and the bootstrap payload, so it stays off for
+ # the rest of a virtual media install.
+ set +x
+ value() { sed -n "s/^$1=//p" /fleet-config; }
+ receipt=$(value token)
+ salt=$(value salt)
+ grep -qx 'addresses=DataNetwork' /fleet-config || /bin/busybox poweroff -f
+ value bootstrap | base64 -d > /fleet-bootstrap
+ report=$(value report)
+ # The downloads the config medium pins, one "name digest" per line. This
+ # lab image fetches nothing; it reports each one by the digest its
+ # reference pins, as an installer that pulled it would.
+ sed -n 's/^download=\([^ ]*\) [^@]*@\(sha256:[0-9a-f]*\)$/\1 \2/p' /fleet-config > /fleet-downloads
+ [ ${#salt} = 64 ] || /bin/busybox poweroff -f
+ # The image identity the boot medium carries: its own content manifest,
+ # checked against the files it booted.
+ mkdir -p /media
+ mount -t iso9660 -o ro "$boot" /media
+ (cd /media && sha256sum -c MANIFEST)
+ image=$(sha256sum /media/MANIFEST | cut -d' ' -f1)
+ umount /media
+fi
 [ ${#receipt} = 64 ] || /bin/busybox poweroff -f
 if [ "$mode" = wipe ]; then
  # Redfish-mode cleanup environment: zero the whole disk, then verify by
@@ -39,12 +83,22 @@ mkfs.ext4 -F /dev/vda1
 mkdir -p /target
 mount /dev/vda1 /target
 # The payload is this pinned installer filesystem; exclude virtual mounts.
-/bin/tar -cf - --exclude=./target --exclude=./proc --exclude=./sys --exclude=./dev --exclude=./out . | /bin/tar -xf - -C /target
+/bin/tar -cf - --exclude=./target --exclude=./proc --exclude=./sys --exclude=./dev --exclude=./out --exclude=./media --exclude=./fleet-config --exclude=./fleet-bootstrap --exclude=./fleet-downloads . | /bin/tar -xf - -C /target
 mkdir -p /target/dev /target/proc /target/sys
 mount --bind /dev /target/dev
 mount --bind /proc /target/proc
 mount --bind /sys /target/sys
-printf '%s\n' "$receipt" > /target/fleet-receipt
+if [ "$delivery" = media ]; then
+ # What the installed OS reports at first boot, kept only on the target
+ # disk; the console never carries the token.
+ mkdir -m 0700 /target/fleet-report
+ printf '%s' "$receipt" > /target/fleet-report/token
+ printf '%s' "$report" > /target/fleet-report/url
+ value reportca | base64 -d > /target/fleet-report/ca.pem
+ cp /fleet-downloads /target/fleet-report/downloads
+else
+ printf '%s\n' "$receipt" > /target/fleet-receipt
+fi
 chroot /target grub-install --target=i386-pc /dev/vda
 kernel=$(basename /boot/vmlinuz-*)
 initrd=$(basename /boot/initrd.img-*)
@@ -56,5 +110,24 @@ menuentry Fleet {
 }
 CFG
 sync
+if [ "$delivery" = media ]; then
+ # Read the bootstrap payload back from the target disk, not from memory,
+ # and report its digest salted for this operation.
+ cp /fleet-bootstrap /target/fleet-bootstrap
+ sync
+ umount /target/dev /target/proc /target/sys
+ umount /target
+ echo 3 > /proc/sys/vm/drop_caches
+ mount -o ro /dev/vda1 /target
+ bootstrap=$({ printf '%s\n' "$salt"; cat /target/fleet-bootstrap; } | sha256sum | cut -d' ' -f1)
+ umount /target
+ mount /dev/vda1 /target
+ printf 'sha256:%s' "$image" > /target/fleet-report/image
+ printf 'sha256:%s' "$bootstrap" > /target/fleet-report/bootstrap
+ sync
+ umount /target
+ echo 'fleet: virtual media installer finished'
+ /bin/busybox poweroff -f
+fi
 printf 'FLEET-INSTALLED:%s\n' "$receipt"
 /bin/busybox poweroff -f

@@ -33,6 +33,16 @@ patches:
           - name: FLEET_REDFISH_ENROLLMENT
             value: '{"dhcp":"static","targets":[{"device":"fleet-provider/synthetic-device-central-01","endpoint":"https://10.96.0.81:8443","systemID":"System-1","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0a","diskBytes":2147483648,"console":"target-a.log"},{"device":"fleet-provider/synthetic-device-central-02","endpoint":"https://10.96.0.81:8443","systemID":"System-2","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0b","diskBytes":2147483648,"console":"target-b.log"}]}'
           - {name: HOME, value: /tmp}
+          # The central media service's certificate, from the dispatcher
+          # instance: public, per environment.
+          - {name: FLEET_MEDIA_CA, value: "${schema.spec.mediaCA}"}
+          # The site worker's own media service identity: one named Secret,
+          # which the worker gets through a per-operation Role of its own.
+          - {name: FLEET_SITE_WORKER_IDENTITY_NAMESPACE, value: fleet-site-worker-identity}
+          # Where the media service sees this site's installed servers post
+          # their first-boot reports from: the lab network reaches it through
+          # the runtime's host gateway, which arrives on loopback.
+          - {name: FLEET_MEDIA_REPORT_FROM, value: 127.0.0.1/32}
       - op: replace
         path: /spec/resources/9/template/spec/template/spec/containers/0/volumeMounts
         value:
@@ -93,6 +103,56 @@ patches:
       - op: add
         path: /spec/resources/9/template/metadata/annotations/fleet.datumapis.com~1credentials
         value: ${string(size(workerCredentialBindings))}
+      # Each worker may get exactly the site worker identity Secret, and no
+      # other Secret, in the identity namespace.
+      - op: add
+        path: /spec/resources/-
+        value:
+          id: workerIdentityRoles
+          includeWhen:
+            - ${schema.spec.dispatch}
+          forEach:
+            - handoff: ${handoffs}
+          template:
+            apiVersion: rbac.authorization.k8s.io/v1
+            kind: Role
+            metadata:
+              name: ${"w-" + handoff.metadata.name}
+              namespace: fleet-site-worker-identity
+              labels: {app.kubernetes.io/name: fleet-site-worker}
+            rules:
+              - apiGroups: [""]
+                resources: [secrets]
+                resourceNames: [fleet-site-worker-media]
+                verbs: [get]
+      - op: add
+        path: /spec/resources/-
+        value:
+          id: workerIdentityBindings
+          includeWhen:
+            - ${schema.spec.dispatch}
+          forEach:
+            - handoff: ${handoffs}
+          template:
+            apiVersion: rbac.authorization.k8s.io/v1
+            kind: RoleBinding
+            metadata:
+              name: ${"w-" + handoff.metadata.name}
+              namespace: fleet-site-worker-identity
+              labels: {app.kubernetes.io/name: fleet-site-worker}
+              annotations:
+                fleet.datumapis.com/roles: ${string(size(workerIdentityRoles))}
+            subjects:
+              - kind: ServiceAccount
+                name: ${"w-" + handoff.metadata.name}
+                namespace: fleet-site
+            roleRef:
+              apiGroup: rbac.authorization.k8s.io
+              kind: Role
+              name: ${"w-" + handoff.metadata.name}
+      - op: add
+        path: /spec/resources/9/template/metadata/annotations/fleet.datumapis.com~1identity
+        value: ${string(size(workerIdentityBindings))}
       - op: add
         path: /spec/resources/-
         value:

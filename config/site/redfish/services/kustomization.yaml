@@ -19,9 +19,15 @@ patches:
               - name: libvirt
                 env:
                   - {name: FLEET_SITE_PROVIDER, value: redfish}
+                  # The central media service's report endpoint, the one
+                  # address lab guests may reach besides the boot Service.
+                  - {name: FLEET_MEDIA_REPORT, value: "192.168.5.2:28443"}
                 volumeMounts:
                   - {name: state, mountPath: /var/lib/fleet-lab/disks, subPath: lab-disks}
                   - {name: state, mountPath: /var/lib/fleet-lab-console, subPath: lab-console}
+                  # The lab BMC's fetched virtual media, attached to guests
+                  # as CD-ROMs at the path the BMC wrote them.
+                  - {name: state, mountPath: /var/lib/fleet-lab-media, subPath: lab-media, readOnly: true}
   - target: {kind: Deployment, name: fleet-site-boot}
     patch: |-
       apiVersion: apps/v1
