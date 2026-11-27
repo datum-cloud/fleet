@@ -133,7 +133,8 @@ class AdapterTest(unittest.TestCase):
             self.app.post('/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset', headers=AUTH, json={'ResetType': 'ForceOff'})
             # A corrupted config medium carries another report token.
             def config_fetch(url, path):
-                pathlib.Path(path).write_bytes(b'FLEET-CONFIG-V1\ntoken=' + b'a' * 64 + b'\nend\n')
+                # Padded with zeros, as the media service renders it.
+                pathlib.Path(path).write_bytes((b'FLEET-CONFIG-V1\ntoken=' + b'a' * 64 + b'\nend\n').ljust(8192, b'\0'))
                 return 1
             adapter.fault_cli(['corrupt-config', 'System-1'])
             # A boot medium does not consume the fault.
