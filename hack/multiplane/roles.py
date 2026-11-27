@@ -9,7 +9,7 @@ Karmada API. No cell credential can access hub/project/private APIs.
 """
 import base64,json,os,pathlib,subprocess,sys,time
 state=pathlib.Path(sys.argv[1]).resolve();prefix=(state/'prefix').read_text().strip()
-os.environ['DOCKER_CONTEXT']='colima-fleet-acceptance-tcg'
+os.environ['DOCKER_CONTEXT']=os.environ.get('FLEET_MULTIPLANE_DOCKER_CONTEXT','colima-fleet-acceptance-tcg')
 env=json.loads((state/'gitops-environment.json').read_text())
 def k(config,*args,input=None):return subprocess.run(['kubectl','--kubeconfig',str(config),'--request-timeout=30s',*args],input=input,text=True,capture_output=True,check=True).stdout
 def exists(config,*args):return subprocess.run(['kubectl','--kubeconfig',str(config),'--request-timeout=15s','get',*args],capture_output=True).returncode==0

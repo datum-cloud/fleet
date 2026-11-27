@@ -4,7 +4,7 @@
 set -euo pipefail
 umask 077
 state=${1:?private state directory}
-export DOCKER_CONTEXT=colima-fleet-acceptance-tcg
+export DOCKER_CONTEXT=${FLEET_MULTIPLANE_DOCKER_CONTEXT:-colima-fleet-acceptance-tcg}
 host="$state/fleet-multiplane-host"
 ph() { python3 hack/multiplane/harness.py phase --state "$state" --name "$1" --timeout "$2" --echo -- "${@:3}"; }
 step() { ph "$1" "$2" bash hack/multiplane/steps.sh "$1" "$state"; }
@@ -20,9 +20,11 @@ step tenant-isolation 300
 ph admit-install 900 "$host" admit-install --config "$state/acceptance.json"
 step await-delivery 300
 step partition 300
+step hold-installer 120
 step dispatch 900
 step interrupt-pod 1200
 step interrupt-job 600
+step release-installer 120
 step resume 1800
 step worker-rbac 120
 step partition-readiness 900
