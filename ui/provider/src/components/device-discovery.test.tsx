@@ -19,7 +19,8 @@ const hardware = () => screen.getByRole('region', { name: 'Hardware & management
 const table = (label: string) => within(hardware()).getByRole('table', { name: label });
 const rowOf = (label: string, first: string) => within(table(label)).getAllByRole('row').find(row => within(row).queryAllByRole('cell')[0]?.textContent === first)!;
 const cells = (label: string, first: string) => within(rowOf(label, first)).getAllByRole('cell');
-const chips = () => within(within(hardware()).getByRole('list', { name: 'Discovery conditions' })).getAllByRole('listitem');
+// Each list item holds one datum-ui Badge, which carries the tone, status and tooltip.
+const chips = () => within(within(hardware()).getByRole('list', { name: 'Discovery conditions' })).getAllByRole('listitem').map(item => item.firstElementChild as HTMLElement);
 const fact = (label: string) => within(hardware()).getByText(label, { selector: 'dt' }).nextElementSibling as HTMLElement;
 const header = (container: HTMLElement) => container.querySelector<HTMLElement>('.inventory-fact-strip')!;
 

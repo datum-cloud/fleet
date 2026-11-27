@@ -9,6 +9,7 @@
 // fallback stays labelled; overlaps are flagged, never blocked; a denied
 // collection shows "unavailable" and names nothing from it.
 
+import { Badge } from '@datum-cloud/datum-ui/badge';
 import { Button } from '@datum-cloud/datum-ui/button';
 import { X } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@datum-cloud/datum-ui/table';
@@ -281,8 +282,8 @@ export function RackSummary({ rack, inventory }: { rack: PhysicalRecord; invento
   return <span className="inventory-rack-summary">
     <span>{!facility ? 'Facility not recorded' : inventory.issues?.Facility ? 'Facility unavailable' : facilityRecord ? <Link to={inventoryHref('Facility', rack.metadata.namespace, facility)}>{displayLabel(facilityRecord)}</Link> : 'Facility record not found'}</span>
     <span>{rack.spec.heightUnits === undefined ? 'Height not recorded' : `${rack.spec.heightUnits}U`}</span>
-    {overlaps > 0 && <Link className="inventory-issue-badge" data-kind="overlap" to={elevationHref}><span aria-hidden="true">! </span>{overlaps} placements disagree</Link>}
-    {unpositioned > 0 && <Link className="inventory-issue-badge" data-kind="unpositioned" to={elevationHref}><span aria-hidden="true">? </span>{unpositioned} without a position</Link>}
+    {overlaps > 0 && <Link className="inventory-issue-badge" data-kind="overlap" to={elevationHref}><Badge type="danger" theme="light"><span aria-hidden="true">! </span>{overlaps} placements disagree</Badge></Link>}
+    {unpositioned > 0 && <Link className="inventory-issue-badge" data-kind="unpositioned" to={elevationHref}><Badge type="warning" theme="light"><span aria-hidden="true">? </span>{unpositioned} without a position</Badge></Link>}
   </span>;
 }
 

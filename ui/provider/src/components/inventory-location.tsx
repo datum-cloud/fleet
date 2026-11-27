@@ -1,4 +1,5 @@
 import { Button } from '@datum-cloud/datum-ui/button';
+import { ButtonGroup } from '@datum-cloud/datum-ui/button-group';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@datum-cloud/datum-ui/table';
 import { Title } from '@datum-cloud/datum-ui/typography';
 import { useState, type ReactNode } from 'react';
@@ -96,7 +97,7 @@ export function RackOverview({ rack, inventory, selection, toolbar }: { rack: Ph
   return <section className="inventory-rack-layout" aria-label="Rack layout">
     <aside className="inventory-elevation">
       <div className="inventory-list-heading"><Title as="h3" level={5}>Rack elevation</Title><span>{height ? `${height}U` : 'Height unknown'}</span></div>
-      <div className="inventory-elevation-toolbar"><div className="inventory-face-switch" role="group" aria-label="Rack faces">{(['both', 'front', 'rear'] as const).map(value => <Button type="secondary" theme="borderless" size="small" key={value} htmlType="button" aria-pressed={face === value} onClick={() => setFace(value)}>{value === 'both' ? 'Front + rear' : value === 'front' ? 'Front' : 'Rear'}</Button>)}</div>{toolbar}</div>
+      <div className="inventory-elevation-toolbar"><ButtonGroup className="inventory-face-switch" aria-label="Rack faces">{(['both', 'front', 'rear'] as const).map(value => <Button type={face === value ? 'primary' : 'secondary'} theme={face === value ? 'light' : 'outline'} size="small" key={value} htmlType="button" aria-pressed={face === value} onClick={() => setFace(value)}>{value === 'both' ? 'Front + rear' : value === 'front' ? 'Front' : 'Rear'}</Button>)}</ButtonGroup>{toolbar}</div>
       {denied ? <p>Installation details unavailable. Rack positions cannot be shown.</p> : !height ? <p>Rack height is not recorded. Equipment remains listed without invented slots.</p> : <div className="inventory-rack-faces">{(['front', 'rear'] as const).filter(value => face === 'both' || face === value).map(side => <RackFace key={side} occupants={occupants} height={height} side={side} selection={selection} inventory={inventory} unit={UNIT_PX} />)}</div>}
     </aside>
   </section>;

@@ -1,3 +1,4 @@
+import { Spinner } from '@datum-cloud/datum-ui/spinner';
 import { Button } from '@datum-cloud/datum-ui/button';
 import { Label } from '@datum-cloud/datum-ui/label';
 import { useQuery } from '@tanstack/react-query';
@@ -73,7 +74,7 @@ export function CapacityRegistrationForm({ onRegistered }: { onRegistered?: () =
             // A Device without a uid is listed as ineligible; its placeholder value never matches a selection.
             return { value: device.metadata.uid ?? `unidentified/${device.metadata.name}`, disabled: !!reason, label: `${device.metadata.name}${reason ? ` — ${reason}` : ''}` };
           })} /></Label>
-          {devices.isPending && <p>Loading Devices…</p>}
+          {devices.isPending && <p role="status" className="inventory-loading"><Spinner aria-hidden="true" />Loading Devices…</p>}
           {devices.error && <p role="alert">Devices are unavailable or access is denied. Registration is blocked.</p>}
           {devices.data?.length === 0 && <p>No Devices are available in default.</p>}
           {selected && <p title={`Derived from the Device, so it can back only one capacity. The reference to ${selected.metadata.name} and its exact version are kept; the selection is never refreshed.`}>Capacity name: <code>{capacityNameFor(selected)}</code></p>}

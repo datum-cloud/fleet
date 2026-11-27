@@ -1,3 +1,4 @@
+import { Badge } from '@datum-cloud/datum-ui/badge';
 import { Button } from '@datum-cloud/datum-ui/button';
 import { Input } from '@datum-cloud/datum-ui/input';
 import { Label } from '@datum-cloud/datum-ui/label';
@@ -69,7 +70,7 @@ export function InventoryToolbar({ section, search = '', onSearch, location = ''
     {(hasLocation || hasModel) && <Popover>
       <PopoverTrigger asChild>
         <Button type="secondary" theme="borderless" size="small" htmlType="button" disabled={!onLocation && !onModel} aria-label={active ? `Filter, ${active} active` : 'Filter'} icon={<SlidersHorizontal size={16} aria-hidden="true" />}>
-          <span className="inventory-filter-label">Filter</span>{active > 0 && <span className="inventory-filter-count" aria-hidden="true">{active}</span>}
+          <span className="inventory-filter-label">Filter</span>{active > 0 && <Badge type="primary" theme="solid" className="inventory-filter-count" aria-hidden="true">{active}</Badge>}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="inventory-filter-panel" aria-label={`Filter ${section.title.toLowerCase()}`}>

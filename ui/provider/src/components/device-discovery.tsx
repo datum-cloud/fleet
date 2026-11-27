@@ -1,6 +1,7 @@
 // The Device page's view of BMC discovery: Device.status, next to the spec it
 // is compared with. See "Device page" in docs/development/staff-inventory-ui.md.
 // Red is a disagreement or failure, amber needs checking, and OK stays plain.
+import { Badge } from '@datum-cloud/datum-ui/badge';
 import { Button } from '@datum-cloud/datum-ui/button';
 import { useState, type ReactNode } from 'react';
 import type { Device } from '../../../shared/fleet-api';
@@ -20,22 +21,27 @@ function Marked({ tone, reason, children }: { tone: Tone; reason?: string; child
   </span>;
 }
 
+/** Red for a disagreement or failure, amber to check, plain outline when OK. */
+function chipBadge(tone: Tone) {
+  return { type: tone ?? 'secondary', theme: tone ? 'light' : 'outline' } as const;
+}
+
 /** The header's one BMC chip; nothing before discovery has run. */
 export function BmcChip({ device }: { device: Device }) {
   const chip = bmcChip(device);
   if (!chip) return null;
   return <div><dt className="inventory-visually-hidden">BMC</dt><dd>
-    <span className="inventory-discovery-chip" data-tone={chip.tone} title={chip.reason}>{chip.label}<span className="inventory-visually-hidden">. {chip.reason}</span></span>
+    <Badge {...chipBadge(chip.tone)} className="inventory-discovery-chip" data-tone={chip.tone} title={chip.reason}>{chip.label}<span className="inventory-visually-hidden">. {chip.reason}</span></Badge>
   </dd></div>;
 }
 
 /** The five conditions as one line of chips; the reason and message are each chip's tooltip. */
 export function ConditionChips({ device }: { device: Device }) {
   return <ul className="inventory-discovery-chips" aria-label="Discovery conditions">
-    {conditionChips(device).map(chip => <li key={chip.type} className="inventory-discovery-chip" data-tone={chip.tone} data-status={chip.status} title={chip.reason}>
+    {conditionChips(device).map(chip => <li key={chip.type}><Badge {...chipBadge(chip.tone)} className="inventory-discovery-chip" data-tone={chip.tone} data-status={chip.status} title={chip.reason}>
       <span aria-hidden="true">{chip.status === 'False' ? '✕ ' : chip.status === 'Unknown' ? '? ' : ''}</span>{chip.word}
       <span className="inventory-visually-hidden">. {chip.reason}</span>
-    </li>)}
+    </Badge></li>)}
   </ul>;
 }
 
