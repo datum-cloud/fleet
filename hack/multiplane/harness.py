@@ -26,6 +26,11 @@ RUNTIME = os.environ.get('FLEET_MULTIPLANE_RUNTIME', 'colima')
 CONTEXT = os.environ.get('FLEET_MULTIPLANE_DOCKER_CONTEXT', 'colima-' + PROFILE)
 ARCH = os.environ.get('FLEET_MULTIPLANE_ARCH', 'arm64')
 ACCEL = os.environ.get('FLEET_MULTIPLANE_ACCEL', 'tcg')
+# Scenario group: all runs every scenario in one topology. CI shards a suite
+# into flux and release, each on its own runner after the same setup and core
+# install scenarios, and requires both to pass.
+GROUP = os.environ.get('FLEET_MULTIPLANE_GROUP', 'all')
+GROUPS = ('all', 'flux', 'release')
 DOCKER_ARCHITECTURES = {'arm64': ('aarch64', 'arm64'), 'amd64': ('x86_64', 'amd64')}
 CI_ENDPOINT = 'unix:///var/run/docker.sock'
 EXIT_PASSED, EXIT_FAILED, EXIT_PREFLIGHT, EXIT_BLOCKED, EXIT_TIMEOUT, EXIT_USAGE = 0, 1, 2, 3, 4, 64
@@ -132,6 +137,7 @@ def preflight(args):
     # KVM runs the amd64 guest natively, so it needs an amd64 runtime.
     accel_ok = ACCEL == 'tcg' or (ACCEL == 'kvm' and ARCH == 'amd64')
     check('accelerator', accel_ok, 'FLEET_MULTIPLANE_ACCEL=%s; tcg, or kvm with an amd64 runtime' % ACCEL)
+    check('scenario-group', GROUP in GROUPS, 'FLEET_MULTIPLANE_GROUP=%s; %s' % (GROUP, ', '.join(GROUPS)))
 
     code, out, _ = capture(['docker', 'context', 'inspect', CONTEXT, '--format', '{{.Endpoints.docker.Host}}'], 20)
     endpoint_ok = endpoint_matches(code, out)
@@ -185,7 +191,7 @@ def preflight(args):
     ready = [c for c in checks if c['kind'] == 'readiness' and not c['ok']]
     code = EXIT_PREFLIGHT if pre else EXIT_BLOCKED if ready else EXIT_PASSED
     write_json(evidence_dir(args.state) / 'preflight.json', {'schemaVersion': 1, 'observedAt': now(), 'profile': PROFILE, 'status': STATUS_BY_EXIT[code], 'checks': checks,
-                                                           'runtime': {'mode': RUNTIME, 'dockerContext': CONTEXT, 'architecture': ARCH, 'accelerator': ACCEL}})
+                                                           'runtime': {'mode': RUNTIME, 'dockerContext': CONTEXT, 'architecture': ARCH, 'accelerator': ACCEL}, 'group': GROUP})
     for c in checks:
         print('%-4s %-34s %s' % ('ok' if c['ok'] else 'FAIL', c['name'], c['detail']))
     return code
@@ -607,11 +613,12 @@ def result(args):
     if failed is None and status != 'passed' and running.exists():
         failed = {'name': running.read_text().strip()}
     summary = ev / 'summary.json'
-    value = {'schemaVersion': 1, 'observedAt': now(), 'status': status, 'exitCode': code, 'prefix': prefix,
+    value = {'schemaVersion': 1, 'observedAt': now(), 'status': status, 'exitCode': code, 'prefix': prefix, 'group': GROUP,
              'failedPhase': failed['name'] if failed else None, 'phases': phases, 'retainedContainers': retained,
              'stateDirectory': str(state), 'evidenceDirectory': str(ev),
              'summary': 'summary.json' if summary.exists() and status == 'passed' else None,
-             'custody': 'released and verified' if status == 'passed' else 'Unknown: inspect private state before any cleanup',
+             'custody': ('released and verified' if GROUP != 'flux' else 'allocated at teardown; this group runs no release') if status == 'passed'
+             else 'Unknown: inspect private state before any cleanup',
              'productionAuthority': False}
     write_json(ev / 'result.json', value)
     print('RESULT %s exit=%s evidence=%s' % (status, code, ev / 'result.json'))
@@ -638,6 +645,8 @@ def verify(args):
         problems.append('teardown did not pass')
     if value.get('retainedContainers'):
         problems.append('retained containers: %d' % len(value['retainedContainers']))
+    if args.group and value.get('group') != args.group:
+        problems.append('scenario group %s, expected %s' % (value.get('group'), args.group))
     print('VERIFY %s phases=%d%s' % ('failed' if problems else 'passed', len(phases), (': ' + '; '.join(problems[:8])) if problems else ''))
     return EXIT_FAILED if problems else EXIT_PASSED
 
@@ -675,6 +684,7 @@ def main():
     s.add_argument('--exit-code', type=int, required=True)
     s = sub.add_parser('verify')
     s.add_argument('--state', required=True)
+    s.add_argument('--group', choices=GROUPS, help='the scenario group the run must have recorded')
     a = p.parse_args()
     if a.cmd == 'phase':
         if a.command[:1] == ['--']:
