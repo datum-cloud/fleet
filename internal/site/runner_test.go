@@ -549,6 +549,47 @@ func TestALateStartIsStaleAndSendsNothing(t *testing.T) {
 	}
 }
 
+// TestRunWaitsForItsFenceWatcher proves the fence watcher has stopped, while
+// the worker still holds the run lock, by the time Run returns. A watcher
+// that outlives Run reads the store, which recreates the Device's directory
+// and lock file, after the worker is gone.
+func TestRunWaitsForItsFenceWatcher(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*fixture, *Assignment)
+		phase ops.Phase
+	}{
+		{name: "succeeded", phase: ops.PhaseSucceeded},
+		{name: "stale", phase: ops.PhaseFailed, setup: func(f *fixture, a *Assignment) {
+			f.runner.Kinds["DeviceInstallation"] = startingKind{f.kind}
+			a.AdmittedAt = time.Now().Add(-time.Minute)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t, testUUID)
+			assignment := f.assignment(1, "op-watched")
+			if tc.setup != nil {
+				tc.setup(f, &assignment)
+			}
+			var stopped, unlocked atomic.Bool
+			f.runner.watchStopped = func() {
+				if lock, err := f.runner.Store.tryRunLock(testDevice); err == nil && lock != nil {
+					unlocked.Store(true)
+					lock.release()
+				}
+				stopped.Store(true)
+			}
+			result, err := f.runner.Run(context.Background(), assignment)
+			if err != nil || result.Phase != tc.phase {
+				t.Fatalf("result = %+v, %v", result, err)
+			}
+			if !stopped.Load() || unlocked.Load() {
+				t.Fatalf("Run returned with its fence watcher running (stopped=%v) or the run lock released first (%v)", stopped.Load(), unlocked.Load())
+			}
+		})
+	}
+}
+
 func TestAStepPayloadIsJournaledAndReadBack(t *testing.T) {
 	store := newStore(t)
 	if err := store.Raise(testDevice, 1); err != nil {
