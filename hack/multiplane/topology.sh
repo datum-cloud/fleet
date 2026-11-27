@@ -14,8 +14,10 @@ registry_image=$(python3 -c 'import sys; sys.path.insert(0, "hack/multiplane"); 
 free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'; }
 
 # The source and image registry: plain HTTP on the kind network (local seam).
+# Its memory limit also counts the page cache of the layers it writes, so a
+# fast runner's push of the site image needs room beyond the process itself.
 reg_port=$(free_port)
-docker run -d --name "$prefix-registry" --network kind --memory 128m --memory-swap 128m --cpus 0.5 \
+docker run -d --name "$prefix-registry" --network kind --memory 512m --memory-swap 512m --cpus 0.5 \
  -p "127.0.0.1:$reg_port:5000" "$registry_image" >/dev/null
 for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:$reg_port/v2/" >/dev/null 2>&1 && break; sleep 1; done
 curl -fsS "http://127.0.0.1:$reg_port/v2/" >/dev/null || { echo 'registry did not start' >&2; exit 1; }
