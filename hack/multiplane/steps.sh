@@ -13,6 +13,11 @@ harness=(python3 hack/multiplane/harness.py)
 host="$state/fleet-multiplane-host"
 ns=fleet-coordination
 helpers=hack/multiplane/k8s_evidence.py
+# Lab-only deadline for the one short-deadline admission. The scenario needs
+# time to journal the installer boot and delete the Machine before it
+# expires, which takes seconds; production keeps its own deadline.
+deadline=${FLEET_MULTIPLANE_INSTALLATION_DEADLINE:-2m}
+[[ $deadline =~ ^[1-9][0-9]*[sm]$ ]] || { echo "FLEET_MULTIPLANE_INSTALLATION_DEADLINE must be seconds or minutes, such as 2m" >&2; exit 64; }
 
 k() { kubectl --kubeconfig "$1" --request-timeout=20s "${@:2}"; }
 cell() { k "$state/cell-admin.yaml" "$@"; }
@@ -129,7 +134,8 @@ case "$step" in
   scenario staff-access "$state"
   ;;
  deadline-admit)
-  # Consumer B's installation is admitted under a six-minute deadline with
+  # Consumer B's installation is admitted under a short deadline
+  # (FLEET_MULTIPLANE_INSTALLATION_DEADLINE, two minutes by default) with
   # the lab boot hook armed: the boot service stays Ready, so kro creates
   # the worker, and withholds every boot, so the installer never runs and
   # the worker waits for its receipt until the deadline. Only this admission
@@ -137,13 +143,13 @@ case "$step" in
   # coordinator and clears the hook, so a rerun starts clean.
   trap 'bash hack/multiplane/coordinator.sh restart "$state" >/dev/null; site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold clear' ERR
   site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold arm
-  bash hack/multiplane/coordinator.sh restart "$state" --installation-deadline=6m >/dev/null
+  bash hack/multiplane/coordinator.sh restart "$state" "--installation-deadline=$deadline" >/dev/null
   "$host" admit-install-b --config "$state/acceptance.json" >/dev/null
   bash hack/multiplane/coordinator.sh restart "$state" >/dev/null
   trap 'site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold clear' ERR
   scenario wait-installer "$state" "$installer_step"
   trap - ERR
-  printf 'deadline-admit: the second installation was admitted under a six-minute deadline and journaled its installer boot with the lab boot hook withholding it\n'
+  printf 'deadline-admit: the second installation was admitted under a %s deadline and journaled its installer boot with the lab boot hook withholding it\n' "$deadline"
   ;;
  machine-delete)
   # The customer deletes Machine B mid-install. One release pass begins the

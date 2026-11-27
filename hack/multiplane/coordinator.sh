@@ -13,8 +13,16 @@ case $action in
    echo "coordinator: already running"
    exit 0
   fi
-  # Extra arguments, such as a shorter installation deadline, pass through.
-  nohup "$state/fleet-multiplane-host" coordinator --config "$state/acceptance.json" "${@:3}" >>"$state/coordinator.log" 2>&1 </dev/null &
+  # In CI mode the coordinator and every site process read one Linux kernel
+  # clock, so a deadline is declared exceeded after a short margin
+  # (FLEET_MULTIPLANE_SKEW_MARGIN, 30 seconds by default). The Colima run keeps
+  # production's two minutes: its sites run in a VM whose clock can drift from
+  # the workstation's. Extra arguments, such as a shorter installation
+  # deadline, pass through.
+  if [[ ${FLEET_MULTIPLANE_RUNTIME:-colima} == ci ]]; then skew_default=30s; else skew_default=2m; fi
+  skew=${FLEET_MULTIPLANE_SKEW_MARGIN:-$skew_default}
+  [[ $skew =~ ^[1-9][0-9]*[sm]$ ]] || { echo 'coordinator: FLEET_MULTIPLANE_SKEW_MARGIN must be seconds or minutes, such as 30s' >&2; exit 64; }
+  nohup "$state/fleet-multiplane-host" coordinator --config "$state/acceptance.json" "--skew-margin=$skew" "${@:3}" >>"$state/coordinator.log" 2>&1 </dev/null &
   echo $! >"$pidfile"
   sleep 2
   kill -0 "$(cat "$pidfile")" || { echo 'coordinator: exited at start; see coordinator.log in the state directory' >&2; exit 1; }
