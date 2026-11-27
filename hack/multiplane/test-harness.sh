@@ -295,7 +295,7 @@ with tempfile.TemporaryDirectory() as tmp:
     observer = (root / 'config/site/services/services.yaml').read_text()
     check('the delivery declaration is site enrollment, changed by a source revision',
           "'--delivery-methods'" in media and 'coordinator.sh' not in media and 'DeliveryMethods' not in run_sh
-          and 'name: fleet-site-delivery' in observer and "methods: '${FLEET_SITE_DELIVERY_METHODS}'" in observer
+          and 'name: fleet-site-delivery' in observer and 'binaryData:\n  methods: ${FLEET_SITE_DELIVERY_METHODS}' in observer
           and '--delivery-methods, /etc/fleet-site-delivery/methods' in observer)
     check('fault injection suspends Flux first', 'suspend milo-consumer-a true' in steps and '"suspend":true' in (root / 'hack/multiplane/reflection-faults.py').read_text())
     check('RBAC revocation repaired by Flux, not the harness', "'apply'" not in (root / 'hack/multiplane/verify-rbac.py').read_text())

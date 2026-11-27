@@ -24,14 +24,16 @@ spec:
 # The site enrollment's boot delivery declaration: the methods this site
 # offers, in its order of preference. The observer publishes it on every
 # report handoff; the coordinator and the Metal provider read it there and
-# keep no copy.
+# keep no copy. The environment gives the JSON list base64-encoded, because
+# Flux's substitution would drop the quotes around JSON text; the mounted
+# file holds the JSON.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: fleet-site-delivery
   namespace: fleet-site
-data:
-  methods: '${FLEET_SITE_DELIVERY_METHODS}'
+binaryData:
+  methods: ${FLEET_SITE_DELIVERY_METHODS}
 ---
 # Admission parameter for kro-created worker Jobs: they must run the same
 # digest-pinned image as these services.

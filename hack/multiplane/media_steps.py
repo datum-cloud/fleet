@@ -181,7 +181,7 @@ def offer(s):
     # the cell's observer publishes it to the coordinator, which keeps none.
     subprocess.run(['python3', 'hack/multiplane/flux.py', 'publish', str(s), '--revision', '3', '--site', 'off', '--purpose', 'offer virtual media',
                     '--delivery-methods', json.dumps(methods), '--cluster', 'cell', '--timeout', '600'], check=True, capture_output=True, text=True)
-    rendered = rf.kget(s, '-n', 'fleet-site', 'get', 'configmap', 'fleet-site-delivery')['data']['methods']
+    rendered = base64.b64decode(rf.kget(s, '-n', 'fleet-site', 'get', 'configmap', 'fleet-site-delivery')['binaryData']['methods']).decode()
     if json.loads(rendered) != methods:
         die('the reconciled site declaration differs from the revision: %s' % rendered)
     rf.write(s / 'evidence' / 'media-offer.json', {'observedAt': now(), 'deliveryMethods': methods, 'source': 'site enrollment, revision r3',

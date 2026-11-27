@@ -21,6 +21,7 @@ annotation, or explicit fault injection whose repair is left to Flux.
 Nothing here stores credentials in a source revision.
 """
 import argparse
+import base64
 import datetime
 import hashlib
 import json
@@ -264,16 +265,17 @@ def config_map(name, namespace, data):
 
 
 def delivery_methods(state, given):
-    """The site enrollment's delivery declaration for this revision: the one
-    given, kept for later revisions, else the last one given, else network
-    boot only."""
+    """The site enrollment's delivery declaration for this revision, base64
+    encoded for the ConfigMap's binaryData: the one given, kept for later
+    revisions, else the last one given, else network boot only."""
     path = pathlib.Path(state) / 'site-delivery.json'
     if given:
         methods = json.loads(given)
         if not isinstance(methods, list):
             raise SystemExit('--delivery-methods must be a JSON list of offers')
         path.write_text(json.dumps(methods, separators=(',', ':')))
-    return path.read_text() if path.exists() else '[{"method":"NetworkBoot"}]'
+    declared = path.read_text() if path.exists() else '[{"method":"NetworkBoot"}]'
+    return base64.b64encode(declared.encode()).decode()
 
 
 def stage(args):
