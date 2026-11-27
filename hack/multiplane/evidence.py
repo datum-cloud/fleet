@@ -279,6 +279,8 @@ def redfish_provider():
     copy_out('/var/lib/fleet-lab-console', raw / 'lab-console')
     store, ops, provider, held = site_operations(raw)
     interrupt = json.loads((ev / 'interrupt.json').read_text())
+    if not interrupt.get('installerHold', {}).get('held') or interrupt['installerHold'].get('domain') != interrupt.get('domain'):
+        fail('the interruptions did not land while the installer guest was held')
     a_alloc, b_alloc = check_sequence(ops, held, interrupt)
     installs = [o for o in ops if o['kind'] == 'DeviceInstallation']
     wipes = [o for o in ops if o['kind'] == 'DeviceWipe']
@@ -325,6 +327,13 @@ def redfish_provider():
     # install (its network boot was withheld by the lab boot hook), B wipe.
     if order != ['network', 'network', 'disk', 'network', 'network', 'network'] or starts['targetB']:
         fail('expected target A boots network (burn-in), network, disk, network, network, network and no target B start; got %s' % starts)
+    # Every lab target start ran the selected accelerator: libvirt logs each
+    # QEMU command line, which names the accelerator it ran. The adapter
+    # defines a target only while the site runtime publishes the same one.
+    qemu_accels = [re.findall(r'-accel (\w+)', b) for b in blocks]
+    if any(x != [ACCEL] for x in qemu_accels):
+        fail('lab target accelerator is not %s: QEMU accelerators %s' % (ACCEL, qemu_accels))
+    starts['accelerator'] = ACCEL
     audit = [json.loads(l) for l in (ev / 'redfish-audit.jsonl').read_text().splitlines()]
     # The commission phase's effects were checked at its mark; these are the
     # operations' after it.

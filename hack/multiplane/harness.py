@@ -129,10 +129,9 @@ def preflight(args):
         check('ci-runner', os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted',
               'CI mode runs only on a disposable GitHub-hosted runner (GITHUB_ACTIONS=true, RUNNER_ENVIRONMENT=github-hosted)')
     check('runtime-parameter:architecture', ARCH in DOCKER_ARCHITECTURES, 'FLEET_MULTIPLANE_ARCH=%s; arm64 or amd64' % ARCH)
-    # KVM runs the amd64 guest natively, so it needs an amd64 runtime. The
-    # Redfish lab adapter defines TCG domains only.
-    accel_ok = ACCEL == 'tcg' or (ACCEL == 'kvm' and ARCH == 'amd64' and PROVIDER == 'libvirt')
-    check('accelerator', accel_ok, 'FLEET_MULTIPLANE_ACCEL=%s; tcg, or kvm with an amd64 runtime and the libvirt provider' % ACCEL)
+    # KVM runs the amd64 guest natively, so it needs an amd64 runtime.
+    accel_ok = ACCEL == 'tcg' or (ACCEL == 'kvm' and ARCH == 'amd64')
+    check('accelerator', accel_ok, 'FLEET_MULTIPLANE_ACCEL=%s; tcg, or kvm with an amd64 runtime' % ACCEL)
 
     code, out, _ = capture(['docker', 'context', 'inspect', CONTEXT, '--format', '{{.Endpoints.docker.Host}}'], 20)
     endpoint_ok = endpoint_matches(code, out)
