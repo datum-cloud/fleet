@@ -189,12 +189,16 @@ scenario still proves the same outcome, and production defaults are unchanged:
 | Variable | Default | Production | Scenario |
 | --- | --- | --- | --- |
 | `FLEET_MULTIPLANE_INSTALLATION_DEADLINE` | `2m` | 40 minutes | The short-deadline installation ends `OutcomeUnknown` |
-| `FLEET_MULTIPLANE_SKEW_MARGIN` | `30s` | 2 minutes | The coordinator waits this long past a deadline before declaring it exceeded |
+| `FLEET_MULTIPLANE_SKEW_MARGIN` | `30s` in CI mode, `2m` otherwise | 2 minutes | The coordinator waits this long past a deadline before declaring it exceeded |
 | `FLEET_MULTIPLANE_FAIL_CLOSED_TIMEOUT` | `45s` | 3 minutes in the lab topology | The bad kro revision reports not Ready; the recovery revision restores the usual timeout |
 
-The skew margin covers clock skew between the coordinator and a site. Every
-process in a lab run reads one host clock. The deadline scenario still
-requires the wipe to be admitted after the worker stopped.
+The skew margin covers clock skew between the coordinator and a site. In CI
+mode every process reads one Linux kernel clock. A Colima VM's clock can drift
+from the workstation's, so that run keeps the production margin. The deadline
+scenario still requires the wipe to be admitted after the worker stopped. On a
+host too slow to journal the installer boot and delete the Machine within the
+deadline, the scenario fails saying so; raise
+`FLEET_MULTIPLANE_INSTALLATION_DEADLINE` there.
 
 In CI mode, preflight requires a GitHub-hosted runner (`GITHUB_ACTIONS=true` and
 `RUNNER_ENVIRONMENT=github-hosted`) and a context that points at
@@ -218,9 +222,9 @@ passed, teardown passed and no retained container. After the run, including
 after a timeout or cancellation, the job scans the evidence for secrets again
 and redacts any match. It uploads only `evidence/`, and only after a clean scan.
 A match fails the job even after its redaction.
-The evidence includes `runner/`, the runner's memory and swap sampled every
-10 seconds, per-container memory, and any kernel OOM events. Every tool and action is
-pinned.
+The evidence includes `runner/`, the runner's memory, swap and free disk in
+the Docker data root sampled every 10 seconds, per-container memory, and any
+kernel OOM events. Every tool and action is pinned.
 
 KVM on a GitHub-hosted runner is nested virtualization in a cloud VM. It is a
 qualification target of its own, separate from the Colima TCG runs and from
