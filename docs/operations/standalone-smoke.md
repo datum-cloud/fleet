@@ -26,7 +26,8 @@ Each component has its own identity, and the phases run as the Metal provider:
 | Release controller | `fleet-release-controller` | DeviceWipes |
 
 A ValidatingAdmissionPolicy (`config/standalone/site.yaml`) requires each
-operation's `spec.creator` to be the caller that creates it.
+operation's `spec.creator` to be the caller that creates it: its username, and
+its UID only when its credential carries one.
 
 The scenario has one `us-central-1` Machine with 24 physical CPU cores and
 128Gi of memory, on one synthetic Device, `synthetic-device-central-01`. Both

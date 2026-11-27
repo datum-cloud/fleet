@@ -279,8 +279,8 @@ Every mode uses three identities, one per component:
 
 An operation's creator is the identity a `SelfSubjectReview` reports.
 
-- **Standalone** enforces the creator rule with a ValidatingAdmissionPolicy
-  (`config/standalone/site.yaml`).
+- **Standalone** enforces the same creator rule as the webhook with a
+  ValidatingAdmissionPolicy (`config/standalone/site.yaml`).
 - **The production Milo root** (`config/milo`) includes the device-operations
   component, with the creator webhook served by `fleet-registration`.
 - **The synthetic Milo root** (`config/milo-synthetic`) includes the kinds,
@@ -407,8 +407,9 @@ Each decision lists the open point from the implementation brief it settles.
   such as the Fleet provider for Metal or the release controller, maps to
   configured principals by username. A principal configured with a UID
   matches only a creator with that UID; one without a UID matches the username
-  alone. Any other creator is staff. IAM decides which staff may create which kind, and the API server has
-  already authorized the create. No identity is hard-coded.
+  alone. Any other creator is staff. IAM decides which staff may create which
+  kind, and the API server has already authorized the create. No identity is
+  hard-coded.
 
 ### Admission
 
@@ -662,8 +663,8 @@ remains.
 No resource spec holds an object UID (#211). A deterministic name, a label or
 status pins each incarnation. The one exception is an operation's
 `creator.uid`, the authenticated caller's UID when its credential carries one,
-as in a Kubernetes CertificateSigningRequest. Each same-name recreation is guarded, and a test
-fails if its guard is removed:
+as in a Kubernetes CertificateSigningRequest. Each same-name recreation is
+guarded, and a test fails if its guard is removed:
 
 | Recreated | Guard | Test |
 | --- | --- | --- |
@@ -933,7 +934,7 @@ a real API server:
 | A crash between each pair of custody and status writes, with dropped and lost responses | `TestWriteOrderCrashRecovery` |
 | CEL rules | `TestCRDRules` |
 | Seams, rows, principals, ordering, evidence bounds, capacity for every input | `TestRegistryRejectsIncompleteKindsAndRows`, `TestAddingRowsLeavesExistingRowsAlone`, `TestPrincipals`, `TestCandidatesOrderOldestFirstWithADeterministicTieBreak`, `TestEvidenceIsTypedAndBounded`, `TestCapacityProjection` |
-| Creator recording and caller preservation, including callers whose credential carries no UID | `TestHandler`, `TestCreatorAgainstAPIServer`, `TestCreatorIdentifiesTheCallerByUsername` |
+| Creator recording and caller preservation, including callers whose credential carries no UID | `TestHandler`, `TestCreatorAgainstAPIServer`, `TestStandaloneCreatorPolicyAgainstAPIServer`, `TestCreatorIdentifiesTheCallerByUsername` |
 | CRD contract, roles, and that nothing ships the component or the test-only kinds | `TestCRDContract`, `TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets`, `TestComponentIsInert` |
 
 Increment A has no site, so "nothing was sent" means custody admitted nothing

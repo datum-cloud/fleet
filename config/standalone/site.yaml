@@ -39,7 +39,8 @@ spec:
 ---
 # The creator rule. Milo projects ignore admission policies, so Milo uses the
 # creator webhook; a plain cluster enforces the same rule with this policy:
-# an operation's creator is the caller who created it and never changes.
+# an operation's creator is the caller who created it and never changes. A
+# caller is its username, plus its UID when its credential carries one.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata: {name: fleet-operation-creator}
@@ -52,8 +53,8 @@ spec:
         operations: [CREATE, UPDATE]
         resources: [deviceinstallations, devicewipes, devicerecoveries]
   validations:
-    - expression: "request.operation != 'CREATE' || (object.spec.creator.username == request.userInfo.username && object.spec.creator.uid == request.userInfo.uid)"
-      message: spec.creator must be the authenticated caller's username and UID
+    - expression: "request.operation != 'CREATE' || (object.spec.creator.username == request.userInfo.username && (has(object.spec.creator.uid) ? object.spec.creator.uid : '') == (has(request.userInfo.uid) ? request.userInfo.uid : ''))"
+      message: spec.creator must be the authenticated caller's username, and UID when it has one
     - expression: "request.operation != 'UPDATE' || object.spec.creator == oldObject.spec.creator"
       message: spec.creator cannot change
 ---
