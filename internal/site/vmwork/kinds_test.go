@@ -374,7 +374,7 @@ func TestAnInstallationResumesOnlyUnderItsBoundAccelerator(t *testing.T) {
 	}
 	r.vm.mu.Unlock()
 	var boot Boot
-	if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Key()), &boot); err != nil || !found || boot.Accelerator != "tcg" {
+	if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Operation.UID), &boot); err != nil || !found || boot.Accelerator != "tcg" {
 		t.Fatalf("boot admission = %+v, %v, %v", boot, found, err)
 	}
 	kvm := r.config
@@ -403,10 +403,10 @@ func TestANewInstallationBindsItsWorkersAccelerator(t *testing.T) {
 			t.Fatalf("%s install = %+v, %v", accelerator, result, err)
 		}
 		var boot Boot
-		if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Key()), &boot); err != nil || !found || boot.Accelerator != accelerator {
+		if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Operation.UID), &boot); err != nil || !found || boot.Accelerator != accelerator {
 			t.Fatalf("%s boot admission = %+v, %v, %v", accelerator, boot, found, err)
 		}
-		xml, err := os.ReadFile(filepath.Join(config.directory(device, assignment.Key()), "installer.xml"))
+		xml, err := os.ReadFile(filepath.Join(config.directory(device, assignment.Operation.UID), "installer.xml"))
 		if err != nil || !strings.HasPrefix(string(xml), "<domain type='"+domainType+"'>") {
 			t.Fatalf("%s installer domain = %.40s, %v", accelerator, xml, err)
 		}
