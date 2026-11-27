@@ -26,11 +26,12 @@ tool = os.path.basename(sys.argv[0]); a = sys.argv[1:]
 scenario = os.environ.get('FAKE', '')
 with open(os.environ['FAKE_TRACE'], 'a') as t: t.write(json.dumps([tool] + a) + '\n')
 if tool == 'docker':
+    with open(os.environ['FAKE_TRACE'] + '.context', 'a') as t: t.write(os.environ.get('DOCKER_CONTEXT', '') + '\n')
     if a[:2] == ['context', 'inspect']:
         if scenario == 'no-context': sys.exit(1)
-        print('unix:///Users/x/.colima/fleet-acceptance-tcg/docker.sock'); sys.exit(0)
+        print(os.environ.get('FAKE_ENDPOINT', 'unix:///Users/x/.colima/fleet-acceptance-tcg/docker.sock')); sys.exit(0)
     if a[:1] == ['info']:
-        print(json.dumps({'Architecture': 'aarch64', 'MemTotal': 8308948992, 'NCPU': 4})); sys.exit(0)
+        print(json.dumps({'Architecture': os.environ.get('FAKE_ARCH', 'aarch64'), 'MemTotal': 8308948992, 'NCPU': 4})); sys.exit(0)
     if a[:1] == ['ps']:
         if '-a' in a: print('fleet-mp-0000aaaa-vm\texited'); sys.exit(0)
         print('fleet-mp-1234abcd-vm' if scenario == 'busy' else 'unrelated'); sys.exit(0)
@@ -46,8 +47,12 @@ if tool == 'kubectl' and 'exec' in a and 'deploy/fleet-site-runtime' in a:
     if 'virsh' in a:
         import hashlib
         print('fleet-local-' + hashlib.sha256(b'install-op-1').hexdigest()[:16]); sys.exit(0)
-if tool == 'colima':
-    if 'df' in a[-1]: print('/dev/vdb1 41000000 20000000 %d 50%% /var/lib/docker' % (int(os.environ.get('FAKE_FREE_KB', '20000000'))))
+# CI mode runs the same read-only host probes on the runner itself (sh -c).
+if tool in ('colima', 'sh'):
+    if 'kvm' in a[-1]:
+        if os.environ.get('FAKE_KVM') == 'absent': sys.exit(1)
+        print('present')
+    elif 'df' in a[-1]: print('/dev/vdb1 41000000 20000000 %d 50%% /var/lib/docker' % (int(os.environ.get('FAKE_FREE_KB', '20000000'))))
     elif 'inotify' in a[-1]: print(os.environ.get('FAKE_INOTIFY', '1024'))
     sys.exit(0)
 sys.exit(0)
@@ -60,7 +65,15 @@ with tempfile.TemporaryDirectory() as tmp:
         p = bin_dir / tool; p.write_text(FAKE.replace('#!/usr/bin/env python3', '#!' + sys.executable)); p.chmod(0o755)
     trace = tmp / 'trace'
     base = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], FAKE_TRACE=str(trace))
-    base.pop('FLEET_MULTIPLANE_INOTIFY', None)
+    for name in ('FLEET_MULTIPLANE_INOTIFY', 'FLEET_MULTIPLANE_RUNTIME', 'FLEET_MULTIPLANE_DOCKER_CONTEXT', 'FLEET_MULTIPLANE_ARCH',
+                 'FLEET_MULTIPLANE_ACCEL', 'FLEET_SITE_PROVIDER', 'GITHUB_ACTIONS', 'RUNNER_ENVIRONMENT', 'DOCKER_CONTEXT'):
+        base.pop(name, None)
+    # CI-mode host probes go through a fake sh, on PATH only for those runs.
+    ci_bin = tmp / 'ci-bin'; ci_bin.mkdir()
+    (ci_bin / 'sh').write_text(FAKE.replace('#!/usr/bin/env python3', '#!' + sys.executable)); (ci_bin / 'sh').chmod(0o755)
+    ci = {'PATH': str(ci_bin) + os.pathsep + base['PATH'], 'FLEET_MULTIPLANE_RUNTIME': 'ci', 'FLEET_MULTIPLANE_DOCKER_CONTEXT': 'default',
+          'FLEET_MULTIPLANE_ARCH': 'amd64', 'FLEET_MULTIPLANE_ACCEL': 'kvm', 'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted',
+          'FAKE_ENDPOINT': 'unix:///var/run/docker.sock', 'FAKE_ARCH': 'x86_64'}
 
     def run(args, env=None, **kw):
         return subprocess.run([sys.executable, str(harness), *args], text=True, capture_output=True, env=dict(base, **(env or {})), **kw)
@@ -71,7 +84,7 @@ with tempfile.TemporaryDirectory() as tmp:
     good_root = tmp / 'good'; (good_root / 'cmd/fleet-multiplane').mkdir(parents=True)
     markers = ['seed', 'commission', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse', 'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer',
                'admit-install-b', 'recovery-mismatch', 'probe-unallocatable', 'tenant-isolation']
-    (good_root / 'cmd/fleet-multiplane/main.go').write_text(' '.join('"%s"' % m for m in markers) + ' multiplane.ErrLocationNotServed')
+    (good_root / 'cmd/fleet-multiplane/main.go').write_text(' '.join('"%s"' % m for m in markers) + ' multiplane.ErrLocationNotServed "redfish-probe" redfish.NewPinnedClient')
     bad_root = tmp / 'bad'; (bad_root / 'cmd/fleet-multiplane').mkdir(parents=True)
     (bad_root / 'cmd/fleet-multiplane/main.go').write_text(' '.join('"%s"' % m for m in markers))
 
@@ -94,6 +107,49 @@ with tempfile.TemporaryDirectory() as tmp:
     calls = [json.loads(l) for l in trace.read_text().splitlines()]
     check('preflight never mutates runtime', not any(c[0] == 'docker' and c[1] in ('rm', 'stop', 'kill', 'network', 'volume', 'system') for c in calls))
     check('preflight never starts colima without --bootstrap', not any(c[0] == 'colima' and 'start' in c for c in calls))
+    check('default runtime recorded', pre['runtime'] == {'mode': 'colima', 'dockerContext': 'colima-fleet-acceptance-tcg', 'architecture': 'arm64', 'accelerator': 'tcg'}, str(pre.get('runtime')))
+
+    # Run parameters: CI mode replaces only the Colima-specific probes; every
+    # combination it cannot honor fails closed before any resource exists.
+    for name, env, expected in (
+            ('ci kvm pass', dict(ci), 0),
+            ('ci tcg pass', dict(ci, FLEET_MULTIPLANE_ACCEL='tcg'), 0),
+            ('ci redfish tcg pass', dict(ci, FLEET_MULTIPLANE_ACCEL='tcg', FLEET_SITE_PROVIDER='redfish'), 0),
+            ('ci outside GitHub Actions', dict(ci, GITHUB_ACTIONS=''), 2),
+            ('ci on a self-hosted runner', dict(ci, RUNNER_ENVIRONMENT='self-hosted'), 2),
+            ('ci against a Colima socket', dict(ci, FAKE_ENDPOINT='unix:///Users/x/.colima/fleet-acceptance-tcg/docker.sock'), 2),
+            ('colima against the runner socket', {'FAKE_ENDPOINT': 'unix:///var/run/docker.sock'}, 2),
+            ('ci architecture mismatch', dict(ci, FAKE_ARCH='aarch64'), 2),
+            ('ci unknown architecture', dict(ci, FLEET_MULTIPLANE_ARCH='riscv64', FLEET_MULTIPLANE_ACCEL='tcg'), 2),
+            ('ci without /dev/kvm', dict(ci, FAKE_KVM='absent'), 2),
+            ('ci low disk', dict(ci, FAKE_FREE_KB='1000'), 2),
+            ('ci concurrent runtime', dict(ci, FAKE='busy'), 2),
+            ('kvm with the Redfish provider', dict(ci, FLEET_SITE_PROVIDER='redfish'), 2),
+            ('kvm on an arm64 runtime', {'FLEET_MULTIPLANE_ACCEL': 'kvm'}, 2),
+            ('unknown accelerator', {'FLEET_MULTIPLANE_ACCEL': 'auto'}, 2),
+            ('unknown runtime', {'FLEET_MULTIPLANE_RUNTIME': 'lima'}, 2)):
+        s = state(); trace.write_text(''); pathlib.Path(str(trace) + '.context').write_text('')
+        r = run(['preflight', '--state', str(s), '--root', str(good_root), '--skip-tests'], env)
+        check('preflight ' + name, r.returncode == expected, 'exit %s: %s' % (r.returncode, r.stdout[-600:]))
+        if name == 'ci kvm pass':
+            pre = json.loads((s / 'evidence/preflight.json').read_text())
+            check('ci runtime recorded', pre['runtime'] == {'mode': 'ci', 'dockerContext': 'default', 'architecture': 'amd64', 'accelerator': 'kvm'}, str(pre['runtime']))
+            check('ci checks kvm and keeps the safety checks', {'kvm-device', 'no-concurrent-fleet-runtime', 'runtime-disk', 'runtime-memory', 'runtime-cpus', 'inotify-instances', 'ci-runner', 'amd64-emulation'}
+                  <= {c['name'] for c in pre['checks'] if c['ok']}, str(pre['checks']))
+            calls = [json.loads(l) for l in trace.read_text().splitlines()]
+            check('ci mode never touches colima', not any(c[0] == 'colima' for c in calls), str(calls))
+            check('ci mode uses only the selected context', set(pathlib.Path(str(trace) + '.context').read_text().split()) == {'default'})
+
+    # run.sh exports the defaults to every step, and passes overrides through.
+    for name, env, want in (
+            ('run.sh defaults', {}, {'mode': 'colima', 'dockerContext': 'colima-fleet-acceptance-tcg', 'architecture': 'arm64', 'accelerator': 'tcg'}),
+            ('run.sh ci parameters', ci, {'mode': 'ci', 'dockerContext': 'default', 'architecture': 'amd64', 'accelerator': 'kvm'})):
+        runs = pathlib.Path(tempfile.mkdtemp(dir=tmp))
+        r = subprocess.run(['bash', str(root / 'hack/multiplane/run.sh'), '--preflight-only', '--skip-readiness-tests'], text=True, capture_output=True,
+                           env=dict(base, FLEET_MULTIPLANE_STATE_ROOT=str(runs), **env))
+        states = list(runs.iterdir())
+        pre = json.loads((states[0] / 'evidence/preflight.json').read_text()) if len(states) == 1 else {}
+        check(name, r.returncode == 0 and pre.get('runtime') == want, 'exit %s %s: %s' % (r.returncode, pre.get('runtime'), (r.stdout + r.stderr)[-600:]))
 
     # Bounded phases: pass, fail, blocked passthrough, timeout kills the process group.
     s = state()
@@ -160,6 +216,12 @@ with tempfile.TemporaryDirectory() as tmp:
         (s / 'evidence/leak.json').write_text('{"v":"%s"}' % secret)
         check('scan detects ' + secret[0], run(['scan', '--state', str(s)]).returncode == 1)
         check('scan redacts ' + secret[0], secret not in (s / 'evidence/leak.json').read_text())
+    (s / 'evidence/leak.json').unlink()
+    (s / 'evidence/nested').mkdir()
+    (s / 'evidence/nested/deep.json').write_text('{"v":"%s"}' % ('w' * 40))
+    check('scan detects a nested leak', run(['scan', '--state', str(s)]).returncode == 1)
+    check('scan redacts the nested file itself', 'w' * 40 not in (s / 'evidence/nested/deep.json').read_text())
+    check('scan is clean after redaction', run(['scan', '--state', str(s)]).returncode == 0)
 
     # Result: status mapping and retained owned containers. Exit 0 is passed
     # only with the completion marker run.sh writes last.
@@ -171,6 +233,36 @@ with tempfile.TemporaryDirectory() as tmp:
         check('result ' + status, res['status'] == status and res['productionAuthority'] is False)
     check('result lists retained containers', res['retainedContainers'] == [{'name': 'fleet-mp-0000aaaa-vm', 'state': 'exited'}], str(res['retainedContainers']))
     check('result keeps unknown custody', 'Unknown' in res['custody'])
+
+    # Verify: a pass needs status passed, every phase passed, teardown passed
+    # and no retained container, whatever the exit code said.
+    def verified(result):
+        s = state(); (s / 'evidence').mkdir(); (s / 'evidence/result.json').write_text(json.dumps(result))
+        return run(['verify', '--state', str(s)]).returncode
+    good = {'status': 'passed', 'exitCode': 0, 'retainedContainers': [], 'phases': [{'name': 'build', 'status': 'passed'}, {'name': 'teardown', 'status': 'passed'}]}
+    check('verify passes a completed run', verified(good) == 0)
+    for name, change in (('interrupted', {'status': 'interrupted', 'exitCode': 1}), ('timeout', {'status': 'timeout', 'exitCode': 4}),
+                         ('a failed phase', {'phases': [{'name': 'build', 'status': 'timeout'}, {'name': 'teardown', 'status': 'passed'}]}),
+                         ('no teardown', {'phases': [{'name': 'build', 'status': 'passed'}, {'name': 'stop', 'status': 'passed'}]}),
+                         ('retained containers', {'retainedContainers': [{'name': 'fleet-mp-0000aaaa-vm', 'state': 'exited'}]})):
+        check('verify refuses ' + name, verified(dict(good, **change)) == 1)
+    s = state()
+    check('verify refuses a missing result', run(['verify', '--state', str(s)]).returncode == 1)
+
+    # The installer hold: the watcher suspends a guest whose kernel printed and
+    # reports a guest that printed its receipt first as missed, never held.
+    steps_text = (root / 'hack/multiplane/steps.sh').read_text()
+    watcher = steps_text.split("<<'SH'\n", 1)[1].split('\nSH\n', 1)[0]
+    for name, console, want in (('held', 'Linux version 6.1\n', 'held '), ('missed', 'Linux version 6.1\nFLEET-INSTALLED:' + 'r' * 64 + '\n', 'missed ')):
+        h = pathlib.Path(tempfile.mkdtemp(dir=tmp))
+        (h / 'vm/dev/0123456789abcdef').mkdir(parents=True); (h / 'vm/dev/0123456789abcdef/installer.log').write_text(console)
+        (h / 'bin').mkdir()
+        (h / 'bin/virsh').write_text('#!/bin/sh\nfor a; do last=$a; done\ncase "$3" in list) echo fleet-local-0123456789abcdef ;; suspend) echo "$4" > "%s/suspended" ;; domstate) [ -e "%s/suspended" ] && echo paused || echo running ;; esac\n' % (h, h))
+        (h / 'bin/virsh').chmod(0o755)
+        script = watcher.replace('/var/lib/fleet-local/vm', str(h / 'vm')).replace('/tmp/fleet-installer-hold', str(h / 'hold'))
+        r = subprocess.run(['sh', '-c', script], text=True, capture_output=True, env=dict(os.environ, PATH=str(h / 'bin') + os.pathsep + os.environ['PATH']), timeout=30)
+        result = (h / 'hold').read_text() if (h / 'hold').exists() else ''
+        check('installer hold ' + name, r.returncode == 0 and result.startswith(want + 'fleet-local-0123456789abcdef'), repr(result) + r.stderr[-300:])
 
     # Teardown refuses without passed acceptance, before touching the runtime.
     s = state(); (s / 'prefix').write_text('fleet-mp-0000aaaa\n'); (s / 'evidence').mkdir()
@@ -191,12 +283,27 @@ with tempfile.TemporaryDirectory() as tmp:
     check('run usage', r.returncode == 64)
 
     # Static guards for runtime-only step code the offline fakes cannot execute.
+    for f in sorted((root / 'hack/multiplane').glob('*.*')):
+        if f.suffix in ('.sh', '.py') and not f.name.startswith('test-'):
+            text = f.read_text()
+            check('docker context is the run parameter: ' + f.name, 'DOCKER_CONTEXT=colima' not in text and "['DOCKER_CONTEXT']='colima" not in text
+                  and "['DOCKER_CONTEXT'] = 'colima" not in text and "'context','inspect','colima" not in text)
+    run_text = (root / 'hack/multiplane/run.sh').read_text()
+    check('site binary built for the selected architecture', 'GOARCH="$FLEET_MULTIPLANE_ARCH"' in run_text and 'GOARCH=arm64' not in run_text)
+    check('site accelerator is the run parameter', 'FLEET_LOCAL_VM_ACCEL, value: tcg' not in (root / 'config/site/services/services.yaml').read_text()
+          and '{name: FLEET_LOCAL_VM_ACCEL, value: "${schema.spec.accelerator}"}' in (root / 'config/site/graph/rgd.yaml').read_text()
+          and 'accelerator: "${FLEET_LOCAL_VM_ACCEL}"' in (root / 'config/site/instance/dispatcher.yaml').read_text())
+    runtime_text = (root / 'hack/local-vm/site-runtime').read_text()
+    check('site runtime requires the KVM device and publishes its accelerator', 'kvm) [ -c /dev/kvm ]' in runtime_text and ' *) echo' in runtime_text
+          and '"$sock/accelerator"' in runtime_text)
+    check('interrupts land on a held installer in local VM mode', 'step hold-installer' in (root / 'hack/multiplane/acceptance.sh').read_text()
+          and 'step release-installer' in (root / 'hack/multiplane/acceptance.sh').read_text() and "installerHold" in (root / 'hack/multiplane/evidence.py').read_text())
     steps = (root / 'hack/multiplane/steps.sh').read_text()
     evidence = (root / 'hack/multiplane/evidence.py').read_text()
     for name, text in (('steps', steps), ('evidence', evidence), ('harness', harness.read_text())):
         check('no docker process launch in site execution: ' + name, '-vm' not in text and 'cell.pid' not in text)
     sequence = (root / 'hack/multiplane/acceptance.sh').read_text()
-    order = ['custody-crd-rules', 'import-inert', 'staff-access', 'commission-dispatch', 'commission', 'commission-settle', 'allocate', 'verify-contention', 'tenant-isolation', 'admit-install', 'await-delivery', 'partition', 'dispatch', 'interrupt-pod', 'interrupt-job', 'resume',
+    order = ['custody-crd-rules', 'import-inert', 'staff-access', 'commission-dispatch', 'commission', 'commission-settle', 'allocate', 'verify-contention', 'tenant-isolation', 'admit-install', 'await-delivery', 'partition', 'hold-installer', 'dispatch', 'interrupt-pod', 'interrupt-job', 'release-installer', 'resume',
              'worker-rbac', 'partition-readiness', 'heal', 'install', 'install-repeat', 'lifecycle', 'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention',
              'reflection-faults', 'release', 'release-status-a',
              'reuse', 'reuse-status', 'delivery-faults', 'deadline-admit', 'machine-delete', 'deadline-hold', 'release-b', 'deadline-settled', 'release-status-b',

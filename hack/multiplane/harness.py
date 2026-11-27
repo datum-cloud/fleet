@@ -19,7 +19,15 @@ import sys
 import time
 
 PROFILE = os.environ.get('FLEET_MULTIPLANE_PROFILE', 'fleet-acceptance-tcg')
-CONTEXT = 'colima-' + PROFILE
+# Run parameters (docs/operations/multiplane.md#ci-mode). The defaults are the
+# task-owned Colima profile: an arm64 runtime running the amd64 guest under
+# TCG. CI mode uses a disposable GitHub-hosted runner's own Docker daemon.
+RUNTIME = os.environ.get('FLEET_MULTIPLANE_RUNTIME', 'colima')
+CONTEXT = os.environ.get('FLEET_MULTIPLANE_DOCKER_CONTEXT', 'colima-' + PROFILE)
+ARCH = os.environ.get('FLEET_MULTIPLANE_ARCH', 'arm64')
+ACCEL = os.environ.get('FLEET_MULTIPLANE_ACCEL', 'tcg')
+DOCKER_ARCHITECTURES = {'arm64': ('aarch64', 'arm64'), 'amd64': ('x86_64', 'amd64')}
+CI_ENDPOINT = 'unix:///var/run/docker.sock'
 EXIT_PASSED, EXIT_FAILED, EXIT_PREFLIGHT, EXIT_BLOCKED, EXIT_TIMEOUT, EXIT_USAGE = 0, 1, 2, 3, 4, 64
 STATUS_BY_EXIT = {EXIT_PASSED: 'passed', EXIT_FAILED: 'failed', EXIT_PREFLIGHT: 'preflight-failed',
                   EXIT_BLOCKED: 'blocked', EXIT_TIMEOUT: 'timeout', EXIT_USAGE: 'usage'}
@@ -114,10 +122,21 @@ def preflight(args):
     for tool in ('go', 'python3', 'openssl', 'docker', 'kind', 'kubectl', 'kustomize', 'curl', 'git'):
         check('tool:' + tool, shutil.which(tool), 'required on PATH')
     check('python>=3.12', sys.version_info >= (3, 12), sys.version.split()[0] + ' (evidence extraction uses the tarfile data filter)')
+    check('runtime-mode', RUNTIME in ('colima', 'ci'), 'FLEET_MULTIPLANE_RUNTIME=%s; colima or ci' % RUNTIME)
+    if RUNTIME == 'ci':
+        # The run adjusts host kernel settings and fills the Docker data root:
+        # only a disposable runner, never a workstation's daemon.
+        check('ci-runner', os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted',
+              'CI mode runs only on a disposable GitHub-hosted runner (GITHUB_ACTIONS=true, RUNNER_ENVIRONMENT=github-hosted)')
+    check('runtime-parameter:architecture', ARCH in DOCKER_ARCHITECTURES, 'FLEET_MULTIPLANE_ARCH=%s; arm64 or amd64' % ARCH)
+    # KVM runs the amd64 guest natively, so it needs an amd64 runtime. The
+    # Redfish lab adapter defines TCG domains only.
+    accel_ok = ACCEL == 'tcg' or (ACCEL == 'kvm' and ARCH == 'amd64' and PROVIDER == 'libvirt')
+    check('accelerator', accel_ok, 'FLEET_MULTIPLANE_ACCEL=%s; tcg, or kvm with an amd64 runtime and the libvirt provider' % ACCEL)
 
     code, out, _ = capture(['docker', 'context', 'inspect', CONTEXT, '--format', '{{.Endpoints.docker.Host}}'], 20)
-    endpoint_ok = code == 0 and out.strip().endswith('/.colima/%s/docker.sock' % PROFILE)
-    if not endpoint_ok and args.bootstrap and shutil.which('colima'):
+    endpoint_ok = endpoint_matches(code, out)
+    if not endpoint_ok and RUNTIME == 'colima' and args.bootstrap and shutil.which('colima'):
         # Only start an existing task-owned profile with its saved configuration.
         code, out, err = capture(['colima', 'list', '--json'], 30, cwd='/')
         known = any(json.loads(line).get('name') == PROFILE for line in out.splitlines() if line.strip().startswith('{')) if code == 0 else False
@@ -125,16 +144,16 @@ def preflight(args):
             code, _, err = capture(['colima', 'start', '--profile', PROFILE], 600, cwd='/')
             check('bootstrap:colima-start', code == 0, 'started existing profile ' + PROFILE if code == 0 else err.strip()[-300:])
             code, out, _ = capture(['docker', 'context', 'inspect', CONTEXT, '--format', '{{.Endpoints.docker.Host}}'], 20)
-            endpoint_ok = code == 0 and out.strip().endswith('/.colima/%s/docker.sock' % PROFILE)
-    check('docker-context', endpoint_ok, CONTEXT + ' must point at the task-owned Colima profile socket; never fleet-e2e-x86')
+            endpoint_ok = endpoint_matches(code, out)
+    check('docker-context', endpoint_ok, CONTEXT + (' must point at the runner daemon ' + CI_ENDPOINT if RUNTIME == 'ci' else ' must point at the task-owned Colima profile socket; never fleet-e2e-x86'))
 
     info = {}
     if endpoint_ok:
         code, out, err = capture(['docker', 'info', '--format', '{{json .}}'], 30)
-        if check('docker-reachable', code == 0, 'start the profile: colima start --profile %s (or run with --bootstrap)' % PROFILE if code else 'reachable'):
+        if check('docker-reachable', code == 0, ('start the profile: colima start --profile %s (or run with --bootstrap)' % PROFILE if RUNTIME == 'colima' else 'the runner daemon is unreachable') if code else 'reachable'):
             info = json.loads(out)
     if info:
-        check('runtime-architecture', info.get('Architecture') in ('aarch64', 'arm64'), '%s (the Milo image pin is native arm64)' % info.get('Architecture'))
+        check('runtime-architecture', info.get('Architecture') in DOCKER_ARCHITECTURES.get(ARCH, ()), '%s; FLEET_MULTIPLANE_ARCH=%s' % (info.get('Architecture'), ARCH))
         check('runtime-memory', int(info.get('MemTotal', 0)) >= 7_800_000_000, '%.2f GiB; 8 GiB required' % (int(info.get('MemTotal', 0)) / 2**30))
         check('runtime-cpus', int(info.get('NCPU', 0)) >= 4, '%s CPUs; 4 required' % info.get('NCPU'))
         code, out, _ = capture(['docker', 'ps', '--format', '{{.Names}}'], 30)
@@ -147,6 +166,9 @@ def preflight(args):
         limit = vm_inotify()
         opted = os.environ.get('FLEET_MULTIPLANE_INOTIFY') == '1024'
         check('inotify-instances', limit is not None and (limit >= 1024 or opted), 'current %s; requires >=1024 or FLEET_MULTIPLANE_INOTIFY=1024 (reversible task-VM adjustment)' % limit)
+        if ACCEL == 'kvm':
+            check('kvm-device', vm_exec('test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm && echo present') == 'present',
+                  'a readable and writable /dev/kvm on the Docker host; no automatic software fallback')
 
     root = pathlib.Path(args.root)
     main = (root / 'cmd/fleet-multiplane/main.go')
@@ -163,13 +185,27 @@ def preflight(args):
     pre = [c for c in checks if c['kind'] == 'preflight' and not c['ok']]
     ready = [c for c in checks if c['kind'] == 'readiness' and not c['ok']]
     code = EXIT_PREFLIGHT if pre else EXIT_BLOCKED if ready else EXIT_PASSED
-    write_json(evidence_dir(args.state) / 'preflight.json', {'schemaVersion': 1, 'observedAt': now(), 'profile': PROFILE, 'status': STATUS_BY_EXIT[code], 'checks': checks})
+    write_json(evidence_dir(args.state) / 'preflight.json', {'schemaVersion': 1, 'observedAt': now(), 'profile': PROFILE, 'status': STATUS_BY_EXIT[code], 'checks': checks,
+                                                           'runtime': {'mode': RUNTIME, 'dockerContext': CONTEXT, 'architecture': ARCH, 'accelerator': ACCEL}})
     for c in checks:
         print('%-4s %-34s %s' % ('ok' if c['ok'] else 'FAIL', c['name'], c['detail']))
     return code
 
 
+def endpoint_matches(code, out):
+    """Whether the context reaches exactly the selected runtime's daemon."""
+    if code != 0:
+        return False
+    if RUNTIME == 'ci':
+        return out.strip() == CI_ENDPOINT
+    return RUNTIME == 'colima' and out.strip().endswith('/.colima/%s/docker.sock' % PROFILE)
+
+
 def vm_exec(command, timeout=30):
+    """A read-only command on the Docker host: the Colima VM, or the runner itself in CI mode."""
+    if RUNTIME == 'ci':
+        code, out, _ = capture(['sh', '-c', command], timeout, cwd='/')
+        return out.strip() if code == 0 else None
     if not shutil.which('colima'):
         return None
     code, out, _ = capture(['colima', 'ssh', '--profile', PROFILE, '--', 'sh', '-c', command], timeout, cwd='/')
@@ -489,15 +525,17 @@ def secrets(state):
 def scan(args):
     values = secrets(args.state) | set(args.extra or [])
     leaked = []
-    for p in evidence_dir(args.state).rglob('*'):
+    ev = evidence_dir(args.state)
+    for p in ev.rglob('*'):
         if p.is_file():
             data = p.read_bytes()
             if any(v.encode() in data for v in values):
-                leaked.append(p.name)
+                leaked.append(p)
     if leaked:
-        for name in leaked:
-            (evidence_dir(args.state) / name).write_text('{"redacted":"secret scan matched; see private state"}\n')
-        print('secret scan matched and redacted: ' + ', '.join(sorted(leaked)), file=sys.stderr)
+        # Redact the matching file itself, wherever it is under evidence/.
+        for path in leaked:
+            path.write_text('{"redacted":"secret scan matched; see private state"}\n')
+        print('secret scan matched and redacted: ' + ', '.join(sorted(str(p.relative_to(ev)) for p in leaked)), file=sys.stderr)
         return EXIT_FAILED
     print('secret scan: %d evidence files clean against %d retained secrets' % (sum(1 for p in evidence_dir(args.state).rglob('*') if p.is_file()), len(values)))
     return 0
@@ -541,6 +579,29 @@ def result(args):
     return code
 
 
+def verify(args):
+    """Whether a recorded result counts as a pass: status passed, every phase
+    passed, and the run reached teardown. A killed, timed-out or interrupted
+    run never does, whatever its exit code."""
+    path = evidence_dir(args.state) / 'result.json'
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, ValueError):
+        print('VERIFY failed: no readable result.json')
+        return EXIT_FAILED
+    phases = value.get('phases') or []
+    problems = []
+    if value.get('status') != 'passed' or value.get('exitCode') != EXIT_PASSED:
+        problems.append('status %s exit %s' % (value.get('status'), value.get('exitCode')))
+    problems += ['phase %s %s' % (p.get('name'), p.get('status')) for p in phases if p.get('status') != 'passed']
+    if not any(p.get('name') == 'teardown' and p.get('status') == 'passed' for p in phases):
+        problems.append('teardown did not pass')
+    if value.get('retainedContainers'):
+        problems.append('retained containers: %d' % len(value['retainedContainers']))
+    print('VERIFY %s phases=%d%s' % ('failed' if problems else 'passed', len(phases), (': ' + '; '.join(problems[:8])) if problems else ''))
+    return EXIT_FAILED if problems else EXIT_PASSED
+
+
 def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest='cmd', required=True)
@@ -570,6 +631,8 @@ def main():
     s = sub.add_parser('result')
     s.add_argument('--state', required=True)
     s.add_argument('--exit-code', type=int, required=True)
+    s = sub.add_parser('verify')
+    s.add_argument('--state', required=True)
     a = p.parse_args()
     if a.cmd == 'phase':
         if a.command[:1] == ['--']:
@@ -577,7 +640,7 @@ def main():
         if not a.command or not re.match(r'^[a-z0-9-]+$', a.name):
             return EXIT_USAGE
     return {'preflight': preflight, 'phase': phase, 'wait-stage': wait_stage, 'journal': journal_cmd, 'custody-digest': custody_cmd,
-            'scan': scan, 'result': result}[a.cmd](a)
+            'scan': scan, 'result': result, 'verify': verify}[a.cmd](a)
 
 
 if __name__ == '__main__':
