@@ -99,6 +99,24 @@ func TestPrincipals(t *testing.T) {
 			t.Fatalf("%+v classified %s, want %s", creator, got, want)
 		}
 	}
+	// Credentials that carry no UID are identified by username alone.
+	byName := Principals{CreatorMetalProvider: {{Username: "svc-a"}}, CreatorReleaseController: {{Username: "svc-b"}}}
+	if err := byName.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for creator, want := range map[ops.Creator]CreatorClass{
+		{Username: "svc-a"}: CreatorMetalProvider,
+		{Username: "svc-b"}: CreatorReleaseController,
+		{Username: "svc-c"}: CreatorStaff,
+	} {
+		if got := byName.Classify(creator); got != want {
+			t.Fatalf("%+v classified %s, want %s", creator, got, want)
+		}
+	}
+	// A configured UID is checked: a creator without it is staff.
+	if got := principals.Classify(ops.Creator{Username: "svc-a"}); got != CreatorStaff {
+		t.Fatalf("a creator without the configured UID classified %s", got)
+	}
 	for _, bad := range []Principals{{CreatorStaff: {{Username: "x"}}}, {CreatorMetalProvider: {{}}}, {CreatorMetalProvider: {{Username: "x"}}, CreatorReleaseController: {{Username: "x"}}}} {
 		if bad.Validate() == nil {
 			t.Fatalf("%v validated", bad)

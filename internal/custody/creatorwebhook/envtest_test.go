@@ -70,15 +70,16 @@ func TestCreatorAgainstAPIServer(t *testing.T) {
 	if err := admin.Create(context.Background(), webhooks); err != nil {
 		t.Fatal(err)
 	}
-	actor := func(name, project string) client.Client {
+	actorWithUID := func(name, uid, project string) client.Client {
 		cfg := rest.CopyConfig(config)
-		cfg.Impersonate = rest.ImpersonationConfig{UserName: name, UID: name + "-uid", Groups: []string{"system:masters"}, Extra: map[string][]string{iam.ParentKindExtraKey: {"Project"}, iam.ParentAPIGroupExtraKey: {"resourcemanager.miloapis.com"}, iam.ParentNameExtraKey: {project}}}
+		cfg.Impersonate = rest.ImpersonationConfig{UserName: name, UID: uid, Groups: []string{"system:masters"}, Extra: map[string][]string{iam.ParentKindExtraKey: {"Project"}, iam.ParentAPIGroupExtraKey: {"resourcemanager.miloapis.com"}, iam.ParentNameExtraKey: {project}}}
 		api, err := client.New(cfg, client.Options{Scheme: scheme})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return api
 	}
+	actor := func(name, project string) client.Client { return actorWithUID(name, name+"-uid", project) }
 	recovery := func(creator ops.Creator) *ops.DeviceRecovery {
 		return &ops.DeviceRecovery{ObjectMeta: metav1.ObjectMeta{GenerateName: "recovery-", Namespace: "default"}, Spec: ops.DeviceRecoverySpec{
 			OperationEnvelope: ops.OperationEnvelope{Creator: creator, DeviceRef: ops.DeviceReference{Name: "server-example-001"}, Authority: ops.Authority{ServiceRequest: &ops.ServiceRequest{Reason: "settle"}}},
@@ -129,6 +130,25 @@ func TestCreatorAgainstAPIServer(t *testing.T) {
 		// Another caller cannot claim this caller's identity either.
 		if err := actor("other-staff", "provider-example").Create(ctx, recovery(ops.Creator{Username: "staff-example", UID: "staff-example-uid"})); !apierrors.IsForbidden(err) {
 			t.Fatalf("impersonated creator: %v", err)
+		}
+	})
+	t.Run("a caller without a UID is identified by username", func(t *testing.T) {
+		service := actorWithUID("service-example", "", "provider-example")
+		created := recovery(ops.Creator{Username: "service-example"})
+		if err := service.Create(ctx, created); err != nil {
+			t.Fatal(err)
+		}
+		stored := &ops.DeviceRecovery{}
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(created), stored); err != nil {
+			t.Fatal(err)
+		}
+		if stored.Spec.Creator != (ops.Creator{Username: "service-example"}) {
+			t.Fatalf("creator = %+v", stored.Spec.Creator)
+		}
+		for _, creator := range []ops.Creator{{Username: "service-example", UID: "forged"}, {Username: "staff-example"}} {
+			if err := service.Create(ctx, recovery(creator)); !apierrors.IsForbidden(err) {
+				t.Fatalf("creator %+v: %v", creator, err)
+			}
 		}
 	})
 	t.Run("a caller outside the provider projects is refused", func(t *testing.T) {

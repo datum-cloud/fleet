@@ -52,19 +52,25 @@ func TestHandler(t *testing.T) {
 	handler := &Handler{Projects: []string{"provider-example"}, Resources: resources}
 	staff := caller("staff-example", "provider-example")
 	self := &ops.Creator{Username: "staff-example", UID: "staff-example-uid"}
+	// Some credentials, such as client certificates, carry no UID.
+	service := caller("service-example", "provider-example")
+	service.UID = ""
 	cases := map[string]struct {
 		request admission.Request
 		allowed bool
 	}{
-		"a create naming the caller":           {request(admissionv1.Create, staff, object(t, self), runtime.RawExtension{}), true},
-		"a create naming someone else":         {request(admissionv1.Create, staff, object(t, &ops.Creator{Username: "other", UID: "other-uid"}), runtime.RawExtension{}), false},
-		"a create with the caller's name only": {request(admissionv1.Create, staff, object(t, &ops.Creator{Username: "staff-example", UID: "forged"}), runtime.RawExtension{}), false},
-		"a create without a creator":           {request(admissionv1.Create, staff, object(t, nil), runtime.RawExtension{}), false},
-		"a caller outside a project":           {request(admissionv1.Create, authenticationv1.UserInfo{Username: "staff-example", UID: "staff-example-uid"}, object(t, self), runtime.RawExtension{}), false},
-		"a caller in another project":          {request(admissionv1.Create, caller("staff-example", "consumer-example"), object(t, self), runtime.RawExtension{}), false},
-		"an update keeping the creator":        {request(admissionv1.Update, caller("coordinator", "provider-example"), object(t, self), object(t, self)), true},
-		"an update changing the creator":       {request(admissionv1.Update, staff, object(t, &ops.Creator{Username: "x", UID: "y"}), object(t, self)), false},
-		"a delete":                             {request(admissionv1.Delete, staff, runtime.RawExtension{}, object(t, self)), false},
+		"a create naming the caller":            {request(admissionv1.Create, staff, object(t, self), runtime.RawExtension{}), true},
+		"a create naming someone else":          {request(admissionv1.Create, staff, object(t, &ops.Creator{Username: "other", UID: "other-uid"}), runtime.RawExtension{}), false},
+		"a create with the caller's name only":  {request(admissionv1.Create, staff, object(t, &ops.Creator{Username: "staff-example", UID: "forged"}), runtime.RawExtension{}), false},
+		"a create without a creator":            {request(admissionv1.Create, staff, object(t, nil), runtime.RawExtension{}), false},
+		"a caller outside a project":            {request(admissionv1.Create, authenticationv1.UserInfo{Username: "staff-example", UID: "staff-example-uid"}, object(t, self), runtime.RawExtension{}), false},
+		"a caller in another project":           {request(admissionv1.Create, caller("staff-example", "consumer-example"), object(t, self), runtime.RawExtension{}), false},
+		"an update keeping the creator":         {request(admissionv1.Update, caller("coordinator", "provider-example"), object(t, self), object(t, self)), true},
+		"an update changing the creator":        {request(admissionv1.Update, staff, object(t, &ops.Creator{Username: "x", UID: "y"}), object(t, self)), false},
+		"a delete":                              {request(admissionv1.Delete, staff, runtime.RawExtension{}, object(t, self)), false},
+		"a caller without a UID naming itself":  {request(admissionv1.Create, service, object(t, &ops.Creator{Username: "service-example"}), runtime.RawExtension{}), true},
+		"a caller without a UID adding one":     {request(admissionv1.Create, service, object(t, &ops.Creator{Username: "service-example", UID: "forged"}), runtime.RawExtension{}), false},
+		"a caller without a UID naming another": {request(admissionv1.Create, service, object(t, &ops.Creator{Username: "staff-example"}), runtime.RawExtension{}), false},
 	}
 	for name, test := range cases {
 		t.Run(name, func(t *testing.T) {

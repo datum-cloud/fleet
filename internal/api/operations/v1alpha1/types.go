@@ -227,10 +227,11 @@ func (p Phase) Running() bool {
 }
 
 // Creator is the authenticated caller that created an operation. A
-// validating webhook rejects any other value and any change.
+// validating webhook rejects any other value and any change. UID is set only
+// when the caller's credential carries one.
 type Creator struct {
 	Username string `json:"username"`
-	UID      string `json:"uid"`
+	UID      string `json:"uid,omitempty"`
 }
 
 // Authority is why an operation may act. Exactly one field is set.

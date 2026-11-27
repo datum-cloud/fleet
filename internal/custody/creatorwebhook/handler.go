@@ -69,7 +69,7 @@ func project(actor authenticationv1.UserInfo) (string, error) {
 		}
 	}
 	values := actor.Extra[iam.ParentNameExtraKey]
-	if len(values) != 1 || values[0] == "" || actor.Username == "" || actor.UID == "" {
+	if len(values) != 1 || values[0] == "" || actor.Username == "" {
 		return "", errors.New("an authenticated caller and project are required")
 	}
 	return values[0], nil
@@ -92,8 +92,9 @@ func (h *Handler) Handle(_ context.Context, request admission.Request) admission
 		if err != nil {
 			return admission.Denied("the operation could not be decoded")
 		}
+		// A caller without a UID must leave spec.creator.uid unset.
 		if creator == nil || creator.Username != request.UserInfo.Username || creator.UID != request.UserInfo.UID {
-			return admission.Denied("spec.creator must be the authenticated caller's username and UID")
+			return admission.Denied("spec.creator must be the authenticated caller's username, and UID when it has one")
 		}
 		return admission.Allowed("the creator is the caller")
 	case admissionv1.Update:

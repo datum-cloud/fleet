@@ -40,8 +40,8 @@ marked **implemented and verified**, **implemented and inert**, or
   operation status. Every custody change is one update that carries the
   resourceVersion just read. On a conflict it reads again and decides again.
 - **The creator webhook** (`internal/custody/creatorwebhook`) admits a create
-  only when `spec.creator` is the authenticated caller's username and UID, and
-  an update only when the creator is unchanged.
+  only when `spec.creator` is the authenticated caller's username, plus its UID
+  when the caller has one, and an update only when the creator is unchanged.
 - **The capacity projector** is a pure function that derives `Prepared`,
   `Healthy` and `Available`. Nothing calls it outside tests (**implemented and
   inert**; see [Capacity](#other-decisions)).
@@ -387,10 +387,13 @@ Each decision lists the open point from the implementation brief it settles.
 
 ### Who created an operation (O14)
 
-- The client sets `spec.creator` to its own username and UID. The webhook
-  rejects any other value and any change. That is how #174 at `d4d17f9` reads,
-  so "clients cannot set the creator" becomes "clients can set only
-  themselves". CEL also makes the creator immutable, as part of the spec.
+- The client sets `spec.creator` to its own username, and to its UID only when
+  its credential carries one. A caller is identified by username, as Kubernetes
+  RBAC identifies it, because some credentials, such as client certificates,
+  carry no UID. The webhook rejects any other value and any change. That is
+  how #174 at `d4d17f9` reads, so "clients cannot set the creator" becomes
+  "clients can set only themselves". CEL also makes the creator immutable, as
+  part of the spec.
 - Milo's root API server calls the webhook, because Milo v0.32.5 does not
   evaluate admission policies stored in a project. The webhook reads the
   original caller from the admission request, with the project in Milo's
@@ -402,8 +405,9 @@ Each decision lists the open point from the implementation brief it settles.
   keeps no state. The production Milo root registers it (Increment C).
 - The coordinator classifies a creator by configuration. Each service class,
   such as the Fleet provider for Metal or the release controller, maps to
-  configured principals by username and, optionally, UID. Any other creator is
-  staff. IAM decides which staff may create which kind, and the API server has
+  configured principals by username. A principal configured with a UID
+  matches only a creator with that UID; one without a UID matches the username
+  alone. Any other creator is staff. IAM decides which staff may create which kind, and the API server has
   already authorized the create. No identity is hard-coded.
 
 ### Admission
@@ -657,8 +661,8 @@ remains.
 
 No resource spec holds an object UID (#211). A deterministic name, a label or
 status pins each incarnation. The one exception is an operation's
-`creator.uid`, the authenticated caller's UID, as in a Kubernetes
-CertificateSigningRequest. Each same-name recreation is guarded, and a test
+`creator.uid`, the authenticated caller's UID when its credential carries one,
+as in a Kubernetes CertificateSigningRequest. Each same-name recreation is guarded, and a test
 fails if its guard is removed:
 
 | Recreated | Guard | Test |
@@ -929,7 +933,7 @@ a real API server:
 | A crash between each pair of custody and status writes, with dropped and lost responses | `TestWriteOrderCrashRecovery` |
 | CEL rules | `TestCRDRules` |
 | Seams, rows, principals, ordering, evidence bounds, capacity for every input | `TestRegistryRejectsIncompleteKindsAndRows`, `TestAddingRowsLeavesExistingRowsAlone`, `TestPrincipals`, `TestCandidatesOrderOldestFirstWithADeterministicTieBreak`, `TestEvidenceIsTypedAndBounded`, `TestCapacityProjection` |
-| Creator recording and caller preservation | `TestHandler`, `TestCreatorAgainstAPIServer` |
+| Creator recording and caller preservation, including callers whose credential carries no UID | `TestHandler`, `TestCreatorAgainstAPIServer`, `TestCreatorIdentifiesTheCallerByUsername` |
 | CRD contract, roles, and that nothing ships the component or the test-only kinds | `TestCRDContract`, `TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets`, `TestComponentIsInert` |
 
 Increment A has no site, so "nothing was sent" means custody admitted nothing

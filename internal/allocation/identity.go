@@ -17,7 +17,8 @@ const MachineFinalizer = "fleet.datumapis.com/machine-protection"
 
 // Creator asks the API server who the credential authenticates as. An
 // operation's creator must be that identity: the creator rule refuses any
-// other, so it is never configured.
+// other, so it is never configured. The username identifies the caller; the
+// UID is kept when the API server reports one.
 func Creator(ctx context.Context, config *rest.Config) (ops.Creator, error) {
 	clients, err := kubernetes.NewForConfig(config)
 	if err != nil {
@@ -28,8 +29,8 @@ func Creator(ctx context.Context, config *rest.Config) (ops.Creator, error) {
 		return ops.Creator{}, err
 	}
 	user := review.Status.UserInfo
-	if user.Username == "" || user.UID == "" {
-		return ops.Creator{}, errors.New("allocation: the credential has no username and UID")
+	if user.Username == "" {
+		return ops.Creator{}, errors.New("allocation: the credential has no username")
 	}
 	return ops.Creator{Username: user.Username, UID: user.UID}, nil
 }

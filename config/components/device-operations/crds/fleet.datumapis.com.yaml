@@ -171,7 +171,6 @@ spec:
                         maxLength: 512
                     required:
                     - username
-                    - uid
                   settles:
                     type: object
                     properties:
@@ -444,7 +443,6 @@ spec:
                     maxLength: 512
                 required:
                 - username
-                - uid
               deviceRef:
                 type: object
                 properties:
@@ -667,7 +665,6 @@ spec:
                     maxLength: 512
                 required:
                 - username
-                - uid
               deviceRef:
                 type: object
                 properties:
@@ -867,7 +864,6 @@ spec:
                     maxLength: 512
                 required:
                 - username
-                - uid
               deviceRef:
                 type: object
                 properties:
