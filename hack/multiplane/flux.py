@@ -313,7 +313,7 @@ def stage(args):
                             FLEET_SITE_DISPATCH='true' if args.site == 'dispatch' else 'false',
                             # The central media service's certificate (public), so
                             # Redfish workers verify it; empty where none runs.
-                            FLEET_MEDIA_CA=env.get('mediaCA', ''))
+                            FLEET_MEDIA_CA=env.get('mediaCA', ''), FLEET_LOCAL_VM_ACCEL=harness.ACCEL)
             if args.bad_kro_chart:
                 patches.append(child_patch('kro', [{'target': {'kind': 'OCIRepository', 'name': 'kro-chart'},
                                                     'patch': '- op: replace\n  path: /spec/ref/digest\n  value: %s\n' % MISSING_DIGEST}]))

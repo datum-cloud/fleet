@@ -16,7 +16,7 @@ prefix=$(cat "$state/prefix")
 # The coordinator is a workstation process: stop it before its clusters.
 bash hack/multiplane/coordinator.sh stop "$state" >/dev/null
 bash hack/multiplane/media-central.sh stop "$state" >/dev/null
-export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker
+export DOCKER_CONTEXT=${FLEET_MULTIPLANE_DOCKER_CONTEXT:-colima-fleet-acceptance-tcg} KIND_EXPERIMENTAL_PROVIDER=docker
 if [[ $mode == passed ]]; then
  python3 -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("acceptance")!="evidence-verified")' "$state/evidence/summary.json" 2>/dev/null || {
   echo 'No verified acceptance evidence; refusing teardown. Use --discard-unknown only after inspection.' >&2; exit 1; }

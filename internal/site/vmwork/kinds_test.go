@@ -335,3 +335,80 @@ func TestAFailedNetworkBootClosesItsAdmission(t *testing.T) {
 		t.Fatalf("admission after the failure = %+v, %v, %v", boot, found, err)
 	}
 }
+
+// TestAnInstallationResumesOnlyUnderItsBoundAccelerator starts an install
+// under TCG; a replacement worker configured for KVM boots nothing, and its
+// journaled boot admission still names TCG.
+func TestAnInstallationResumesOnlyUnderItsBoundAccelerator(t *testing.T) {
+	r := newRig(t)
+	r.vm.hold = true
+	tcg := r.config
+	tcg.Accelerator = "tcg"
+	r.runner.Kinds["DeviceInstallation"] = Installation{tcg}
+	assignment := r.assignment("DeviceInstallation", "00000000-0000-4000-8000-000000000210", 2, installSpec())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = r.runner.Run(ctx, assignment)
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r.vm.mu.Lock()
+		creates := r.vm.creates
+		r.vm.mu.Unlock()
+		if creates == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the installer never started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	r.vm.mu.Lock()
+	r.vm.hold = false
+	for name := range r.vm.running {
+		delete(r.vm.running, name)
+	}
+	r.vm.mu.Unlock()
+	var boot Boot
+	if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Key()), &boot); err != nil || !found || boot.Accelerator != "tcg" {
+		t.Fatalf("boot admission = %+v, %v, %v", boot, found, err)
+	}
+	kvm := r.config
+	kvm.Accelerator = "kvm"
+	r.runner.Kinds["DeviceInstallation"] = Installation{kvm}
+	// The boot already began under TCG, so the outcome is unknown, never
+	// a second boot under KVM.
+	if result, err := r.runner.Run(context.Background(), assignment); err != nil || result.Phase != ops.PhaseOutcomeUnknown {
+		t.Fatalf("install resumed under another accelerator = %+v, %v", result, err)
+	}
+	if r.vm.creates != 1 {
+		t.Fatalf("boots = %d, want only the TCG installer", r.vm.creates)
+	}
+}
+
+// TestANewInstallationBindsItsWorkersAccelerator records the accelerator in
+// the boot admission and defines the guest with the matching domain type.
+func TestANewInstallationBindsItsWorkersAccelerator(t *testing.T) {
+	for accelerator, domainType := range map[string]string{"kvm": "kvm", "tcg": "qemu"} {
+		r := newRig(t)
+		config := r.config
+		config.Accelerator = accelerator
+		r.runner.Kinds["DeviceInstallation"] = Installation{config}
+		assignment := r.assignment("DeviceInstallation", "00000000-0000-4000-8000-000000000211", 2, installSpec())
+		if result, err := r.runner.Run(context.Background(), assignment); err != nil || result.Phase != ops.PhaseSucceeded {
+			t.Fatalf("%s install = %+v, %v", accelerator, result, err)
+		}
+		var boot Boot
+		if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Key()), &boot); err != nil || !found || boot.Accelerator != accelerator {
+			t.Fatalf("%s boot admission = %+v, %v, %v", accelerator, boot, found, err)
+		}
+		xml, err := os.ReadFile(filepath.Join(config.directory(device, assignment.Key()), "installer.xml"))
+		if err != nil || !strings.HasPrefix(string(xml), "<domain type='"+domainType+"'>") {
+			t.Fatalf("%s installer domain = %.40s, %v", accelerator, xml, err)
+		}
+	}
+}

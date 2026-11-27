@@ -27,6 +27,9 @@ spec:
       dispatch: boolean | default=false
       # The central media service's certificate, for virtual media workers.
       mediaCA: string | default=""
+      # The shared runtime's accelerator. Workers refuse a runtime that
+      # published another, and each installation's journal binds it.
+      accelerator: string | required=true
     status:
       bootOrigin: ${"http://" + bootService.spec.clusterIP + ":8080"}
       workerImage: ${hypervisor.spec.template.spec.containers[0].image}
@@ -203,7 +206,7 @@ spec:
                   imagePullPolicy: IfNotPresent
                   command: [fleet-multiplane, site-worker, --handoff, "${handoff.metadata.name}", --cell, "${schema.spec.cell}"]
                   env:
-                    - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
+                    - {name: FLEET_LOCAL_VM_ACCEL, value: "${schema.spec.accelerator}"}
                     # The site's enrollment of the Devices it serves.
                     - name: FLEET_SITE_ENROLLMENT
                       valueFrom:

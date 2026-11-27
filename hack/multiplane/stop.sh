@@ -7,7 +7,7 @@ prefix=$(cat "$state/prefix")
 # The coordinator is a workstation process: stop it before its clusters.
 bash hack/multiplane/coordinator.sh stop "$state" >/dev/null
 bash hack/multiplane/media-central.sh stop "$state" >/dev/null
-export DOCKER_CONTEXT=colima-fleet-acceptance-tcg
+export DOCKER_CONTEXT=${FLEET_MULTIPLANE_DOCKER_CONTEXT:-colima-fleet-acceptance-tcg}
 # The cell node holds the site runtime, journal volume, kro and worker Jobs; the
 # platform node holds the Milo APIs and their etcd volumes; the registry holds
 # the source revisions. Earlier-layout container names are kept for old runs.
