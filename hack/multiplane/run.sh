@@ -43,13 +43,15 @@ lab_ipam=0
 # before any resource exists.
 export FLEET_MULTIPLANE_RUNTIME=${FLEET_MULTIPLANE_RUNTIME:-colima} FLEET_MULTIPLANE_DOCKER_CONTEXT=${FLEET_MULTIPLANE_DOCKER_CONTEXT:-colima-fleet-acceptance-tcg}
 export FLEET_MULTIPLANE_ARCH=${FLEET_MULTIPLANE_ARCH:-arm64} FLEET_MULTIPLANE_ACCEL=${FLEET_MULTIPLANE_ACCEL:-tcg}
+# Scenario group: all by default; CI shards each suite into flux and release.
+export FLEET_MULTIPLANE_GROUP=${FLEET_MULTIPLANE_GROUP:-all}
 export DOCKER_CONTEXT=$FLEET_MULTIPLANE_DOCKER_CONTEXT KIND_EXPERIMENTAL_PROVIDER=docker FLEET_SITE_PROVIDER=$provider FLEET_LAB_DHCP=$lab_dhcp FLEET_LAB_IPAM=$lab_ipam
 harness=(python3 hack/multiplane/harness.py)
 state=$(mktemp -d "${FLEET_MULTIPLANE_STATE_ROOT:-/tmp}/fleet-multiplane.XXXXXX")
 mkdir -m 0700 "$state/evidence"
 printf '%s\n' "$provider" > "$state/site-provider"
 printf '%s\n' "$lab_dhcp" > "$state/lab-dhcp"
-printf 'Private run state: %s\nShareable evidence: %s/evidence\nSite provider: %s\nLab DHCP: %s\n' "$state" "$state" "$provider" "$lab_dhcp"
+printf 'Private run state: %s\nShareable evidence: %s/evidence\nSite provider: %s\nLab DHCP: %s\nScenario group: %s\n' "$state" "$state" "$provider" "$lab_dhcp" "$FLEET_MULTIPLANE_GROUP"
 
 finish() {
  code=$1

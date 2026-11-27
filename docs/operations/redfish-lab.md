@@ -495,7 +495,7 @@ fixture discovery for the lab Devices. Real BMC discovery is not part of this ru
 | `resume` | The recreated Job completes the exact operation with one succeeded Pod |
 | `deadline-admit`, `machine-delete`, `deadline-hold` | After the wipe and reuse, consumer B's installation runs under the lab installation deadline with the lab boot hook armed. Its `On` is sent and its installer is never served. The Machine is deleted mid-install, the installation ends `OutcomeUnknown` at its deadline, and a mismatched staff recovery is refused with no BMC effect. The release wipe powers the target off and settles the hold. |
 | `boot-denials` | Closed per-MAC scripts and capabilities of all four operations, target B's MAC and unknown identities are denied over the live boot Service |
-| `redfish-isolation` | Target B: unchanged disk digest, no QEMU start, no console line, no mutating Redfish request. Target A: disk hashes as all zeroes. No domain running. Exports the BMC audit. |
+| `redfish-isolation` | Target B: unchanged disk digest, no QEMU start, no console line, no mutating Redfish request. Target A: disk hashes as all zeroes, and no domain is running, except in the `flux` scenario group, which runs no release; there target B must not be running. Exports the BMC audit. |
 
 The final `evidence` phase adds these independent checks in Redfish mode:
 
