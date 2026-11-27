@@ -390,13 +390,20 @@ def isolation(s):
     b, a = record['targetB'], record['targetA']
     if b['diskSHA256Before'] != b['diskSHA256After'] or b['qemuStarts'] or b['consoleLines'] != base['targetB']['consoleLines'] or b['mutatingRedfishRequests']:
         die('target B was touched: %s' % b)
-    if a['diskSHA256'] != a['zeroDiskSHA256']:
+    # The flux group runs no release, so target A keeps its installed disk and
+    # its disk boot; only the groups that wipe it can require it zeroed and off.
+    released = harness.GROUP != 'flux'
+    record['targetA']['checkedWiped'] = released
+    if released and a['diskSHA256'] != a['zeroDiskSHA256']:
         die('target A disk is not all zeroes after the final verified cleanup')
-    if record['runningDomains']:
+    if released and record['runningDomains']:
         die('a lab target is still running: %s' % record['runningDomains'])
+    if not released and TARGET_B['domain'] in record['runningDomains']:
+        die('target B is running: %s' % record['runningDomains'])
     write(s / 'evidence' / 'redfish-isolation.json', record)
     (s / 'evidence' / 'redfish-audit.jsonl').write_text(''.join(json.dumps(e, sort_keys=True) + '\n' for e in entries))
-    print('redfish-isolation: target B never started, never received a Redfish effect and its disk is unchanged; target A disk independently hashes as all zeroes after the final cleanup')
+    print('redfish-isolation: target B never started, never received a Redfish effect and its disk is unchanged; ' +
+          ('target A disk independently hashes as all zeroes after the final cleanup' if released else 'target A stays installed: this group runs no release'))
 
 
 def commission_mark(s):

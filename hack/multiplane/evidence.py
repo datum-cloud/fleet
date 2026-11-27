@@ -22,7 +22,7 @@ prefix = (s / 'prefix').read_text().strip()
 ev = s / 'evidence'
 os.environ['DOCKER_CONTEXT'] = os.environ.get('FLEET_MULTIPLANE_DOCKER_CONTEXT', 'colima-fleet-acceptance-tcg')
 # The run parameters; the guest evidence below must show the accelerator.
-ACCEL, RUNTIME = harness.ACCEL, harness.RUNTIME
+ACCEL, RUNTIME, GROUP = harness.ACCEL, harness.RUNTIME, harness.GROUP
 # The installer prints this with its receipt once it has partitioned the
 # disk. A kernel message can still share the line, so it is found mid-line;
 # the shell's trace of that printf shows the format, not a receipt.
@@ -99,13 +99,26 @@ markers = ('custody-crd-rules: the provider project API refused every forbidden 
            'kro RBAC and admission confine it to per-operation objects',
            'flux-restart: every Flux controller', 'flux-fail-closed: absent kro chart digest', 'shared site layers applied it with services untouched',
            'flux-retention: removing the volume claim', 'flux-final: platform, hub and cell Ready', 'one writer per site object') + tuple(m + ': management rejected' for m in REFLECTION_FAULTS)
+# Markers only one scenario group prints. Every group prints the rest.
+FLUX_MARKERS = ('flux-drift: helm-controller restored kro', 'recreated the shared boot Service at its fixed ClusterIP and restored the observer',
+                'flux-graph-lifecycle: deleting the dispatcher removed only kro per-operation objects', 'flux-restart: every Flux controller',
+                'flux-fail-closed: absent kro chart digest', 'shared site layers applied it with services untouched', 'flux-retention: removing the volume claim')
+RELEASE_MARKERS = ('delivery-faults: duplicate refused by the API', 'boot-denials: PASS', 'release: verified', 'release-status-a: consumer-a Machine Released',
+                   'Installation Released, Ready False', 'reuse: verified', 'reuse-status: consumer-b Bound', 'release-b: verified', 'release-status-b: consumer-b Machine deleted',
+                   'deadline-admit: the second installation was admitted', 'release-waits: the Machine is deleting', 'deadline-hold: the installation ended OutcomeUnknown at its deadline',
+                   'recovery-mismatch: refused', 'deadline-settled: the release wipe was admitted', 'rebuild-unverified: custody rebuilt Unverified',
+                   'probe-unallocatable: no eligible capacity while custody is Unverified', 'rebuild-verified: custody Verified',
+                   'wrong-location: denied before allocation') + tuple(m + ': management rejected' for m in REFLECTION_FAULTS)
+if not set(FLUX_MARKERS + RELEASE_MARKERS) <= set(markers):
+    fail('a group marker is not an acceptance marker')
+skipped = RELEASE_MARKERS if GROUP == 'flux' else FLUX_MARKERS if GROUP == 'release' else ()
 if REDFISH:
     markers += ('bmc-upstream: DMTF Redfish-Interface-Emulator 1.2.2 archive verified', 'bmc-self-test: upstream emulator and lab adapter self-test passed',
                 'redfish-enroll: synthetic per-Device BMC credentials', 'redfish-baseline: both lab target disks present', 'redfish-discovery-faults: real emulator discovery',
                 'redfish-lost-response: On took effect but its response was lost', 'redfish-bmc-interrupt: lab BMC Pod force-deleted mid-install',
                 'a TLS key other than the pin reached no request', 'redfish-isolation: target B never started')
 for marker in markers:
-    if marker not in phases:
+    if marker not in skipped and marker not in phases:
         fail('missing acceptance phase: ' + marker)
 
 def site_operations(raw):
@@ -373,6 +386,43 @@ def redfish_provider():
     return ops, installs, wipes, custody, interrupt, receipts, starts, denials
 
 
+FLUX_SCENARIO_FILES = ('flux-drift.json', 'flux-restart.json', 'flux-fail-closed.json', 'flux-retention.json', 'flux-graph-lifecycle.json')
+flux_files = ('flux-verify.json', 'flux-initial.json', 'flux-rbac-restore.json', 'flux-final.json', 'flux-ownership-final.json', 'kro-rbac.json') + (
+    FLUX_SCENARIO_FILES if GROUP != 'release' else ())
+
+
+def flux_evidence():
+    for name in flux_files:
+        if not (ev / name).exists():
+            fail('missing Flux evidence ' + name)
+    flux_revisions = json.loads((s / 'flux-revisions.json').read_text())
+    final = json.loads((ev / 'flux-final.json').read_text())
+    for cluster, snap in final.items():
+        if snap['sources']['flux-system/fleet-gitops']['artifactRevision'] != flux_revisions[-1]['fluxRevision']:
+            fail('%s did not end on the final source revision' % cluster)
+        if any(k['lastAppliedRevision'] != flux_revisions[-1]['fluxRevision'] or k['suspend'] for n, k in snap['kustomizations'].items()):
+            fail('%s has a Kustomization not at the final revision' % cluster)
+    return flux_revisions
+
+
+if GROUP == 'flux':
+    # The Flux group stops after the core install and the Flux scenarios: the
+    # Device stays allocated to consumer A, so the release, wipe and custody
+    # checks belong to the release group, which runs the same core install.
+    flux_revisions = flux_evidence()
+    failure_scenarios = {name: json.loads((ev / (name + '.json')).read_text()) for name in ('import-inert', 'staff-access', 'contention')}
+    summary = {'schemaVersion': 3, 'acceptance': 'evidence-verified', 'group': GROUP,
+               'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'prefix': prefix,
+               'qualification': {'kvm': ACCEL == 'kvm', 'productionAuthority': False, 'productionEquivalence': False},
+               'scenarios': {'gitops': {'sourceRevisions': [{k: r[k] for k in ('revision', 'digest', 'purpose', 'gitHead', 'contentSumsSHA256', 'files')} for r in flux_revisions],
+                                        'evidence': list(flux_files)},
+                             'failureScenarios': failure_scenarios, 'custodyCRDRules': custody_rules},
+               'runtimePodMemoryEvents': {key: int(value) for key, value in memory_events.items()},
+               'nodeMemoryEvents': {node: {key: int(value) for key, value in e.items()} for node, e in node_events.items()}}
+    (ev / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    print('evidence: sanitized summary ' + str(ev / 'summary.json') + ' (flux group)')
+    sys.exit(0)
+
 raw = s / 'provider-private'
 ops, installs, wipes, custody, interrupt, receipts, starts, denials = (redfish_provider if REDFISH else libvirt_provider)()
 
@@ -459,18 +509,7 @@ if pv['spec']['persistentVolumeReclaimPolicy'] != 'Retain' or sorted(deployments
     fail('site volume or Flux-owned shared Deployments not as expected')
 (ev / 'kubernetes-execution.json').write_text(json.dumps(execution, indent=2, sort_keys=True) + '\n')
 arch = out('docker', 'info', '--format', '{{.Architecture}}').strip()
-flux_files = ('flux-verify.json', 'flux-initial.json', 'flux-rbac-restore.json', 'flux-drift.json', 'flux-restart.json', 'flux-fail-closed.json', 'flux-retention.json', 'flux-final.json',
-              'flux-graph-lifecycle.json', 'flux-ownership-final.json', 'kro-rbac.json')
-for name in flux_files:
-    if not (ev / name).exists():
-        fail('missing Flux evidence ' + name)
-flux_revisions = json.loads((s / 'flux-revisions.json').read_text())
-final = json.loads((ev / 'flux-final.json').read_text())
-for cluster, snap in final.items():
-    if snap['sources']['flux-system/fleet-gitops']['artifactRevision'] != flux_revisions[-1]['fluxRevision']:
-        fail('%s did not end on the final source revision' % cluster)
-    if any(k['lastAppliedRevision'] != flux_revisions[-1]['fluxRevision'] or k['suspend'] for n, k in snap['kustomizations'].items()):
-        fail('%s has a Kustomization not at the final revision' % cluster)
+flux_revisions = flux_evidence()
 write_env = json.loads((s / 'gitops-environment.json').read_text())
 # The #174 failure scenarios, each written by hack/multiplane/scenarios.py.
 FAILURE_SCENARIOS = ('import-inert', 'staff-access', 'contention', 'release-waits', 'deadline-hold', 'deadline-settled', 'rebuild')
@@ -483,7 +522,7 @@ for name in FAILURE_SCENARIOS:
 summary = {
     # The evidence verified; the run is not finished. Only result.json, which
     # run.sh writes last, records whether the run passed.
-    'schemaVersion': 3, 'acceptance': 'evidence-verified',
+    'schemaVersion': 3, 'acceptance': 'evidence-verified', 'group': GROUP,
     'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'prefix': prefix,
     'qualification': {'nativeMiloProjectAPIs': True, 'actualKarmadaDeliveryAndReflection': True, 'realLocalPXE': True,
                       'kubernetesJobExecution': True, 'actualKroController': True, 'fluxReconciledServices': True,
@@ -498,6 +537,7 @@ summary = {
                    'evidence': list(flux_files), 'siteImage': write_env['siteImage']},
         'installerStarts': starts,
         'reflectionRejections': list(REFLECTION_FAULTS),
+        'fluxScenarios': GROUP != 'release',
         'failureScenarios': failure_scenarios,
         'wrongLocationDeniedBeforeAllocation': json.loads((ev / 'wrong-location.json').read_text()),
         'custodyCRDRules': custody_rules,
