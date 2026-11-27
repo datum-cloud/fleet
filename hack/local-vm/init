@@ -35,6 +35,9 @@ if [ "$mode" = wipe ]; then
 fi
 [ "$mode" = install ] || /bin/busybox poweroff -f
 printf 'label: dos\n, , L, *\n' | sfdisk /dev/vda
+# One line, in one write, once the disk is partitioned: the shell trace above
+# reaches the console in pieces the kernel's own messages can split.
+printf 'FLEET-PARTITIONED:%s\n' "$receipt"
 mkfs.ext4 -F /dev/vda1
 mkdir -p /target
 mount /dev/vda1 /target
