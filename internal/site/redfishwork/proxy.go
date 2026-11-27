@@ -19,40 +19,64 @@ const maxProxyHeader = 107
 // version 1 header that names the server's own address. A connection's
 // remote address is the one the header names, so the media service checks a
 // report's source even when the path to it does not keep source addresses.
-// It drops any connection from outside Trusted, and any whose header is
-// missing or malformed, before TLS starts.
+// It drops any connection from outside trusted, and any whose header is
+// missing or malformed, before TLS starts. Each header is read on its own,
+// so a slow peer delays only its own connection.
 type ProxyListener struct {
 	net.Listener
-	// Trusted are the relays' own addresses. Only they may name a source.
-	Trusted []netip.Prefix
-	// OnDrop, when set, is told why a connection was dropped.
-	OnDrop func(error)
+	trusted []netip.Prefix
+	onDrop  func(error)
+	ready   chan net.Conn
+	failed  chan error
 }
 
-// Accept returns the next connection with a valid header from a trusted
-// peer, dropping the others.
-func (l ProxyListener) Accept() (net.Conn, error) {
+// NewProxyListener wraps a listener. trusted are the relays' own
+// addresses; only they may name a source. onDrop, when set, is told why a
+// connection was dropped.
+func NewProxyListener(inner net.Listener, trusted []netip.Prefix, onDrop func(error)) *ProxyListener {
+	l := &ProxyListener{Listener: inner, trusted: trusted, onDrop: onDrop, ready: make(chan net.Conn), failed: make(chan error, 1)}
+	go l.accept()
+	return l
+}
+
+func (l *ProxyListener) accept() {
 	for {
 		conn, err := l.Listener.Accept()
 		if err != nil {
-			return nil, err
+			l.failed <- err
+			return
 		}
-		source, err := l.header(conn)
-		if err == nil {
-			return proxied{Conn: conn, source: source}, nil
-		}
-		_ = conn.Close()
-		if l.OnDrop != nil {
-			l.OnDrop(err)
-		}
+		go func() {
+			source, err := l.header(conn)
+			if err != nil {
+				_ = conn.Close()
+				if l.onDrop != nil {
+					l.onDrop(err)
+				}
+				return
+			}
+			l.ready <- proxied{Conn: conn, source: source}
+		}()
+	}
+}
+
+// Accept returns the next connection with a valid header from a trusted
+// peer.
+func (l *ProxyListener) Accept() (net.Conn, error) {
+	select {
+	case conn := <-l.ready:
+		return conn, nil
+	case err := <-l.failed:
+		l.failed <- err
+		return nil, err
 	}
 }
 
 // header checks the peer and reads exactly one header line, so the TLS
 // handshake that follows reads nothing of it.
-func (l ProxyListener) header(conn net.Conn) (net.Addr, error) {
+func (l *ProxyListener) header(conn net.Conn) (net.Addr, error) {
 	peer, err := netip.ParseAddrPort(conn.RemoteAddr().String())
-	if err != nil || !slices.ContainsFunc(l.Trusted, func(prefix netip.Prefix) bool { return prefix.Contains(peer.Addr().Unmap()) }) {
+	if err != nil || !slices.ContainsFunc(l.trusted, func(prefix netip.Prefix) bool { return prefix.Contains(peer.Addr().Unmap()) }) {
 		return nil, errors.New("a PROXY connection came from outside the trusted relays")
 	}
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {

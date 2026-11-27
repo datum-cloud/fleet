@@ -39,16 +39,16 @@ func TestParseProxyHeader(t *testing.T) {
 // names, leaves the rest of the stream to TLS, and drops a connection from
 // any other peer or without a valid header.
 func TestTheProxyListenerTrustsOnlyItsRelays(t *testing.T) {
-	listen := func(trusted string) (ProxyListener, chan error) {
+	listen := func(trusted string) (*ProxyListener, chan error) {
 		inner, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { inner.Close() })
 		dropped := make(chan error, 4)
-		return ProxyListener{Listener: inner, Trusted: []netip.Prefix{netip.MustParsePrefix(trusted)}, OnDrop: func(err error) { dropped <- err }}, dropped
+		return NewProxyListener(inner, []netip.Prefix{netip.MustParsePrefix(trusted)}, func(err error) { dropped <- err }), dropped
 	}
-	send := func(listener ProxyListener, data string) {
+	send := func(listener *ProxyListener, data string) {
 		conn, err := net.Dial("tcp", listener.Addr().String())
 		if err != nil {
 			t.Fatal(err)
@@ -60,6 +60,8 @@ func TestTheProxyListenerTrustsOnlyItsRelays(t *testing.T) {
 	}
 
 	relayed, _ := listen("127.0.0.0/8")
+	// A trusted peer that sends nothing does not hold up the next one.
+	send(relayed, "")
 	send(relayed, "PROXY TCP4 192.0.2.70 192.0.2.1 40000 28443\r\nhello")
 	conn, err := relayed.Accept()
 	if err != nil {
@@ -77,7 +79,6 @@ func TestTheProxyListenerTrustsOnlyItsRelays(t *testing.T) {
 	} {
 		listener, dropped := listen(c.trusted)
 		send(listener, c.data)
-		go func() { _, _ = listener.Accept() }()
 		select {
 		case <-dropped:
 		case <-time.After(10 * time.Second):

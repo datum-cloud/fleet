@@ -123,7 +123,11 @@ func TestDeliveryMethodAdmission(t *testing.T) {
 		}()
 		device := held(e, "NetworkBoot,VirtualMedia")
 		fence := e.custody(device.Name).Spec.Fence
-		operation := install(e, device, "request-1", virtualMedia, nil)
+		// As the lab's refused installation does, it names a claim nothing
+		// made: the method is refused before the claim is read.
+		unclaimed := virtualMedia
+		unclaimed.ReportAddress = &ops.BootNetworkInput{AddressClaim: bootaddress.Reference(bootaddress.ClaimName("never-claimed")), Address: "198.51.100.99"}
+		operation := install(e, device, "request-1", unclaimed, nil)
 		e.settle(device.Name)
 		e.requirePhase(operation, ops.PhaseFailed, ReasonDeliveryNotOffered)
 		e.requireUntouched(device.Name, fence)

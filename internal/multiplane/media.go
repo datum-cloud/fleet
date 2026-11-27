@@ -24,6 +24,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleet "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/bootaddress"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/redfish"
 	"go.datum.net/fleet/internal/site/redfishwork"
@@ -65,6 +66,15 @@ func (r *Runner) MediaUnpinned(ctx context.Context) error {
 	return r.refusedInstallation(ctx, "00000000-0000-4000-8000-000000000228", r.Config.DeliveryMethods[index].Input(), downloads, custody.ReasonDownloadUnpinned)
 }
 
+// unclaimedReportAddress gives a refused installation the report address
+// every virtual media installation records, so the API takes it. It names
+// a claim nothing made: admission refuses these installations for their
+// method or download before it reads the claim.
+func unclaimedReportAddress(delivery ops.DeliveryInput, operation string) ops.DeliveryInput {
+	delivery.ReportAddress = &ops.BootNetworkInput{AddressClaim: bootaddress.Reference(bootaddress.ClaimName(operation)), Address: "192.168.77.99"}
+	return delivery
+}
+
 // refusedInstallation creates an installation for consumer A's allocation
 // with a synthetic request UID, outside the Metal provider's selection, and
 // requires admission to refuse it for the reason with custody unchanged.
@@ -103,7 +113,7 @@ func (r *Runner) refusedInstallation(ctx context.Context, request string, delive
 				OperationEnvelope: ops.OperationEnvelope{Creator: r.Allocator.ProviderCreator, DeviceRef: ops.DeviceReference{Name: device.Name, UID: string(device.UID)},
 					Authority: ops.Authority{AllocationRef: &ops.LocalReference{Name: current.Name}}},
 				RequestUID: request, Image: image, BootInterface: "primary", TargetDisks: []string{"disk-0"},
-				Delivery: delivery,
+				Delivery: unclaimedReportAddress(delivery, key.Name),
 			},
 		}
 		if err := r.Provider.API.Create(ctx, operation); err != nil {
@@ -401,7 +411,7 @@ func MediaService(ctx context.Context, c Config, listen, proxyListen, certFile, 
 			return err
 		}
 		if e.proxied {
-			listener = redfishwork.ProxyListener{Listener: listener, Trusted: relays, OnDrop: func(err error) { fmt.Fprintf(os.Stderr, "media-service: relay connection dropped: %v\n", err) }}
+			listener = redfishwork.NewProxyListener(listener, relays, func(err error) { fmt.Fprintf(os.Stderr, "media-service: relay connection dropped: %v\n", err) })
 		}
 		servers = append(servers, server)
 		go func() { errs <- server.Serve(tls.NewListener(listener, config)) }()

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Start or stop this run's central media service: the workstation process,
 # beside the coordinator, that serves virtual media to the lab BMC and takes
-# first-boot reports. It listens on loopback only; lab Pods reach it through
-# the runtime's host gateway, and guests' reports through the runtime's
-# report relay, which names each guest's address on the relay listener. It reads custody with the
+# first-boot reports. It listens on loopback only; lab Pods reach it
+# through the runtime's host gateway, and guests' reports through the
+# runtime's report relay, which names each guest's address on the relay
+# listener. It reads custody with the
 # coordinator's identity, keeps its own state, and logs to the private state
 # directory. start extracts the image's pinned artifacts from the site
 # image, the same bytes the site serves for network boot.
