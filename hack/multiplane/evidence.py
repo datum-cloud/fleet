@@ -23,6 +23,8 @@ ev = s / 'evidence'
 os.environ['DOCKER_CONTEXT'] = os.environ.get('FLEET_MULTIPLANE_DOCKER_CONTEXT', 'colima-fleet-acceptance-tcg')
 # The run parameters; the guest evidence below must show the accelerator.
 ACCEL, RUNTIME = harness.ACCEL, harness.RUNTIME
+# The installer's shell trace of its one partitioning command.
+PARTITION_TRACE = '+ sfdisk /dev/vda'
 REDFISH = (s / 'site-provider').exists() and (s / 'site-provider').read_text().strip() == 'redfish'
 
 
@@ -225,8 +227,11 @@ def libvirt_provider():
             if lines.count(marker + boot['receipt']) != 1 or sum(1 for l in lines if l.startswith(marker)) != 1:
                 fail('expected exactly one exact guest receipt in ' + filename)
             receipts.append({'operation': uid, 'fence': o['fence'], 'path': str(p.relative_to(raw)), 'marker': marker.rstrip(':'), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()})
-        if sum(1 for l in (directory / 'installer.log').read_text(errors='replace').splitlines() if re.match(r'^\+ sfdisk /dev/vda', l.strip())) != 1:
-            fail('installer partitioned the disk other than exactly once')
+        # The installer traces its commands on the serial console the kernel
+        # also prints to, so a kernel message can share the traced line.
+        partitions = (directory / 'installer.log').read_text(errors='replace').count(PARTITION_TRACE)
+        if partitions != 1:
+            fail('installer partitioned the disk %d times, not exactly once' % partitions)
         installer, disk = (directory / 'installer.xml').read_text(), (directory / 'disk.xml').read_text()
         if "boot dev='network'" not in installer or '<kernel>' in installer or '<initrd>' in installer:
             fail('installer domain is not firmware network boot only')
@@ -305,8 +310,9 @@ def redfish_provider():
         fail('expected exactly one passed burn-in receipt before the first operation receipt')
     if expected != sorted(expected) or sum(1 for l in console if l.startswith('FLEET-') and not l.startswith('FLEET-BURNIN:')) != len(expected):
         fail('console receipts are out of order or include another operation')
-    if sum(1 for l in console if l.startswith('+ sfdisk /dev/vda')) != 1:
-        fail('the installer partitioned the target disk other than once for the one finished install')
+    partitions = sum(l.count(PARTITION_TRACE) for l in console)
+    if partitions != 1:
+        fail('the installer partitioned the target disk %d times, not once for the one finished install' % partitions)
     qemu = (raw / 'libvirt-qemu' / 'fleet-lab-target-a.log').read_text(errors='replace')
     blocks = re.split(r'^\S+ \S+: starting up ', qemu, flags=re.M)[1:]
     def network(block):
