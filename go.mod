@@ -1,6 +1,6 @@
 module go.datum.net/fleet
 
-go 1.26.4
+go 1.27.0
 
 toolchain go1.27.4
 
