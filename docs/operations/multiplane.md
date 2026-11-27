@@ -162,9 +162,10 @@ it again with fresh ports, at most three times. Any other failure stops the run.
 ### CI mode
 
 The `multiplane-acceptance` workflow runs the same acceptance on a disposable
-GitHub-hosted `ubuntu-24.04` runner, one job per mode. Status: **verified**.
-Both modes passed on a hosted runner with local VM mode under KVM. Redfish
-mode under KVM is implemented and not yet verified.
+GitHub-hosted `ubuntu-24.04` runner, two shards per mode. Status:
+**verified** for local VM mode under KVM; **implemented, not yet verified**
+for Redfish mode under KVM and for the shards. Both modes passed unsharded on
+a hosted runner, with Redfish mode under TCG.
 
 To run it, apply the `multiplane-acceptance` label to a pull request whose
 branch contains the workflow. Each application starts one run of both modes,
@@ -183,6 +184,7 @@ above, unchanged:
 | `FLEET_MULTIPLANE_DOCKER_CONTEXT` | `colima-fleet-acceptance-tcg` | `default` |
 | `FLEET_MULTIPLANE_ARCH` (site binary and runtime architecture) | `arm64` | `amd64` |
 | `FLEET_MULTIPLANE_ACCEL` | `tcg` | `kvm` |
+| `FLEET_MULTIPLANE_GROUP` (scenario group) | `all` | `flux` or `release`, one per shard |
 
 Lab timers shorten the waits the scenarios provoke, in every runtime. Each
 scenario still proves the same outcome, and production defaults are unchanged:
@@ -218,8 +220,20 @@ worker never resumes an installation under another. Evidence then requires both
 domain definitions and every QEMU command line to show the selected accelerator,
 and `summary.json` records it.
 
-The job passes only if exactly one run recorded `passed` with every phase
-passed, teardown passed and no retained container. After the run, including
+The workflow runs each suite as two shards on separate runners. Both shards
+build the same topology and run the same scenarios up to the Pod and Job
+lifecycle checks. The `flux` shard then runs the Flux scenarios: graph
+lifecycle, drift, restart, fail-closed and retention. The `release` shard runs
+the reflection faults, release, reuse, deadline, rebuild, wrong-location and
+closed-boot scenarios. Each shard checks the evidence its scenarios produce:
+the `flux` shard leaves the Device allocated, so the release, wipe and final
+custody checks run in the `release` shard. A local run defaults to `all` and
+runs every scenario in one topology.
+
+A shard passes only if exactly one run recorded `passed` with every phase
+passed, teardown passed, the expected scenario group and no retained
+container. The workflow's `acceptance` result passes only if every shard of
+every suite passed. After the run, including
 after a timeout or cancellation, the job scans the evidence for secrets again
 and redacts any match. It uploads only `evidence/`, and only after a clean scan.
 A match fails the job even after its redaction.
@@ -432,7 +446,7 @@ The phases are then:
     Redfish mode the BMC audit must gain no effect.
 14. **Deadline and Machine deletion.** `deadline-admit` arms a lab-only hook
     in the boot service, which then withholds every boot while staying Ready,
-    and restarts the coordinator with a two-minute installation deadline for
+    and restarts the coordinator with the lab installation deadline for
     consumer B's installation only. kro still creates the worker, and the
     installer boot is requested but never served. `machine-delete` has the
     customer delete B's Machine mid-install. One release pass must leave
