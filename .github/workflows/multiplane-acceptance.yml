@@ -22,16 +22,22 @@ permissions:
 jobs:
   acceptance:
     if: github.event_name != 'pull_request' || github.event.label.name == 'multiplane-acceptance'
-    name: acceptance (${{ matrix.mode }})
+    name: acceptance (${{ matrix.mode }}, ${{ matrix.group }})
+    # Each suite runs as two shards on separate runners, after the same setup
+    # and core install scenarios: flux runs the Flux scenarios, release the
+    # reflection, release, reuse, deadline and rebuild scenarios. The
+    # acceptance job below passes only if every shard passed. A new suite is
+    # one more mode here and in the task selection below.
     strategy:
       fail-fast: false
       matrix:
         mode: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.mode != 'both' && format('["{0}"]', inputs.mode) || '["localvm","redfish"]') }}
+        group: [flux, release]
     # A newer labeled run for the same pull request replaces an older one;
     # nightly and manual runs never cancel each other. A cancelled run never
     # counts as passed.
     concurrency:
-      group: multiplane-acceptance-${{ github.event.pull_request.number || github.run_id }}-${{ matrix.mode }}
+      group: multiplane-acceptance-${{ github.event.pull_request.number || github.run_id }}-${{ matrix.mode }}-${{ matrix.group }}
       cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -40,6 +46,7 @@ jobs:
       FLEET_MULTIPLANE_DOCKER_CONTEXT: default
       FLEET_MULTIPLANE_ARCH: amd64
       FLEET_MULTIPLANE_ACCEL: kvm
+      FLEET_MULTIPLANE_GROUP: ${{ matrix.group }}
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       with: {persist-credentials: false}
@@ -54,7 +61,9 @@ jobs:
     # detector and the site binary without cgo, so a cache saved by another
     # workflow holds neither. Keyed by commit, restoring the newest for the
     # same go.sum.
-    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    # Saved after the build phase even when the run later fails, so a failing
+    # run still warms the next one.
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cache/go-build
@@ -157,12 +166,22 @@ jobs:
         done
         echo "found=$found" >> "$GITHUB_OUTPUT"
         echo "redacted=${redacted:-false}" >> "$GITHUB_OUTPUT"
+    # Both shards of a mode build the same binaries; one save per commit is
+    # enough, and a second save of the same key is skipped.
+    - name: Save the Go build cache
+      if: always() && matrix.group == 'release'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: multiplane-go-${{ matrix.mode }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
     # Only evidence/ is uploaded, never the private state directory.
     - name: Upload sanitized evidence
       if: always() && steps.scan.outcome == 'success' && steps.scan.outputs.found == 'true'
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
       with:
-        name: multiplane-evidence-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+        name: multiplane-evidence-${{ matrix.mode }}-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
         path: ${{ runner.temp }}/fleet-multiplane/fleet-multiplane.*/evidence/
         if-no-files-found: error
         retention-days: 14
@@ -173,10 +192,30 @@ jobs:
       run: |
         states=("$FLEET_MULTIPLANE_STATE_ROOT"/fleet-multiplane.*)
         [ "${#states[@]}" -eq 1 ] && [ -d "${states[0]}" ] || { echo "expected exactly one run, found ${#states[@]}"; exit 1; }
-        python3 hack/multiplane/harness.py verify --state "${states[0]}"
+        python3 hack/multiplane/harness.py verify --state "${states[0]}" --group "$FLEET_MULTIPLANE_GROUP"
     # A secret that reached evidence fails the job, even after its redaction.
     - name: Fail on redacted evidence
       if: always() && steps.scan.outputs.redacted == 'true'
       run: |
         echo 'evidence matched a retained secret and was redacted; see the scan step'
         exit 1
+  # The one result for a run: it fails unless every shard of every suite
+  # passed, including when a shard was skipped or cancelled.
+  acceptance-result:
+    name: acceptance
+    if: always() && (github.event_name != 'pull_request' || github.event.label.name == 'multiplane-acceptance')
+    needs: acceptance
+    # A newer labeled run replaces this one too, so a replaced run leaves no
+    # stale result beside the new one.
+    concurrency:
+      group: multiplane-acceptance-${{ github.event.pull_request.number || github.run_id }}-result
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - name: Require every shard to pass
+      env:
+        RESULT: ${{ needs.acceptance.result }}
+      run: |
+        [ "$RESULT" = success ] || { echo "a multi-plane acceptance shard did not pass: $RESULT"; exit 1; }
+        echo 'every multi-plane acceptance shard passed'
