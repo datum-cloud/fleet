@@ -66,6 +66,11 @@ NETWORK = 'fleet-lab-pxe'
 # synced: the network has no DHCP of its own, and the site's Kea, fed by
 # Fleet's reservation feed, is the only DHCP server on the bridge.
 LAB_DHCP = os.environ.get('FLEET_LAB_DHCP', 'static')
+# The accelerator the lab targets run under, kvm or tcg. The site runtime that
+# hosts libvirt publishes its own beside the socket; the adapter defines and
+# starts a target only while the two agree, with no software fallback.
+ACCEL = os.environ.get('FLEET_LAB_ACCEL', '')
+RUNTIME_ACCELERATOR = os.environ.get('FLEET_LAB_RUNTIME_ACCELERATOR', '/run/fleet-libvirt/accelerator')
 LOCK = threading.RLock()
 
 
@@ -128,6 +133,17 @@ class LibvirtError(Exception):
     pass
 
 
+def require_accelerator():
+    if ACCEL not in ('kvm', 'tcg'):
+        raise LibvirtError('FLEET_LAB_ACCEL must be kvm or tcg')
+    try:
+        published = open(RUNTIME_ACCELERATOR).read().strip()
+    except OSError:
+        published = ''
+    if published != ACCEL:
+        raise LibvirtError('the site runtime publishes accelerator %r, not %r' % (published, ACCEL))
+
+
 def media_xml(media):
     return ''.join("<disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='%s'/><target dev='%s' bus='ide'/><readonly/></disk>"
                    % (media[dev]['file'], target) for dev, target in MEDIA_DEVICES if media.get(dev, {}).get('Inserted'))
@@ -136,7 +152,7 @@ def media_xml(media):
 def domain_xml(t, boot, media=None):
     # Persistent lab target: fixed UUID, MAC, disk and console. Only the boot
     # device changes, from the Redfish boot override at power-on.
-    return ("<domain type='qemu'><name>{domain}</name><uuid>{uuid}</uuid><memory unit='MiB'>2048</memory><vcpu>2</vcpu>"
+    return ("<domain type='" + ('kvm' if ACCEL == 'kvm' else 'qemu') + "'><name>{domain}</name><uuid>{uuid}</uuid><memory unit='MiB'>2048</memory><vcpu>2</vcpu>"
             "<cpu><topology sockets='1' cores='2' threads='1'/></cpu><features><acpi/><apic/></features>"
             "<os><type arch='x86_64' machine='pc'>hvm</type><boot dev='{boot}'/></os>"
             "<on_poweroff>destroy</on_poweroff><on_reboot>destroy</on_reboot><on_crash>destroy</on_crash>"
@@ -181,6 +197,7 @@ class Lab:
     def ensure(self, sid):
         """Define lost libvirt objects (the runtime Pod's libvirt config is not durable)."""
         t = self.targets[sid]
+        require_accelerator()
         try:
             info = virsh('net-info', NETWORK)
             if not re.search(r'^Active:\s+yes', info, re.M):
@@ -216,6 +233,7 @@ class Lab:
             # Once is consumed by this boot. Persisted before start, like NVRAM.
             self.nvram[sid] = {'BootSourceOverrideEnabled': 'Disabled', 'BootSourceOverrideTarget': 'None'}
             self.save()
+        require_accelerator()
         virsh('define', '/dev/stdin', input=domain_xml(t, boot, self.media[sid]))
         virsh('start', t['domain'])
         return boot
@@ -590,6 +608,8 @@ def main():
         boot_ip = os.environ.get('FLEET_BOOT_IP', '')
         if not re.fullmatch(r'\d+\.\d+\.\d+\.\d+', boot_ip):
             raise SystemExit('FLEET_BOOT_IP must be the boot Service IPv4 address')
+        if ACCEL not in ('kvm', 'tcg'):
+            raise SystemExit('FLEET_LAB_ACCEL must be kvm or tcg')
         tls = (os.path.join(TLS_DIR, 'tls.crt'), os.path.join(TLS_DIR, 'tls.key'))
         create_app(load_targets(), STATE, CREDENTIALS, boot_ip).run(host='0.0.0.0', port=PORT, threaded=True, ssl_context=tls)
     elif sys.argv[1:2] == ['fault']:

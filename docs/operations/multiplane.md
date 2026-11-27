@@ -163,7 +163,8 @@ it again with fresh ports, at most three times. Any other failure stops the run.
 
 The `multiplane-acceptance` workflow runs the same acceptance on a disposable
 GitHub-hosted `ubuntu-24.04` runner, one job per mode. Status: **verified**.
-Both modes passed on a hosted runner, local VM mode under KVM.
+Both modes passed on a hosted runner with local VM mode under KVM. Redfish
+mode under KVM is implemented and not yet verified.
 
 To run it, apply the `multiplane-acceptance` label to a pull request whose
 branch contains the workflow. Each application starts one run of both modes,
@@ -181,7 +182,7 @@ above, unchanged:
 | `FLEET_MULTIPLANE_RUNTIME` | `colima` | `ci` |
 | `FLEET_MULTIPLANE_DOCKER_CONTEXT` | `colima-fleet-acceptance-tcg` | `default` |
 | `FLEET_MULTIPLANE_ARCH` (site binary and runtime architecture) | `arm64` | `amd64` |
-| `FLEET_MULTIPLANE_ACCEL` | `tcg` | `kvm` in local VM mode, `tcg` in Redfish mode |
+| `FLEET_MULTIPLANE_ACCEL` | `tcg` | `kvm` |
 
 Lab timers shorten the waits the scenarios provoke, in every runtime. Each
 scenario still proves the same outcome, and production defaults are unchanged:
@@ -205,8 +206,8 @@ In CI mode, preflight requires a GitHub-hosted runner (`GITHUB_ACTIONS=true` and
 exactly `unix:///var/run/docker.sock`. It reads free disk, inotify and a readable, writable `/dev/kvm`
 on the runner itself, and memory and CPUs from the runner's daemon. It never
 calls Colima. Every other check still applies. Preflight fails closed on an
-accelerator it cannot honor: KVM without an amd64 runtime, without `/dev/kvm`,
-or with Redfish mode, and any unknown value. `preflight.json` records the
+accelerator it cannot honor: KVM without an amd64 runtime or without
+`/dev/kvm`, and any unknown value. `preflight.json` records the
 parameters.
 
 Every component must agree on the accelerator. The site runtime refuses KVM
@@ -352,8 +353,9 @@ The phases are then:
    the replacement exists, still mid-install. kro must recreate the Job under
    a new UID for the same operation. `release-installer` then resumes the
    guest, which still has printed no receipt, and records the hold in
-   `interrupt.json`. Evidence fails without it. Redfish mode holds no guest; its
-   TCG installer is slow enough for these interruptions.
+   `interrupt.json`. Evidence fails without it. Redfish mode holds lab target A
+   the same way, from its append-only console, through the BMC interruption
+   as well.
 7. **Exact resume.** `resume` requires the recreated Job to be `Complete` with
    one succeeded Pod, and the observer to publish the stored `Succeeded` result.
    The Device's journal must show the installer boot requested exactly once. Evidence later proves exactly one
