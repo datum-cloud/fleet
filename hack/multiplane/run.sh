@@ -34,7 +34,11 @@ for arg in "$@"; do
 done
 [[ $lab_dhcp == static || $provider == redfish ]] || usage
 [[ $media == 0 || ($provider == redfish && $lab_dhcp == static) ]] || usage
-export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker FLEET_SITE_PROVIDER=$provider FLEET_LAB_DHCP=$lab_dhcp
+# IPAM runs with synchronized DHCP, for boot addresses, and in the virtual
+# media suite, for each install's report address.
+lab_ipam=0
+[[ $lab_dhcp == static && $media == 0 ]] || lab_ipam=1
+export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker FLEET_SITE_PROVIDER=$provider FLEET_LAB_DHCP=$lab_dhcp FLEET_LAB_IPAM=$lab_ipam
 harness=(python3 hack/multiplane/harness.py)
 state=$(mktemp -d "${FLEET_MULTIPLANE_STATE_ROOT:-/tmp}/fleet-multiplane.XXXXXX")
 mkdir -m 0700 "$state/evidence"
@@ -135,7 +139,7 @@ ph federation-enrollment 600 python3 hack/multiplane/roles.py "$state"
 # Redfish mode enrolls the per-Device BMC credentials and the lab BMC's TLS
 # key first: fixture discovery reports that key's digest.
 [[ $provider != redfish ]] || ph redfish-enroll 120 python3 hack/multiplane/redfish_steps.py enroll "$state"
-python3 - "$state" "$provider" "$lab_dhcp" <<'PY'
+python3 - "$state" "$provider" "$lab_ipam" <<'PY'
 import json,pathlib,sys
 s=pathlib.Path(sys.argv[1]).resolve()
 enrollment=json.loads((s/'redfish'/'fixture-enrollment.json').read_text() if sys.argv[2]=='redfish' else pathlib.Path('config/site/base/enrollment.json').read_text())
@@ -145,7 +149,7 @@ c={'State':str(s),'HubKubeconfig':str(s/'management-hub.json'),'Cell':(s/'prefix
    'DeliveryMethods':[{'method':'NetworkBoot'}],
    # The central media service, as lab Pods and guests reach the workstation.
    'MediaService':'https://192.168.5.2:28443'}
-if sys.argv[3]=='synced':c['BootAddressClass']='lab-provisioning'
+if sys.argv[3]=='1':c['BootAddressClass']='lab-provisioning'
 (s/'acceptance.json').write_text(json.dumps(c))
 PY
 ph seed 600 "$state/fleet-multiplane-host" seed --config "$state/acceptance.json"

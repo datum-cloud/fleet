@@ -101,6 +101,9 @@ if PROVIDER == 'redfish':
 LAB_DHCP = os.environ.get('FLEET_LAB_DHCP', 'static')
 if LAB_DHCP not in ('static', 'synced') or (LAB_DHCP == 'synced' and PROVIDER != 'redfish'):
     raise SystemExit('FLEET_LAB_DHCP=synced needs the Redfish provider')
+# IPAM runs with synchronized DHCP, and in the virtual media suite for each
+# install's report address (run.sh sets FLEET_LAB_IPAM).
+LAB_IPAM = LAB_DHCP == 'synced' or os.environ.get('FLEET_LAB_IPAM') == '1'
 SYNCED_OBJECTS = ['fleet-site_fleet-site-dhcp-base__ConfigMap', 'fleet-site_fleet-site-dhcp-feed__Service', 'fleet-site_fleet-site-redfish-enrollment__ConfigMap'] if LAB_DHCP == 'synced' else []
 if LAB_DHCP == 'synced':
     SHARED.update({('configmaps', SITE, 'fleet-site-dhcp-base'): 'fleet-site-services', ('services', SITE, 'fleet-site-dhcp-feed'): 'fleet-site-services',
@@ -122,7 +125,7 @@ PLATFORM_LAYER_INVENTORY = {
                                           '_ipam-apiserver:system:auth-delegator_rbac.authorization.k8s.io_ClusterRoleBinding',
                                           'ipam-system_ipam-apiserver__Service', 'ipam-system_ipam-apiserver_apps_Deployment',
                                           'ipam-system_ipam-apiserver_policy_PodDisruptionBudget', 'ipam-system_ipam-apiserver_networking.k8s.io_NetworkPolicy']),
-} if LAB_DHCP == 'synced' else {}
+} if LAB_IPAM else {}
 EXPECTED['platform'] += list(PLATFORM_LAYER_INVENTORY)
 LAYER_INVENTORY = {
     'flux-system/fleet-site-services': sorted(['fleet-site_fleet-site-boot__Service', 'fleet-site_fleet-site-worker-policy__ConfigMap',
@@ -287,7 +290,7 @@ def stage(args):
         data = {'FLEET_CELL': env['cell'], 'FLEET_CELL_ENDPOINT': env['cellEndpoint'], 'FLEET_SOURCE_MARKER': marker}
         maps = []
         patches = []
-        if cluster == 'platform' and LAB_DHCP == 'synced':
+        if cluster == 'platform' and LAB_IPAM:
             resources.insert(2, '../../config/multiplane/clusters/platform-ipam')
         if cluster == 'hub':
             # Karmada-API Kustomizations live beside their kubeconfig Secret.

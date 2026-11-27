@@ -15,14 +15,9 @@ iptables -t mangle -N FLEET-PXE 2>/dev/null || iptables -t mangle -F FLEET-PXE
 iptables -t mangle -A FLEET-PXE -m addrtype --dst-type LOCAL -j RETURN
 iptables -t mangle -A FLEET-PXE -m addrtype --dst-type BROADCAST -j RETURN
 iptables -t mangle -A FLEET-PXE -d "$boot_ip" -p tcp --dport 8080 -j RETURN
-# A virtual media install's OS posts its first-boot report from this lab
-# network, which stands in for the data network: it may reach the central
-# media service's report endpoint, IPv4:port, and nothing more.
-if [ -n "${FLEET_MEDIA_REPORT:-}" ]; then
- report_ip=${FLEET_MEDIA_REPORT%:*} report_port=${FLEET_MEDIA_REPORT##*:}
- case "$report_ip:$report_port" in *[!0-9.:]*|:*|*:) echo 'invalid media report endpoint' >&2; exit 1 ;; esac
- iptables -t mangle -A FLEET-PXE -d "$report_ip" -p tcp --dport "$report_port" -j RETURN
-fi
+# A virtual media install's OS posts its first-boot report to the lab's
+# report relay, on this namespace's bridge address, which the first rule
+# above already admits.
 iptables -t mangle -A FLEET-PXE -j DROP
 iptables -t mangle -C PREROUTING -i fleetpxe0 -j FLEET-PXE 2>/dev/null || iptables -t mangle -A PREROUTING -i fleetpxe0 -j FLEET-PXE
 if [ "${FLEET_SITE_PROVIDER:-libvirt}" = redfish ]; then

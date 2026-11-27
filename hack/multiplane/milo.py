@@ -14,7 +14,7 @@ source revision must never hold:
   components each get their own token: the Metal provider (management), the
   custody coordinator, the release controller and fixture discovery. A staff
   token creates recoveries.
-- in synchronized lab DHCP mode (FLEET_LAB_DHCP=synced), IPAM's credentials
+- with IPAM (synchronized lab DHCP or the virtual media suite), IPAM's credentials
   (its Milo token, serving key and database password), the APIService that
   aggregates IPAM into the provider API, and the boot address class and pool
   inside the provider project.
@@ -27,7 +27,7 @@ root=pathlib.Path(a.state).resolve();root.mkdir(mode=0o700,parents=True,exist_ok
 if not a.prefix.startswith('fleet-mp-'):raise SystemExit('task-owned fleet-mp- prefix required')
 os.environ['DOCKER_CONTEXT']='colima-fleet-acceptance-tcg'
 platform=root/'platform-admin.yaml'
-synced=os.environ.get('FLEET_LAB_DHCP')=='synced'
+with_ipam=os.environ.get('FLEET_LAB_DHCP')=='synced' or os.environ.get('FLEET_LAB_IPAM')=='1'
 ports=json.loads((root/'platform-ports.json').read_text())
 def run(*args,**kw):return subprocess.run(args,check=True,text=True,**kw)
 def kubectl(config,*args,**kw):return run('kubectl','--kubeconfig',str(config),'--request-timeout=15s',*args,**kw)
@@ -104,7 +104,7 @@ for role in roles:
 # password and the DSN IPAM reads, its serving key (whose certificate is the
 # APIService caBundle), its kubeconfig for the provider Milo API, and Milo's
 # front-proxy CA in the control-plane-ca ConfigMap IPAM's manifests mount.
-if synced:
+if with_ipam:
  i=root/'ipam';pd=root/'provider'
  if not i.exists():
   i.mkdir(mode=0o700)
@@ -123,9 +123,9 @@ if synced:
  enroll('ipam-system','configmap','control-plane-ca',f'--from-file=ca.crt={pd/"front-proxy-ca.crt"}')
  print('ipam: credentials enrolled (not in the source)',flush=True)
 # 2. Flux must report each Milo Kustomization Ready (Deployment and etcd
-# healthy), and in synced mode IPAM's: PostgreSQL, then the apiserver, which is
+# healthy), and with IPAM, IPAM's: PostgreSQL, then the apiserver, which is
 # Ready only once its delegated authentication has read the provider API.
-layers=['milo-'+r for r in roles]+(['ipam-system','ipam-apiserver'] if synced else [])
+layers=['milo-'+r for r in roles]+(['ipam-system','ipam-apiserver'] if with_ipam else [])
 for layer in layers:
  kubectl(platform,'-n','flux-system','annotate','--overwrite','kustomization',layer,'reconcile.fluxcd.io/requestedAt='+str(time.time()),stdout=subprocess.DEVNULL)
 for layer in layers:
@@ -174,13 +174,13 @@ for role in roles:
   # release controller reads custody to keep a held operation's claim.
   claims={'apiGroups':['ipam.miloapis.com'],'resources':['ipclaims'],'verbs':['get','list','create','delete']}
   allocations={'apiGroups':['ipam.miloapis.com'],'resources':['ipallocations'],'verbs':['get','list']}
-  if synced:rules+=[claims,allocations]
+  if with_ipam:rules+=[claims,allocations]
   components={
    'coordinator':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list','watch']},{'apiGroups':['fleet.datumapis.com'],'resources':['devicecustodies'],'verbs':['get','list','watch','create','update','delete']},
                   {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations','devicewipes','devicerecoveries'],'verbs':['get','list','watch','delete']},
                   {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations/status','devicewipes/status','devicerecoveries/status'],'verbs':['get','update']},
-                  {'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch']}]+([{'apiGroups':['ipam.miloapis.com'],'resources':['ipclaims'],'verbs':['get']}] if synced else []),
-   'release':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicewipes'],'verbs':['get','create']}]+([claims,allocations,{'apiGroups':['fleet.datumapis.com'],'resources':['devicecustodies'],'verbs':['get']}] if synced else []),
+                  {'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch']}]+([{'apiGroups':['ipam.miloapis.com'],'resources':['ipclaims'],'verbs':['get']}] if with_ipam else []),
+   'release':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicewipes'],'verbs':['get','create']}]+([claims,allocations,{'apiGroups':['fleet.datumapis.com'],'resources':['devicecustodies'],'verbs':['get']}] if with_ipam else []),
    'discovery':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices/status'],'verbs':['get','update']}],
    # Staff create recoveries and read inventory and custody, nothing else.
    # The coordinator treats every unconfigured creator as staff.
@@ -188,7 +188,7 @@ for role in roles:
   for who,component in components.items():
    apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'ClusterRole','metadata':{'name':'fleet-'+who},'rules':component})
    apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'ClusterRoleBinding','metadata':{'name':'fleet-'+who},'roleRef':{'apiGroup':'rbac.authorization.k8s.io','kind':'ClusterRole','name':'fleet-'+who},'subjects':[{'kind':'User','name':who}]})
-  if synced:ipam(d,config)
+  if with_ipam:ipam(d,config)
  if role!='provider':rules += [{'apiGroups':['metal.datumapis.com'],'resources':['machines'],'verbs':['update']},{'apiGroups':['metal.datumapis.com'],'resources':['machines/status','installations/status'],'verbs':['update','patch']}]
  apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'ClusterRole','metadata':{'name':'fleet-management'},'rules':rules})
  apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'ClusterRoleBinding','metadata':{'name':'fleet-management'},'roleRef':{'apiGroup':'rbac.authorization.k8s.io','kind':'ClusterRole','name':'fleet-management'},'subjects':[{'kind':'User','name':'management'}]})

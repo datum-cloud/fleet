@@ -42,6 +42,13 @@ if [ "$delivery" = media ]; then
  grep -qx 'addresses=DataNetwork' /fleet-config || /bin/busybox poweroff -f
  value bootstrap | base64 -d > /fleet-bootstrap
  report=$(value report)
+ # The Machine's IPAM address, the only one the media service takes this
+ # install's report from. A lab fault may add a stray address, inside the
+ # site's ranges but not the Machine's, for one report with the right token.
+ address=$(value reportaddress)
+ stray=$(value straysource)
+ case "$address" in *[!0-9.]*|'') /bin/busybox poweroff -f ;; esac
+ case "$stray" in *[!0-9.]*) /bin/busybox poweroff -f ;; esac
  # The downloads the config medium pins, one "name digest" per line. This
  # lab image fetches nothing; it reports each one by the digest its
  # reference pins, as an installer that pulled it would.
@@ -96,6 +103,8 @@ if [ "$delivery" = media ]; then
  printf '%s' "$report" > /target/fleet-report/url
  value reportca | base64 -d > /target/fleet-report/ca.pem
  cp /fleet-downloads /target/fleet-report/downloads
+ printf '%s' "$address" > /target/fleet-report/address
+ [ -z "$stray" ] || printf '%s' "$stray" > /target/fleet-report/stray
 else
  printf '%s\n' "$receipt" > /target/fleet-receipt
 fi

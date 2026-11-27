@@ -38,9 +38,10 @@ for entry in provider:30441 consumer-a:30442 consumer-b:30443; do
 done
 printf '}\n' >> "$state/platform-ports.json"
 kind create cluster --name "$prefix-platform" --config "$state/platform-kind.yaml" --kubeconfig "$state/platform-admin.yaml" --image "$node" --wait 180s
-# Synchronized lab DHCP adds IPAM and its PostgreSQL beside the Milo APIs.
+# IPAM (synchronized DHCP or virtual media) adds its PostgreSQL beside the
+# Milo APIs.
 platform_memory=2300m
-[[ ${FLEET_LAB_DHCP:-static} != synced ]] || platform_memory=2800m
+[[ ${FLEET_LAB_IPAM:-0} != 1 ]] || platform_memory=2800m
 docker update --memory "$platform_memory" --memory-swap "$platform_memory" --cpus 2 "$prefix-platform-control-plane" >/dev/null
 
 cat > "$state/hub-kind.yaml" <<YAML

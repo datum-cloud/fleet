@@ -42,8 +42,12 @@ md held-download 300
 md arm-lost-eject 120
 run media-install-lost 3000
 md held-eject 300
-# The fourth install settles that hold, proves release and clears it.
+# The fourth install settles that hold, proves release and clears it. Its OS
+# first posts the right token from another address in the site's ranges,
+# which is refused; only its IPAM address may report.
+md arm-stray-source 120
 run media-install 3000
+md stray-address 300
 md release-proof 300
 md stale-fence 120
 md evidence 600

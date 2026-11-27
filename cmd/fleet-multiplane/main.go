@@ -58,6 +58,9 @@ func run() error {
 	mediaRoot := fs.String("state-dir", "", "the media service's own state directory (media-service)")
 	mediaArtifacts := fs.String("artifacts", "", "directory of the image's pinned artifacts (media-service)")
 	mediaClients := fs.String("clients", "", "comma-separated IPv4 prefixes the media service serves (media-service)")
+	proxyListen := fs.String("proxy-listen", "", "comma-separated addresses where report relays connect with a PROXY header (media-service)")
+	relays := fs.String("relays", "", "comma-separated prefixes of the report relays trusted to name a report's source (media-service)")
+	upstream := fs.String("upstream", "", "the media service's PROXY listener, IP:port (report-relay)")
 	clientCA := fs.String("client-ca", "", "CA that signs the site workers' client certificates (media-service)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
@@ -96,7 +99,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		var clients []netip.Prefix
+		var clients, trusted []netip.Prefix
 		for _, value := range strings.Split(*mediaClients, ",") {
 			prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
 			if err != nil {
@@ -104,13 +107,35 @@ func run() error {
 			}
 			clients = append(clients, prefix.Masked())
 		}
+		for _, value := range strings.Split(*relays, ",") {
+			if value = strings.TrimSpace(value); value == "" {
+				continue
+			}
+			prefix, err := netip.ParsePrefix(value)
+			if err != nil {
+				return fmt.Errorf("media-service: -relays must list prefixes")
+			}
+			trusted = append(trusted, prefix.Masked())
+		}
+		if *proxyListen != "" && len(trusted) == 0 {
+			return fmt.Errorf("media-service: -proxy-listen needs -relays")
+		}
 		if *mediaRoot == "" || *mediaArtifacts == "" || *tlsCert == "" || *tlsKey == "" || *clientCA == "" {
 			return fmt.Errorf("media-service needs -state-dir, -artifacts, -tls-cert, -tls-key and -client-ca")
 		}
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
 		fmt.Println("media-service: central media service running")
-		return multiplane.MediaService(ctx, config, *listen, *tlsCert, *tlsKey, *clientCA, *mediaRoot, *mediaArtifacts, clients)
+		return multiplane.MediaService(ctx, config, *listen, *proxyListen, *tlsCert, *tlsKey, *clientCA, *mediaRoot, *mediaArtifacts, clients, trusted)
+	case "report-relay":
+		// Lab only: forwards the guests' report connections, naming each
+		// guest's address, to the media service's PROXY listener.
+		if *upstream == "" {
+			return fmt.Errorf("report-relay needs -listen and -upstream")
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+		return multiplane.ReportRelay(ctx, *listen, *upstream)
 	case "site-worker", "site-observer":
 	default:
 		return fmt.Errorf("unknown command")

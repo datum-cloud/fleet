@@ -113,7 +113,7 @@ synced_services = build(root / 'config/site/redfish/synced/services')
 synced_deployments = {d['metadata']['name']: d for d in synced_services if d.get('kind') == 'Deployment'}
 pod = lambda n: synced_deployments.get(n, {}).get('spec', {}).get('template', {}).get('spec', {})
 runtime_containers = {c['name']: c for c in pod('fleet-site-runtime').get('containers', [])}
-check('synced runtime adds Kea and the synchronizer beside libvirt', sorted(runtime_containers) == ['dhcp-sync', 'kea', 'libvirt'], str(sorted(runtime_containers)))
+check('synced runtime adds Kea and the synchronizer beside libvirt and the report relay', sorted(runtime_containers) == ['dhcp-sync', 'kea', 'libvirt', 'report-relay'], str(sorted(runtime_containers)))
 check('Kea and the synchronizer are not privileged and add only the network capabilities Kea needs',
       not any(runtime_containers.get(n, {}).get('securityContext', {}).get('privileged') for n in ('kea', 'dhcp-sync'))
       and runtime_containers.get('kea', {}).get('securityContext', {}).get('capabilities') == {'drop': ['ALL'], 'add': ['NET_BIND_SERVICE', 'NET_RAW']}

@@ -26,6 +26,13 @@ capability or a report token.
                     withholds its response past the worker's client timeout
   held-eject        the third install's report was taken, then the eject
                     response was lost: OutcomeUnknown, release never journaled
+  arm-stray-source  one-shot: the lab BMC's next config medium makes the
+                    installed OS post its report, with the right token, from
+                    another address inside the site's ranges first
+  stray-address     the fourth install recorded its IPAM-bound report address;
+                    the media service refused and recorded the right token
+                    from the stray address, then took the report from the
+                    Machine's address
   release-proof     after the settling install: the BMC reads back both
                     devices empty and no override, the media service reports
                     no open window, transfer or reused token for the Device,
@@ -55,6 +62,9 @@ import redfish_steps as rf  # noqa: E402
 SYSTEM = 'System-1'
 DEVICE_NAME = harness.DEVICE.split('/')[1]
 QUALIFIED = 'fleet.datumapis.com/qualified-delivery-methods'
+# Another address on the lab network, inside the site's report ranges and
+# outside IPAM's pool and the static leases: another server's.
+STRAY_SOURCE = '192.168.77.250'
 STORE_ROOT = '/var/lib/fleet-local/site'
 LOCAL = 'https://127.0.0.1:%d' % rf.MEDIA_PORT
 # The lab's virtual media phases, shorter than the 15 and 30 minute
@@ -160,6 +170,34 @@ def arm_add_download(s):
     print('media-arm-add-download: target A\'s next config medium will list a download the operation never pinned')
 
 
+def arm_stray_source(s):
+    arm('stray-source', SYSTEM, STRAY_SOURCE)
+    print('media-arm-stray-source: target A\'s next config medium makes its installed OS post its report, with the right token, from %s first' % STRAY_SOURCE)
+
+
+def stray_address(s):
+    op = media_installs(s)[-1]
+    uid = op['metadata']['uid']
+    address = (op['spec']['delivery'].get('reportAddress') or {})
+    w = window_record(s, uid)
+    claim = json.loads(provider(s, '-n', 'fleet-provider', 'get', 'ipclaims.ipam.miloapis.com', address.get('addressClaim', {}).get('name', '-'), '-o', 'json').stdout)
+    bound = (claim.get('status') or {}).get('address', '').split('/')[0]
+    if not address.get('address') or bound != address['address'] or not address['address'].startswith('192.168.77.'):
+        die('the install records no IPAM-bound report address: %s, claim holds %r' % (address, bound))
+    refused = w.get('refused') or []
+    if [(r['from'], r['tokenMatched']) for r in refused] != [(STRAY_SOURCE, True)]:
+        die('the media service did not refuse, and record, the right token from %s: %s' % (STRAY_SOURCE, refused))
+    if not w.get('report') or w['report'].get('from') != address['address']:
+        die('the media service took no report from the Machine\'s address %s: %s' % (address['address'], w.get('report')))
+    if 'rejected-address' not in outcomes(s, uid) or len(media_effects(rf.audit(s), 'add-stray-source')) != 1:
+        die('the stray-source fault did not fire exactly once, or no report was refused for its address')
+    console = [l for l in read_console(s) if l.startswith('fleet: stray report') or l.startswith('fleet: first-boot report from')]
+    rf.write(s / 'media-stray-address.json', {'operation': op['metadata']['name'], 'reportAddress': address, 'claimBound': bound, 'refused': refused,
+                                               'reportFrom': w['report']['from'], 'consoleDiagnostics': console})
+    print('media-stray-address: %s reports only from its IPAM address %s (claim %s); the right token from %s, inside the site\'s ranges, was refused and recorded; '
+          'the report from %s was taken' % (op['metadata']['name'], address['address'], address['addressClaim']['name'], STRAY_SOURCE, address['address']))
+
+
 def arm_lost_eject(s):
     arm(s, 'drop-eject', SYSTEM, 'CD1', '45')
     print('media-arm-lost-eject: target A\'s next CD1 eject is applied and its response withheld for 45s, past the 30s client timeout')
@@ -190,11 +228,11 @@ def held_report(s):
     op = ops[0]
     uid = op['metadata']['uid']
     w = window_record(s, uid)
-    if w.get('report') or w.get('duplicates') or w.get('rejected', 0) < 4:
-        die('the media service took a report or refused fewer than four: %s' % {k: w.get(k) for k in ('report', 'duplicates', 'rejected')})
+    if w.get('report') or w.get('duplicates') or w.get('rejected', 0) < 3:
+        die('the media service took a report or refused fewer than three: %s' % {k: w.get(k) for k in ('report', 'duplicates', 'rejected')})
     stray = json.loads((s / 'media-stray-reports.json').read_text())
-    if stray['answers'] != {'missing-token': 403, 'other-token': 403, 'other-address': 403} or 'rejected-source' not in outcomes(s, uid):
-        die('the stray reports were not all refused, or none was refused for its address: %s %s' % (stray['answers'], outcomes(s, uid)))
+    if stray['answers'] != {'outside-ranges-ipv4': 403, 'outside-ranges-ipv6': 403} or not {'rejected-source', 'rejected-token'} <= set(outcomes(s, uid)):
+        die('the stray reports were not all refused for their source, or the guest\'s report was not refused for its token: %s %s' % (stray['answers'], outcomes(s, uid)))
     steps = steps_of(s, uid)
     for step in ('media-window', 'media-insert-boot', 'media-insert-config', 'media-installer-power-on', 'media-installer-done', 'disk-power-on'):
         if steps.get(step) != 'Done':
@@ -214,7 +252,7 @@ def held_report(s):
     rf.write(s / 'media-held-report.json', {'operation': op['metadata']['name'], 'fence': op['status']['fence'], 'reason': op['status'].get('reason'),
                                              'mediaService': {'report': None, 'rejected': w['rejected'], 'outcomes': outcomes(s, uid)},
                                              'strayReports': stray['answers'], 'steps': steps, 'consoleDiagnostics': diagnostics})
-    print('media-held-report: %s booted from media; its OS posted a report with another token (refused); stray reports with no token, another token, and from an address that is not the Machine\'s were refused (%s); '
+    print('media-held-report: %s booted from media; its OS posted a report with another token from its IPAM address (refused); stray reports from outside the site\'s report ranges were refused (%s); '
           'the media service took no report (%d refused); OutcomeUnknown (%s) at the report deadline'
           % (op['metadata']['name'], stray['answers'], w['rejected'], op['status'].get('reason')))
 
@@ -393,7 +431,8 @@ def evidence(s):
     record = {'observedAt': now(), 'device': harness.DEVICE, 'operations': reports, 'qemuStarts': starts, 'bmcEffects': mutations,
               'firstBootConsole': [l for l in console if l.startswith('fleet:')],
               'offer': json.loads((s / 'evidence' / 'media-offer.json').read_text()), 'heldReport': json.loads((s / 'media-held-report.json').read_text()),
-              'heldDownload': json.loads((s / 'media-held-download.json').read_text()), 'heldEject': json.loads((s / 'media-held-eject.json').read_text()), 'release': json.loads((s / 'media-release.json').read_text()),
+              'heldDownload': json.loads((s / 'media-held-download.json').read_text()), 'heldEject': json.loads((s / 'media-held-eject.json').read_text()),
+              'strayAddress': json.loads((s / 'media-stray-address.json').read_text()), 'release': json.loads((s / 'media-release.json').read_text()),
               'staleFence': json.loads((s / 'media-stale.json').read_text())}
     # Target B, served by the same BMC, was never touched.
     base = json.loads((s / 'redfish-baseline.json').read_text())
@@ -426,5 +465,5 @@ def evidence(s):
 if __name__ == '__main__':
     step, state = sys.argv[1], pathlib.Path(sys.argv[2])
     {'offer': offer, 'arm-corrupt-token': arm_corrupt_token, 'held-report': held_report, 'arm-add-download': arm_add_download, 'held-download': held_download,
-     'arm-lost-eject': arm_lost_eject, 'held-eject': held_eject,
+     'arm-lost-eject': arm_lost_eject, 'held-eject': held_eject, 'arm-stray-source': arm_stray_source, 'stray-address': stray_address,
      'release-proof': release_proof, 'stale-fence': stale_fence, 'evidence': evidence}[step](state)

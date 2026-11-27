@@ -241,6 +241,24 @@ def corrupt_token(path):
     return True
 
 
+def add_stray_source(path, address):
+    """Add a stray source to a config medium, in place, within its padded
+    size: the installed OS then posts its report, with the right token, from
+    that address first. Returns False for any other medium."""
+    if not re.fullmatch(r'[0-9]{1,3}(\.[0-9]{1,3}){3}', address):
+        return False
+    with open(path, 'r+b') as f:
+        data = f.read()
+        if not data.startswith(b'FLEET-CONFIG-V1') or b'\nend\n' not in data:
+            return False
+        text = data.rstrip(b'\x00').replace(b'\nend\n', b'\nstraysource=' + address.encode() + b'\nend\n')
+        if len(text) > len(data):
+            return False
+        f.seek(0)
+        f.write(text.ljust(len(data), b'\x00'))
+    return True
+
+
 def add_download(path):
     """Add a download line the operation never pinned to a config medium,
     in place, within its padded size. Returns False for any other medium."""
@@ -465,6 +483,10 @@ def create_app(targets, state, credentials, boot_ip):
                 # Lab fault: the medium the BMC holds lists a download the
                 # operation never pinned.
                 request_context.detail['fault'] = 'add-config-download'
+            elif is_config(path) and (stray := take('straySource', lambda f: f.get('system') == sid)) and add_stray_source(path, stray['address']):
+                # Lab fault: another server in the site's ranges posts the
+                # report with the right token before the Machine does.
+                request_context.detail['fault'] = 'add-stray-source'
             with LOCK:
                 lab.media[sid][dev] = {'Inserted': True, 'Image': url, 'file': path}
                 lab.save()
@@ -544,6 +566,8 @@ def fault_cli(args):
         faults.update(lambda v: v.setdefault('dropResponse', []).append({'system': args[1], 'resetType': args[2], 'seconds': int(args[3]), 'skip': skip}))
     elif args[:1] == ['drop-eject'] and len(args) == 4:
         faults.update(lambda v: v.setdefault('dropEject', []).append({'system': args[1], 'device': args[2], 'seconds': int(args[3])}))
+    elif args[:1] == ['stray-source'] and len(args) == 3:
+        faults.update(lambda v: v.setdefault('straySource', []).append({'system': args[1], 'address': args[2]}))
     elif args[:1] == ['add-download'] and len(args) == 2:
         faults.update(lambda v: v.setdefault('addDownload', []).append({'system': args[1]}))
     elif args[:1] == ['corrupt-config'] and len(args) == 2:

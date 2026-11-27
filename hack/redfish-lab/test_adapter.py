@@ -157,6 +157,13 @@ class AdapterTest(unittest.TestCase):
             self.assertIn(b'\ndownload=extension registry.example/extension@sha256:', held)
             self.assertTrue(held.endswith(b'\nend\n'))
             self.app.post(cd2['Actions']['#VirtualMedia.EjectMedia']['target'], headers=AUTH, json={})
+            # A config medium can gain a stray report source.
+            adapter.fault_cli(['stray-source', 'System-1', '192.168.77.250'])
+            self.assertEqual(self.app.post(cd2['Actions']['#VirtualMedia.InsertMedia']['target'], headers=AUTH, json={'Image': url}).status_code, 204)
+            self.assertEqual(self.audit()[-1].get('fault'), 'add-stray-source')
+            held = (WORK / 'media' / 'fleet-lab-target-a-CD2.img').read_bytes().rstrip(b'\0')
+            self.assertTrue(held.endswith(b'\nstraysource=192.168.77.250\nend\n'))
+            self.app.post(cd2['Actions']['#VirtualMedia.EjectMedia']['target'], headers=AUTH, json={})
             # A withheld eject response still ejects.
             adapter.fault_cli(['drop-eject', 'System-1', 'CD1', '0'])
             eject = cd1['Actions']['#VirtualMedia.EjectMedia']['target']

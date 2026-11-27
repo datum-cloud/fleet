@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -147,7 +148,7 @@ func (r *Runner) mediaInstallation(ctx context.Context, name string) (*request, 
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if operation.Spec.Delivery.Method != ops.DeliveryVirtualMedia || operation.Spec.BootNetwork != nil {
+	if operation.Spec.Delivery.Method != ops.DeliveryVirtualMedia || operation.Spec.BootNetwork != nil || operation.Spec.Delivery.ReportAddress == nil {
 		return nil, nil, nil, fmt.Errorf("%w: the Metal provider selected %+v", errTerminal, operation.Spec.Delivery)
 	}
 	return q, install, operation, nil
@@ -250,12 +251,13 @@ func (r *Runner) strayReports(ctx context.Context, operation *ops.DeviceInstalla
 		return errors.New("the report window is not open yet")
 	}
 	answers := map[string]int{}
-	// The installed servers' reports reach the service on IPv4 loopback; a
-	// report over IPv6 loopback comes from another address.
+	// The installed servers' reports reach the service through the report
+	// relay, from the lab network. A report straight to the service, over
+	// IPv4 or IPv6 loopback, comes from outside the site's report ranges.
+	body := `{"token":"` + strings.Repeat("e", 64) + `"}`
 	posts := map[string]struct{ origin, body string }{
-		"missing-token": {origin, `{"image":"sha256:` + strings.Repeat("0", 64) + `"}`},
-		"other-token":   {origin, `{"token":"` + strings.Repeat("e", 64) + `"}`},
-		"other-address": {"https://[::1]:28443", `{"token":"` + strings.Repeat("e", 64) + `"}`},
+		"outside-ranges-ipv4": {origin, body},
+		"outside-ranges-ipv6": {"https://[::1]:28443", body},
 	}
 	for label, post := range posts {
 		response, err := client.Post(redfishwork.ReportURL(post.origin, key), "application/json", strings.NewReader(post.body))
@@ -306,7 +308,7 @@ func (r *Runner) MediaInstall(ctx context.Context) error {
 	if err := q.project.API.Status().Update(ctx, m); err != nil {
 		return err
 	}
-	fmt.Printf("media-install: %s succeeded at fence %d over virtual media and settled the hold\n", operation.Name, operation.Status.Fence)
+	fmt.Printf("media-install: %s succeeded at fence %d over virtual media, reporting from its IPAM address %s, and settled the hold\n", operation.Name, operation.Status.Fence, operation.Spec.Delivery.ReportAddress.Address)
 	return nil
 }
 
@@ -342,7 +344,7 @@ func WorkerIdentity(cell string) string { return "fleet-site-worker:" + cell }
 // certificates from clientCA; a worker of the configured cell may act only
 // on the Devices that cell is enrolled to serve. It serves over TLS on
 // listen until ctx ends, and sweeps stale config media every half minute.
-func MediaService(ctx context.Context, c Config, listen, certFile, keyFile, clientCA, root, artifacts string, clients []netip.Prefix) error {
+func MediaService(ctx context.Context, c Config, listen, proxyListen, certFile, keyFile, clientCA, root, artifacts string, clients, relays []netip.Prefix) error {
 	api, err := API(filepath.Join(c.State, "provider", "coordinator-project.json"))
 	if err != nil {
 		return err
@@ -369,14 +371,40 @@ func MediaService(ctx context.Context, c Config, listen, certFile, keyFile, clie
 	// requires one the client CA verified.
 	// listen is a comma-separated list of addresses, such as loopback over
 	// IPv4 and IPv6.
-	addresses := strings.Split(listen, ",")
-	errs := make(chan error, len(addresses))
+	// proxyListen is where the report relays connect; each connection names
+	// the installed server's address in a PROXY header, trusted only from
+	// relays.
+	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return err
+	}
+	type endpoint struct {
+		address string
+		proxied bool
+	}
+	var endpoints []endpoint
+	for _, address := range strings.Split(listen, ",") {
+		endpoints = append(endpoints, endpoint{strings.TrimSpace(address), false})
+	}
+	for _, address := range strings.Split(proxyListen, ",") {
+		if address = strings.TrimSpace(address); address != "" {
+			endpoints = append(endpoints, endpoint{address, true})
+		}
+	}
+	errs := make(chan error, len(endpoints))
 	var servers []*http.Server
-	for _, address := range addresses {
-		server := &http.Server{Addr: strings.TrimSpace(address), Handler: media.Handler(), ReadHeaderTimeout: 5 * time.Second, WriteTimeout: 30 * time.Minute, IdleTimeout: 5 * time.Second,
-			TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, ClientAuth: tls.VerifyClientCertIfGiven, ClientCAs: pool}}
+	for _, e := range endpoints {
+		config := &tls.Config{MinVersion: tls.VersionTLS12, ClientAuth: tls.VerifyClientCertIfGiven, ClientCAs: pool, Certificates: []tls.Certificate{certificate}}
+		server := &http.Server{Handler: media.Handler(), ReadHeaderTimeout: 5 * time.Second, WriteTimeout: 30 * time.Minute, IdleTimeout: 5 * time.Second}
+		listener, err := net.Listen("tcp", e.address)
+		if err != nil {
+			return err
+		}
+		if e.proxied {
+			listener = redfishwork.ProxyListener{Listener: listener, Trusted: relays, OnDrop: func(err error) { fmt.Fprintf(os.Stderr, "media-service: relay connection dropped: %v\n", err) }}
+		}
 		servers = append(servers, server)
-		go func() { errs <- server.ListenAndServeTLS(certFile, keyFile) }()
+		go func() { errs <- server.Serve(tls.NewListener(listener, config)) }()
 	}
 	err = nil
 	select {

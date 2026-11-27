@@ -40,9 +40,13 @@ patches:
           # which the worker gets through a per-operation Role of its own.
           - {name: FLEET_SITE_WORKER_IDENTITY_NAMESPACE, value: fleet-site-worker-identity}
           # Where the media service sees this site's installed servers post
-          # their first-boot reports from: the lab network reaches it through
-          # the runtime's host gateway, which arrives on loopback.
-          - {name: FLEET_MEDIA_REPORT_FROM, value: 127.0.0.1/32}
+          # their first-boot reports from: the lab network, named by the
+          # runtime's report relay. Each install reports from its own IPAM
+          # address inside it.
+          - {name: FLEET_MEDIA_REPORT_FROM, value: 192.168.77.0/24}
+          # How installed servers reach the media service: the relay on the
+          # lab bridge.
+          - {name: FLEET_MEDIA_REPORT_ORIGIN, value: "https://192.168.77.1:28443"}
       - op: replace
         path: /spec/resources/9/template/spec/template/spec/containers/0/volumeMounts
         value:
