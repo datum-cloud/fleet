@@ -343,7 +343,8 @@ def stale_fence(s):
         w = window_record(s, op['metadata']['uid'])
         body = {'device': harness.DEVICE, 'operation': op['metadata']['uid'], 'fence': op['status']['fence'], 'bootDigest': w['bootDigest'],
                 'capabilitySHA256': '0' * 64, 'tokenSHA256': '0' * 64, 'configMedium': base64.b64encode(b'stale').decode(),
-                'fetchExpires': later(10), 'reportExpires': later(20)}
+                'fetchExpires': later(10), 'reportExpires': later(20), 'reportFrom': ['127.0.0.1/32']}
+        # A well-formed open, so the cell worker's answer is custody's.
         # Without a client certificate, and with another site's, the open is
         # refused before the service looks at custody; as the cell's worker,
         # custody refuses it.
