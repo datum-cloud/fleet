@@ -344,6 +344,12 @@ type DeliveryInput struct {
 	// first-boot report. The operation's deadline is their sum.
 	FetchWindow  *metav1.Duration `json:"fetchWindow,omitempty"`
 	ReportWindow *metav1.Duration `json:"reportWindow,omitempty"`
+	// ReportAddress is the Machine's address that IPAM bound for this
+	// operation, claimed and checked as a boot address claim is. The
+	// installed OS posts its first-boot report from it, and the media
+	// service accepts the report from no other address. Virtual media
+	// requires it.
+	ReportAddress *BootNetworkInput `json:"reportAddress,omitempty"`
 }
 
 // Default virtual media phases: 15 minutes to fetch the media, then 30

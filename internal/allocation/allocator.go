@@ -147,6 +147,11 @@ type Allocator struct {
 	DeliveryMethods []custody.OfferedMethod
 }
 
+// ErrNoReportAddress means the site has no address source that claims a
+// Machine's address without a boot attachment, so a virtual media install
+// could not record the address its report must come from.
+var ErrNoReportAddress = errors.New("allocation: virtual media needs an address source that claims the Machine's address")
+
 // ErrNoDeliveryMethod means the site offers no delivery method the server
 // is qualified for, so nothing can install it.
 var ErrNoDeliveryMethod = errors.New("allocation: the site offers no delivery method the server is qualified for")
@@ -407,10 +412,22 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 	if err != nil {
 		return nil, err
 	}
-	// Only network boot needs a provisioning address.
+	// Network boot needs a provisioning address. Virtual media needs the
+	// Machine's address instead, which its installed OS reports from; it
+	// is claimed, recorded and released the same way, with no boot
+	// attachment.
 	var network *ops.BootNetworkInput
-	if delivery.Method == ops.DeliveryNetworkBoot {
+	switch delivery.Method {
+	case ops.DeliveryNetworkBoot:
 		if network, err = a.bootNetwork(ctx, a.installClaims(), allocation, "DeviceInstallation", name); err != nil {
+			return nil, err
+		}
+	case ops.DeliveryVirtualMedia:
+		source := a.installClaims()
+		if _, attaching := source.(attaches); source == nil || attaching {
+			return nil, ErrNoReportAddress
+		}
+		if delivery.ReportAddress, err = a.bootNetwork(ctx, source, allocation, "DeviceInstallation", name); err != nil {
 			return nil, err
 		}
 	}

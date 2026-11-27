@@ -3,6 +3,7 @@ package custody
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"regexp"
 	"slices"
 	"strings"
@@ -70,6 +71,10 @@ const (
 	// ReasonDeliveryInputs means the method does not match the operation's
 	// other inputs, such as a virtual media operation with a boot network.
 	ReasonDeliveryInputs = "DeliveryInputsMismatch"
+	// ReasonReportAddressRequired means a virtual media installation
+	// records no IPAM address for its first-boot report, so the media
+	// service could not tell its report from another server's.
+	ReasonReportAddressRequired = "ReportAddressRequired"
 	// ReasonDownloadUnpinned means the installer would download an
 	// artifact that the operation does not pin by digest.
 	ReasonDownloadUnpinned = "InstallDownloadUnpinned"
@@ -118,7 +123,7 @@ func checkDownloads(downloads []ops.DownloadInput) *Refusal {
 
 var deliveryReasons = []Reason{{Name: ReasonDeliveryNotOffered, RaisedBy: RaisedByCoordinator}, {Name: ReasonDeliveryUnqualified, RaisedBy: RaisedByCoordinator},
 	{Name: ReasonDeliveryMismatch, RaisedBy: RaisedByCoordinator}, {Name: ReasonDeliveryInputs, RaisedBy: RaisedByBoth},
-	{Name: ReasonDownloadUnpinned, RaisedBy: RaisedByCoordinator}, {Name: ReasonMediaTLSUnverified, RaisedBy: RaisedByCoordinator},
+	{Name: ReasonDownloadUnpinned, RaisedBy: RaisedByCoordinator}, {Name: ReasonReportAddressRequired, RaisedBy: RaisedByBoth}, {Name: ReasonMediaTLSUnverified, RaisedBy: RaisedByCoordinator},
 	{Name: ReasonMediaWindowRefused, RaisedBy: RaisedByWorker}}
 
 // ExtraDeliveryMethod is the snapshot field that records the method an
@@ -223,6 +228,9 @@ func checkDelivery(admission *Admission, spec *ops.DeviceInstallationSpec) *Refu
 		if !mediaEndpoint.MatchString(spec.Delivery.MediaService) || DeliveryDeadline(spec.Delivery) <= 0 || spec.Delivery.FetchWindow.Duration <= 0 || spec.Delivery.ReportWindow.Duration <= 0 {
 			return refuse(ReasonDeliveryInputs, "virtual media records its media service and both phase windows")
 		}
+		if report := spec.Delivery.ReportAddress; report == nil || !validHostAddress(report.Address) {
+			return refuse(ReasonReportAddressRequired, "virtual media records the Machine's IPAM address, which the installed OS reports from")
+		}
 	default:
 		return refuse(ReasonDeliveryInputs, "the delivery method %q is not known", method)
 	}
@@ -275,6 +283,15 @@ func OnlyNetworkBoot(delivery ops.DeliveryInput) *Refusal {
 	return nil
 }
 
+// validHostAddress reports whether address is one IP address without a
+// prefix length or zone.
+func validHostAddress(address string) bool {
+	parsed, err := netip.ParseAddr(address)
+	return err == nil && parsed.Zone() == "" && parsed.String() == address
+}
+
+// equalInput compares the site's inputs for a method. The report address
+// is the operation's own, not the site's, so it is not compared.
 func equalInput(a, b ops.DeliveryInput) bool {
 	duration := func(d *metav1.Duration) time.Duration {
 		if d == nil {

@@ -281,7 +281,11 @@ operations guide describes how it runs in the [Redfish lab](../operations/redfis
 
 - **Every installation records its method.** `spec.delivery` names
   `NetworkBoot` or `VirtualMedia`, and for virtual media the central media
-  service, the address mode and the fetch and report windows. A virtual
+  service, the address mode, the fetch and report windows, and the
+  Machine's report address. The Metal provider claims that address from the
+  same source as a network boot's provisioning address, and admission checks
+  it is still bound to the operation's own claim. The media service takes the
+  first-boot report only from it. A virtual
   media installation's deadline is the sum of its windows.
 - **Sites declare their methods.** `custody.Sites` gains `DeliveryMethods`,
   the site's methods in its order of preference. Admission sees the methods

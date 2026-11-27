@@ -11,6 +11,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/bootaddress"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -85,6 +86,12 @@ func TestDeliveryMethodAdmission(t *testing.T) {
 	install := func(e *env, device *inventory.Device, request string, delivery ops.DeliveryInput, network *ops.BootNetworkInput) *ops.DeviceInstallation {
 		e.t.Helper()
 		allocation := "alloc-d-" + device.Name
+		if delivery.Method == ops.DeliveryVirtualMedia && delivery.ReportAddress == nil {
+			// The Machine's address, bound to the operation's own claim.
+			name := InstallationName(allocation, request)
+			claim := e.ipClaim(bootaddress.ClaimName(name), name, "DeviceInstallation", "Bound", "198.51.100.40")
+			delivery.ReportAddress = &ops.BootNetworkInput{AddressClaim: bootaddress.Reference(claim.GetName()), Address: "198.51.100.40"}
+		}
 		operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName(allocation, request), Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
 			OperationEnvelope: envelope(device, providerUser, allocated(allocation)), RequestUID: request,
 			Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"}, BootNetwork: network, Delivery: delivery,
@@ -145,6 +152,23 @@ func TestDeliveryMethodAdmission(t *testing.T) {
 		operation := install(e, device, "request-1", virtualMedia, network)
 		e.settle(device.Name)
 		e.requirePhase(operation, ops.PhaseFailed, ReasonDeliveryInputs)
+		e.requireUntouched(device.Name, fence)
+	})
+
+	t.Run("a virtual media install reports only from its own claimed address", func(t *testing.T) {
+		e := e.sub(t)
+		device := held(e, "VirtualMedia")
+		fence := e.custody(device.Name).Spec.Fence
+		if refusal := checkDelivery(&Admission{Device: device, Custody: e.custody(device.Name), Offered: e.sites.DeliveryMethods("")}, &ops.DeviceInstallationSpec{Delivery: virtualMedia}); refusal == nil || refusal.Reason != ReasonReportAddressRequired {
+			t.Fatalf("virtual media with no report address: %+v", refusal)
+		}
+		// Another operation's claim does not hold this one's address.
+		other := e.ipClaim(bootaddress.ClaimName("alloc-d-other-install"), "alloc-d-other-install", "DeviceInstallation", "Bound", "198.51.100.41")
+		borrowed := virtualMedia
+		borrowed.ReportAddress = &ops.BootNetworkInput{AddressClaim: bootaddress.Reference(other.GetName()), Address: "198.51.100.41"}
+		operation := install(e, device, "request-1", borrowed, nil)
+		e.settle(device.Name)
+		e.requirePhase(operation, ops.PhaseFailed, ReasonBootAddressMismatch)
 		e.requireUntouched(device.Name, fence)
 	})
 
@@ -257,10 +281,12 @@ func TestDeliveryMethodAdmission(t *testing.T) {
 		device := held(e, "VirtualMedia")
 		fence := e.custody(device.Name).Spec.Fence
 		allocation := "alloc-d-" + device.Name
+		delivery := virtualMedia
+		delivery.ReportAddress = &ops.BootNetworkInput{AddressClaim: bootaddress.Reference(bootaddress.ClaimName(InstallationName(allocation, "request-1"))), Address: "198.51.100.40"}
 		operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName(allocation, "request-1"), Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
 			OperationEnvelope: envelope(device, providerUser, allocated(allocation)), RequestUID: "request-1",
 			Image:         ops.ImageInput{Name: "talos", Digest: imageDigest, Downloads: []ops.DownloadInput{{Name: "installer", Reference: "registry.example/installer:v1.0.0"}}},
-			BootInterface: "primary", TargetDisks: []string{"disk-0"}, Delivery: virtualMedia,
+			BootInterface: "primary", TargetDisks: []string{"disk-0"}, Delivery: delivery,
 		}}
 		e.create(operation)
 		e.settle(device.Name)

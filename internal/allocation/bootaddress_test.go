@@ -239,3 +239,45 @@ func TestAnExhaustedPoolSendsNothing(t *testing.T) {
 		t.Fatalf("operations = %d, %v", len(operations.Items), err)
 	}
 }
+
+// TestAVirtualMediaInstallRecordsTheMachinesAddress claims the Machine's
+// address for a virtual media install from the same source as a boot
+// address, before the operation exists, and records it as the address its
+// report must come from; with no such source, no installation is created.
+func TestAVirtualMediaInstallRecordsTheMachinesAddress(t *testing.T) {
+	e := startEnv(t)
+	recorder := &ipam{Client: e.admin}
+	e.allocator.Provider, e.allocator.Releaser = writer{recorder, "DeviceInstallation"}, writer{recorder, "DeviceWipe"}
+	e.allocator.DeliveryMethods = []custody.OfferedMethod{{Method: ops.DeliveryVirtualMedia, Addresses: ops.AddressesDataNetwork, MediaService: "https://192.0.2.10:8443"}}
+	device := e.server(1)
+	e.until("staff record the server as qualified for virtual media", func() bool {
+		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(device), device); err != nil {
+			t.Fatal(err)
+		}
+		device.Annotations = map[string]string{custody.QualifiedMethodsAnnotation: "VirtualMedia"}
+		return e.admin.Update(e.ctx, device) == nil
+	})
+	allocation, err := e.allocator.Allocate(e.ctx, e.request(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.allocator.Install(e.ctx, allocation, Installation{Installation: e.installation(1, "debian-12", "")}); !errors.Is(err, ErrNoReportAddress) {
+		t.Fatalf("an install with no address source = %v", err)
+	}
+	name := custody.InstallationName(allocation.Name, uid(701))
+	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: namespace, Name: name}, &ops.DeviceInstallation{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("an installation was created without a report address: %v", err)
+	}
+	e.allocator.BootAddresses = &bootaddress.Claimer{Class: "data"}
+	operation, err := e.allocator.Install(e.ctx, allocation, Installation{Installation: e.installation(1, "debian-12", "")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := operation.Spec.Delivery.ReportAddress
+	if operation.Spec.BootNetwork != nil || report == nil || report.AddressClaim.Name != bootaddress.ClaimName(operation.Name) || report.Address == "" {
+		t.Fatalf("boot network %+v, report address %+v", operation.Spec.BootNetwork, report)
+	}
+	if creates := recorder.created(); len(creates) < 2 || creates[len(creates)-2] != report.AddressClaim.Name || creates[len(creates)-1] != operation.Name {
+		t.Fatalf("creates = %v, want the claim before the operation", creates)
+	}
+}

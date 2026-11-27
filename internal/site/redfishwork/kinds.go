@@ -84,6 +84,11 @@ type Config struct {
 	// servers post their first-boot reports from. A window takes no report
 	// from elsewhere. A site without it cannot use virtual media.
 	ReportFrom []netip.Prefix
+	// ReportOrigin is the media service as the site's installed servers
+	// reach it to post their reports, as https://IP:port, when that path
+	// differs from the recorded media service, such as through a relay that
+	// keeps each report's source address. Empty means the media service.
+	ReportOrigin string
 	// Artifacts holds the image's pinned artifacts and their manifest. A
 	// virtual media installation derives its boot medium from them.
 	Artifacts string

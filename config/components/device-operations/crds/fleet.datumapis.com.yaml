@@ -628,13 +628,45 @@ spec:
                   reportWindow:
                     type: string
                     maxLength: 32
+                  reportAddress:
+                    type: object
+                    properties:
+                      addressClaim:
+                        type: object
+                        properties:
+                          apiGroup:
+                            type: string
+                            minLength: 1
+                            maxLength: 253
+                          kind:
+                            type: string
+                            minLength: 1
+                            maxLength: 63
+                          name:
+                            type: string
+                            minLength: 1
+                            maxLength: 253
+                        required:
+                        - apiGroup
+                        - kind
+                        - name
+                      address:
+                        type: string
+                        minLength: 2
+                        maxLength: 45
+                        x-kubernetes-validations:
+                        - rule: isIP(self)
+                          message: address must be one IP address without a prefix length
+                    required:
+                    - addressClaim
+                    - address
                 required:
                 - method
                 x-kubernetes-validations:
-                - rule: self.method != 'NetworkBoot' || (!has(self.addresses) && !has(self.mediaService) && !has(self.fetchWindow) && !has(self.reportWindow))
+                - rule: self.method != 'NetworkBoot' || (!has(self.addresses) && !has(self.mediaService) && !has(self.fetchWindow) && !has(self.reportWindow) && !has(self.reportAddress))
                   message: network boot records no virtual media inputs
-                - rule: self.method != 'VirtualMedia' || (has(self.addresses) && has(self.mediaService) && has(self.fetchWindow) && has(self.reportWindow))
-                  message: virtual media records the site's address mode, media service and phase windows
+                - rule: self.method != 'VirtualMedia' || (has(self.addresses) && has(self.mediaService) && has(self.fetchWindow) && has(self.reportWindow) && has(self.reportAddress))
+                  message: virtual media records the site's address mode, media service, phase windows and the Machine's report address
             required:
             - creator
             - deviceRef

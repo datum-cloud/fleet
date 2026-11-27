@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -91,6 +92,9 @@ type mediaPlan struct {
 	report    time.Duration
 	downloads []ops.DownloadInput
 	addresses ops.AddressMode
+	// reportAddress is the Machine's IPAM address, the only source the
+	// media service takes this operation's report from.
+	reportAddress string
 }
 
 // planMedia checks the admitted inputs against the site's pinned artifacts
@@ -111,6 +115,14 @@ func (c Config) planMedia(spec ops.DeviceInstallationSpec) (mediaPlan, error) {
 		return mediaPlan{}, err
 	}
 	plan := mediaPlan{origin: origin, fetch: delivery.FetchWindow.Duration, report: delivery.ReportWindow.Duration, downloads: spec.Image.Downloads, addresses: delivery.Addresses}
+	if delivery.ReportAddress == nil {
+		return mediaPlan{}, errors.New("the installation records no address for its report")
+	}
+	address, err := netip.ParseAddr(delivery.ReportAddress.Address)
+	if err != nil || address.Zone() != "" || !slices.ContainsFunc(c.ReportFrom, func(prefix netip.Prefix) bool { return prefix.Contains(address) }) {
+		return mediaPlan{}, errors.New("the installation's report address is not inside this site's report ranges")
+	}
+	plan.reportAddress = address.String()
 	var content strings.Builder
 	for _, line := range strings.Split(strings.TrimSpace(string(manifest)), "\n") {
 		fields := strings.Fields(line)
@@ -181,8 +193,8 @@ func mediaDevices(devices []redfish.Media) (boot, config redfish.Media, ok bool)
 // OS posts its report with the certificate it must verify there.
 func renderConfig(token, salt string, bootstrap []byte, plan mediaPlan, reportURL string, reportCA []byte) ([]byte, error) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "FLEET-CONFIG-V1\ntoken=%s\nsalt=%s\naddresses=%s\nbootstrap=%s\nreport=%s\nreportca=%s\n", token, salt, plan.addresses,
-		base64.StdEncoding.EncodeToString(bootstrap), reportURL, base64.StdEncoding.EncodeToString(reportCA))
+	fmt.Fprintf(&b, "FLEET-CONFIG-V1\ntoken=%s\nsalt=%s\naddresses=%s\nreportaddress=%s\nbootstrap=%s\nreport=%s\nreportca=%s\n", token, salt, plan.addresses,
+		plan.reportAddress, base64.StdEncoding.EncodeToString(bootstrap), reportURL, base64.StdEncoding.EncodeToString(reportCA))
 	for _, download := range plan.downloads {
 		fmt.Fprintf(&b, "download=%s %s\n", download.Name, download.Reference)
 	}
@@ -347,7 +359,7 @@ func (c Config) window(ctx context.Context, work *site.Work, media *mediaClient,
 		// The sealed store is not on this branch, so admission refuses
 		// bootstrap data and the payload is always empty.
 		var payload []byte
-		data, err := renderConfig(token, salt, payload, plan, ReportURL(plan.origin, key), c.MediaCA)
+		data, err := renderConfig(token, salt, payload, plan, ReportURL(c.reportOrigin(plan), key), c.MediaCA)
 		if err != nil {
 			return window, err
 		}
@@ -370,7 +382,7 @@ func (c Config) window(ctx context.Context, work *site.Work, media *mediaClient,
 	open := func(ctx context.Context) error {
 		return media.open(ctx, key, OpenRequest{Device: work.Device, Operation: work.Operation.UID, Fence: work.Fence, BootDigest: window.BootDigest,
 			CapabilitySHA256: digest(medium.Capability), TokenSHA256: window.TokenSHA256, ConfigMedium: medium.Data,
-			FetchExpires: window.FetchExpires, ReportExpires: window.ReportExpires, ReportFrom: c.reportFrom()})
+			FetchExpires: window.FetchExpires, ReportExpires: window.ReportExpires, ReportFrom: c.reportFrom(), ReportAddress: plan.reportAddress})
 	}
 	if err := work.Step(ctx, site.Step{Name: "media-window", Send: open, Idempotent: true}); err != nil {
 		return mediaWindow{}, err
@@ -804,6 +816,15 @@ func bmcStepJournaled(work *site.Work) bool {
 		}
 	}
 	return false
+}
+
+// reportOrigin is where the installed OS posts its report: the site's
+// report path to the media service, or the recorded media service.
+func (c Config) reportOrigin(plan mediaPlan) string {
+	if c.ReportOrigin != "" {
+		return c.ReportOrigin
+	}
+	return plan.origin
 }
 
 func (c Config) reportFrom() []string {

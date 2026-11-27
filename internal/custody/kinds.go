@@ -93,12 +93,19 @@ func checkNetworkBoot(ctx context.Context, admission *Admission, kind, bootInter
 	if network == nil {
 		return nil
 	}
+	return checkAddressClaim(ctx, admission, kind, *network)
+}
+
+// checkAddressClaim requires an operation's recorded address to still be
+// bound to the operation's own claim, through the check registered for the
+// claim's kind.
+func checkAddressClaim(ctx context.Context, admission *Admission, kind string, network ops.BootNetworkInput) *Refusal {
 	claim := network.AddressClaim
 	check := admission.Registry.BootAddressClaim(claim.APIGroup, claim.Kind)
 	if check == nil {
 		return refuse(ReasonBootAddressUnsupported, "boot address claims of kind %s/%s cannot be checked", claim.APIGroup, claim.Kind)
 	}
-	if err := check(ctx, admission.Reader, admission.Operation, kind, *network); errors.Is(err, bootaddress.ErrUnreachable) {
+	if err := check(ctx, admission.Reader, admission.Operation, kind, network); errors.Is(err, bootaddress.ErrUnreachable) {
 		// Fail closed without deciding: the claim may still hold the address.
 		refusal := refuse(ReasonBootAddress, "waiting: the boot address claim %s could not be read", claim.Name)
 		refusal.Retry = true
@@ -175,7 +182,13 @@ func DeviceInstallationKind() Kind {
 			if refusal := checkDelivery(admission, &installation.Spec); refusal != nil {
 				return refusal
 			}
-			return checkNetworkBoot(ctx, admission, "DeviceInstallation", installation.Spec.BootInterface, installation.Spec.BootNetwork)
+			if refusal := checkNetworkBoot(ctx, admission, "DeviceInstallation", installation.Spec.BootInterface, installation.Spec.BootNetwork); refusal != nil {
+				return refusal
+			}
+			if report := installation.Spec.Delivery.ReportAddress; report != nil {
+				return checkAddressClaim(ctx, admission, "DeviceInstallation", *report)
+			}
+			return nil
 		},
 		SnapshotExtra: func(admission *Admission) map[string]string {
 			return map[string]string{ExtraDeliveryMethod: string(admission.Operation.(*ops.DeviceInstallation).Spec.Delivery.Method)}

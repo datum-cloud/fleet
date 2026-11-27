@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
+	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/redfish"
 	"go.datum.net/fleet/internal/site"
@@ -445,7 +446,9 @@ func (e *mediaEnv) spec() ops.DeviceInstallationSpec {
 	image.Downloads = e.downloads
 	return ops.DeviceInstallationSpec{Image: image, BootInterface: "primary", TargetDisks: []string{"disk-0"}, RequestUID: "request-1",
 		Delivery: ops.DeliveryInput{Method: ops.DeliveryVirtualMedia, Addresses: ops.AddressesDataNetwork, MediaService: e.origin,
-			FetchWindow: &metav1.Duration{Duration: e.fetch}, ReportWindow: &metav1.Duration{Duration: e.report}}}
+			FetchWindow: &metav1.Duration{Duration: e.fetch}, ReportWindow: &metav1.Duration{Duration: e.report},
+			// The fake BMC network posts reports from the Machine's address.
+			ReportAddress: &ops.BootNetworkInput{AddressClaim: fleetv1.TypedReference{APIGroup: "ipam.miloapis.com", Kind: "IPClaim", Name: "alloc-example-install-report"}, Address: "192.0.2.50"}}}
 }
 
 // assignment admits the operation: custody names it active at its fence.
@@ -666,7 +669,9 @@ func TestAFirstBootReportThatDoesNotProveTheInstallNeverSucceeds(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newMediaEnv(t)
-			e.fetch, e.report = 500*time.Millisecond, 300*time.Millisecond
+			// The fetch window must outlast opening it under load, or the
+			// window is refused before it exists.
+			e.fetch, e.report = 2*time.Second, 300*time.Millisecond
 			set(e.bmc)
 			result := e.run(t, "op-report", 1)
 			if result.Phase != ops.PhaseOutcomeUnknown || e.journaled("op-report")["media-released"] != "" {
@@ -699,8 +704,13 @@ func TestTheMediaServiceServesAndReportsOnlyThroughAnOpenWindow(t *testing.T) {
 		return recorder.Code
 	}
 	open, _ := json.Marshal(OpenRequest{Device: device, Operation: "op-serve", Fence: 1, BootDigest: strings.Repeat("b", 64), CapabilitySHA256: digest(capability), TokenSHA256: digest(token),
-		ConfigMedium: []byte("medium"), FetchExpires: now.Add(time.Minute), ReportExpires: now.Add(2 * time.Minute), ReportFrom: []string{"192.0.2.60/32"}})
+		ConfigMedium: []byte("medium"), FetchExpires: now.Add(time.Minute), ReportExpires: now.Add(2 * time.Minute), ReportFrom: []string{"192.0.2.0/24"}, ReportAddress: "192.0.2.60"})
 	key := Key("op-serve")
+	// The Machine's address must lie inside the site's report ranges.
+	outside := strings.Replace(string(open), `"reportAddress":"192.0.2.60"`, `"reportAddress":"198.51.100.60"`, 1)
+	if code := call(http.MethodPut, "/v1/windows/"+key, outside, "127.0.0.1:1"); code != http.StatusBadRequest {
+		t.Fatalf("an open whose report address is outside the ranges = %d", code)
+	}
 	if code := call(http.MethodPut, "/v1/windows/"+key, string(open), "127.0.0.1:1"); code != http.StatusCreated {
 		t.Fatalf("open = %d", code)
 	}
@@ -725,13 +735,18 @@ func TestTheMediaServiceServesAndReportsOnlyThroughAnOpenWindow(t *testing.T) {
 		t.Fatalf("a report with another token = %d", code)
 	}
 	good := `{"token":"` + token + `","image":"sha256:1","bootstrap":"sha256:2"}`
-	// A report with the right token from an address that is not the
-	// Machine's is refused for where it came from.
-	if code := call(http.MethodPost, "/report/"+key, good, "192.0.2.61:1"); code != http.StatusForbidden {
-		t.Fatalf("a report from another address = %d", code)
+	// A report with the right token from outside the site's ranges is
+	// refused for where it came from.
+	if code := call(http.MethodPost, "/report/"+key, good, "127.0.0.2:1"); code != http.StatusForbidden {
+		t.Fatalf("a report from outside the ranges = %d", code)
 	}
-	if window := e.window(t, "op-serve"); window.Report != nil {
-		t.Fatal("a report from another address was taken")
+	// So is one from another server inside them: only the Machine's own
+	// address may report, and the refusal is recorded without the token.
+	if code := call(http.MethodPost, "/report/"+key, good, "192.0.2.61:1"); code != http.StatusForbidden {
+		t.Fatalf("a report from another address in the ranges = %d", code)
+	}
+	if window := e.window(t, "op-serve"); window.Report != nil || len(window.Refused) != 1 || window.Refused[0].From != "192.0.2.61" || !window.Refused[0].TokenMatched {
+		t.Fatalf("a report from another address in the ranges: %+v %+v", window.Report, window.Refused)
 	}
 	if code := report(good); code != http.StatusOK {
 		t.Fatalf("the report = %d", code)
@@ -743,7 +758,7 @@ func TestTheMediaServiceServesAndReportsOnlyThroughAnOpenWindow(t *testing.T) {
 		t.Fatalf("a second, different use of the token = %d", code)
 	}
 	window := e.window(t, "op-serve")
-	if window.Rejected != 3 || window.Duplicates != 1 || window.Report == nil || window.Report.Image != "sha256:1" {
+	if window.Rejected != 4 || window.Duplicates != 1 || window.Report == nil || window.Report.Image != "sha256:1" {
 		t.Fatalf("window = %+v", window)
 	}
 	// Past the fetch deadline the media stop; a fence rise stops everything.
@@ -892,7 +907,7 @@ func TestTheWorkerAPIRequiresTheSiteWorkersIdentity(t *testing.T) {
 	e.custody.set("op-auth", 1)
 	key := Key("op-auth")
 	open, _ := json.Marshal(OpenRequest{Device: device, Operation: "op-auth", Fence: 1, BootDigest: strings.Repeat("b", 64), CapabilitySHA256: digest("c"), TokenSHA256: digest("t"),
-		ConfigMedium: []byte("medium"), FetchExpires: time.Now().Add(time.Minute), ReportExpires: time.Now().Add(2 * time.Minute), ReportFrom: []string{"192.0.2.50/32"}})
+		ConfigMedium: []byte("medium"), FetchExpires: time.Now().Add(time.Minute), ReportExpires: time.Now().Add(2 * time.Minute), ReportFrom: []string{"192.0.2.50/32"}, ReportAddress: "192.0.2.50"})
 	call := func(method, path, body, identity string) int {
 		request := httptest.NewRequest(method, path, strings.NewReader(body))
 		request.RemoteAddr = "127.0.0.1:1"
@@ -1037,5 +1052,45 @@ func TestTheSweepSkipsAnUnreadableWindow(t *testing.T) {
 	}
 	if window := e.window(t, "op-dead"); window.ConfigMedium != nil {
 		t.Fatal("an unreadable window stopped the sweep before a stale one")
+	}
+}
+
+// TestAReportComesOnlyFromTheMachinesAddress takes a first-boot report only
+// from the Machine's IPAM address. Another server inside the site's report
+// ranges that carries the right token is refused and recorded, and the
+// token stays unspent for the Machine itself.
+func TestAReportComesOnlyFromTheMachinesAddress(t *testing.T) {
+	e := newMediaEnv(t)
+	token := strings.Repeat("a", 64)
+	e.custody.set("op-address", 1)
+	open, _ := json.Marshal(OpenRequest{Device: device, Operation: "op-address", Fence: 1, BootDigest: strings.Repeat("b", 64), CapabilitySHA256: digest("c"), TokenSHA256: digest(token),
+		ConfigMedium: []byte("medium"), FetchExpires: time.Now().Add(time.Minute), ReportExpires: time.Now().Add(2 * time.Minute),
+		ReportFrom: []string{"192.0.2.0/24"}, ReportAddress: "192.0.2.70"})
+	key := Key("op-address")
+	call := func(method, path, body, from string) int {
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		request.RemoteAddr = from
+		if strings.HasPrefix(path, "/v1/") {
+			e.workers.asWorker(t, request, workerIdentity)
+		}
+		recorder := httptest.NewRecorder()
+		e.central.Handler().ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+	if code := call(http.MethodPut, "/v1/windows/"+key, string(open), "127.0.0.1:1"); code != http.StatusCreated {
+		t.Fatalf("open = %d", code)
+	}
+	good := `{"token":"` + token + `","image":"sha256:1","bootstrap":"sha256:2"}`
+	if code := call(http.MethodPost, "/report/"+key, good, "192.0.2.71:1"); code != http.StatusForbidden {
+		t.Fatalf("the right token from another address in the ranges = %d", code)
+	}
+	if window := e.window(t, "op-address"); window.Report != nil || len(window.Refused) != 1 || window.Refused[0].From != "192.0.2.71" || !window.Refused[0].TokenMatched {
+		t.Fatalf("after a report from another address: %+v, refused %+v", window.Report, window.Refused)
+	}
+	if code := call(http.MethodPost, "/report/"+key, good, "192.0.2.70:1"); code != http.StatusOK {
+		t.Fatalf("the report from the Machine's address = %d", code)
+	}
+	if window := e.window(t, "op-address"); window.Report == nil || window.Report.Image != "sha256:1" {
+		t.Fatalf("the Machine's report was not taken: %+v", window)
 	}
 }

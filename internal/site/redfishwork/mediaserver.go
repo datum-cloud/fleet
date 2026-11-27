@@ -80,7 +80,10 @@ type Window struct {
 	ConfigMedium []byte `json:"configMedium,omitempty"`
 	// ReportFrom is where the installed OS's report may come from, as the
 	// media service sees it. A report from any other address is refused.
-	ReportFrom    []string  `json:"reportFrom"`
+	ReportFrom []string `json:"reportFrom"`
+	// ReportAddress is the Machine's IPAM address, inside ReportFrom: the
+	// only source the window takes a report from.
+	ReportAddress string    `json:"reportAddress"`
 	Opened        time.Time `json:"opened"`
 	FetchExpires  time.Time `json:"fetchExpires"`
 	ReportExpires time.Time `json:"reportExpires"`
@@ -92,7 +95,22 @@ type Window struct {
 	// a missing token, or after the window ended.
 	Duplicates int `json:"duplicates,omitempty"`
 	Rejected   int `json:"rejected,omitempty"`
+	// Refused records the first reports refused for coming from inside the
+	// site's ranges but not from the Machine's address, and whether each
+	// carried the window's token. The token itself is never kept.
+	Refused []RefusedReport `json:"refused,omitempty"`
 }
+
+// RefusedReport is a report from inside the site's ranges but not from the
+// window's report address.
+type RefusedReport struct {
+	From         string    `json:"from"`
+	TokenMatched bool      `json:"tokenMatched"`
+	At           time.Time `json:"at"`
+}
+
+// maxRefused bounds the refused reports a window records.
+const maxRefused = 16
 
 // ReceivedReport is an install report the media service took.
 type ReceivedReport struct {
@@ -101,6 +119,9 @@ type ReceivedReport struct {
 	// Downloads are what the installer reports it downloaded.
 	Downloads  []ReportedDownload `json:"downloads,omitempty"`
 	ReceivedAt time.Time          `json:"receivedAt"`
+	// From is the address the report came from: the window's report
+	// address.
+	From string `json:"from"`
 }
 
 // ReportedDownload is one artifact the installer downloaded, by the digest
@@ -252,6 +273,9 @@ type OpenRequest struct {
 	ReportExpires time.Time `json:"reportExpires"`
 	// ReportFrom is the IPv4 or IPv6 prefixes the report may come from.
 	ReportFrom []string `json:"reportFrom"`
+	// ReportAddress is the Machine's address inside them, the only source
+	// the report is taken from.
+	ReportAddress string `json:"reportAddress"`
 }
 
 // ErrMediaStale means the media service refused to open a window because
@@ -432,14 +456,14 @@ func (m *MediaServer) open(w http.ResponseWriter, request *http.Request, key str
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&open); err != nil || key != Key(open.Operation) || open.Device == "" || open.Fence < 1 || len(open.ConfigMedium) == 0 || len(open.ConfigMedium) > configMediumSize ||
 		len(open.CapabilitySHA256) != 64 || len(open.TokenSHA256) != 64 || len(open.BootDigest) != 64 ||
-		!m.now().Before(open.FetchExpires) || open.ReportExpires.Before(open.FetchExpires) || !validPrefixes(open.ReportFrom) {
+		!m.now().Before(open.FetchExpires) || open.ReportExpires.Before(open.FetchExpires) || !validPrefixes(open.ReportFrom) || !insidePrefixes(open.ReportAddress, open.ReportFrom) {
 		http.Error(w, "invalid window", http.StatusBadRequest)
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	window := Window{Device: open.Device, Operation: open.Operation, Fence: open.Fence, BootDigest: open.BootDigest, CapabilitySHA256: open.CapabilitySHA256, TokenSHA256: open.TokenSHA256,
-		ReportFrom: open.ReportFrom}
+		ReportFrom: open.ReportFrom, ReportAddress: open.ReportAddress}
 	if current, err := m.current(request.Context(), window); err != nil {
 		http.Error(w, "custody unreadable", http.StatusServiceUnavailable)
 		return
@@ -586,23 +610,51 @@ func validPrefixes(prefixes []string) bool {
 	return len(prefixes) > 0
 }
 
-// fromAny reports whether the request's source address is in one of the
-// prefixes.
-func fromAny(request *http.Request, prefixes []string) bool {
-	host, _, err := net.SplitHostPort(request.RemoteAddr)
-	if err != nil {
-		return false
-	}
-	address, err := netip.ParseAddr(host)
-	if err != nil {
+// insidePrefixes reports whether address is one host address, without a
+// zone, in one of the prefixes.
+func insidePrefixes(address string, prefixes []string) bool {
+	parsed, err := netip.ParseAddr(address)
+	if err != nil || parsed.Zone() != "" || parsed.String() != address {
 		return false
 	}
 	for _, value := range prefixes {
-		if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Contains(address.Unmap()) {
+		if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Contains(parsed) {
 			return true
 		}
 	}
 	return false
+}
+
+// source is the request's source address, as the service sees it.
+func source(request *http.Request) (netip.Addr, bool) {
+	host, _, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	address, err := netip.ParseAddr(host)
+	return address.Unmap(), err == nil
+}
+
+// fromAny reports whether the request's source address is in one of the
+// prefixes.
+func fromAny(request *http.Request, prefixes []string) bool {
+	address, ok := source(request)
+	if !ok {
+		return false
+	}
+	for _, value := range prefixes {
+		if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
+}
+
+// fromAddress reports whether the request comes from exactly the address.
+func fromAddress(request *http.Request, address string) bool {
+	from, ok := source(request)
+	want, err := netip.ParseAddr(address)
+	return ok && err == nil && from == want.Unmap()
 }
 
 // report takes one install report per window: it must carry the window's
@@ -640,6 +692,17 @@ func (m *MediaServer) report(w http.ResponseWriter, request *http.Request, key s
 		// came from, whatever token it carries.
 		outcome, code = "rejected-source", http.StatusForbidden
 		window.Rejected++
+	case !fromAddress(request, window.ReportAddress):
+		// The site's ranges are only the outer bound: within them, only the
+		// Machine's own address may report, so another server that learned
+		// the token still cannot post this report.
+		outcome, code = "rejected-address", http.StatusForbidden
+		window.Rejected++
+		if len(window.Refused) < maxRefused {
+			from, _ := source(request)
+			matched := decodeErr == nil && len(report.Token) == 64 && subtle.ConstantTimeCompare([]byte(digest(report.Token)), []byte(window.TokenSHA256)) == 1
+			window.Refused = append(window.Refused, RefusedReport{From: from.String(), TokenMatched: matched, At: m.now().UTC()})
+		}
 	case decodeErr != nil || len(report.Token) != 64 || subtle.ConstantTimeCompare([]byte(digest(report.Token)), []byte(window.TokenSHA256)) != 1:
 		outcome, code = "rejected-token", http.StatusForbidden
 		window.Rejected++
@@ -656,7 +719,8 @@ func (m *MediaServer) report(w http.ResponseWriter, request *http.Request, key s
 		outcome, code = "duplicate", http.StatusConflict
 		window.Duplicates++
 	default:
-		window.Report = &ReceivedReport{Image: report.Image, Bootstrap: report.Bootstrap, Downloads: report.Downloads, ReceivedAt: m.now().UTC()}
+		from, _ := source(request)
+		window.Report = &ReceivedReport{Image: report.Image, Bootstrap: report.Bootstrap, Downloads: report.Downloads, ReceivedAt: m.now().UTC(), From: from.String()}
 	}
 	if err := m.save(key, window); err != nil {
 		http.Error(w, "state unwritable", http.StatusInternalServerError)

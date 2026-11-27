@@ -179,6 +179,15 @@ func redfishConfig() (redfishwork.Config, redfish.Enrollment, error) {
 		}
 		work.ReportFrom = append(work.ReportFrom, prefix.Masked())
 	}
+	// How this site's installed servers reach the media service, when not
+	// at its recorded endpoint.
+	if value := os.Getenv("FLEET_MEDIA_REPORT_ORIGIN"); value != "" {
+		origin, err := redfish.ParseEndpoint(value)
+		if err != nil || !strings.HasPrefix(origin, "https://") {
+			return redfishwork.Config{}, redfish.Enrollment{}, errors.New("FLEET_MEDIA_REPORT_ORIGIN must be https://IP:port")
+		}
+		work.ReportOrigin = origin
+	}
 	return work, enrollment, nil
 }
 
