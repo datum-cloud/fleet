@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PhysicalInventory } from './physical-inventory';
+import { categoryMenu, categoryNavigation, categoryTrigger, chooseCategory } from '../test/inventory-category';
+import { openFilters } from '../test/field-select';
 import { toInventory } from '../inventory';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
 
@@ -13,20 +15,15 @@ function browse(query = '', data = inventory) {
 }
 
 describe('hardware directory', () => {
-  it('uses Datum inputs, underline route tabs and table slots without nesting interactive controls', () => {
+  it('uses Datum inputs, the category switcher and the datum-ui data table', () => {
     browse();
     expect(screen.getByRole('searchbox', { name: 'Search devices' })).toHaveAttribute('data-slot', 'input');
-    const navigation = screen.getByRole('navigation', { name: 'Inventory categories' });
-    const devices = within(navigation).getByRole('tab', { name: /^Devices/ });
-    expect(devices.closest('[role="tablist"]')).toHaveAttribute('data-variant', 'line');
-    expect(devices.querySelector('[data-slot="tabs-indicator"]')).not.toBeNull();
-    expect(devices).toHaveAttribute('aria-current', 'page');
-    expect(navigation.querySelector('button')).toBeNull();
-    const table = screen.getByRole('table');
-    expect(table).toHaveAttribute('data-slot', 'table');
-    expect(within(table).getAllByRole('columnheader')[0]).toHaveAttribute('data-slot', 'table-head');
-    fireEvent.click(within(navigation).getByRole('tab', { name: 'Locations' }));
-    fireEvent.click(within(navigation).getByRole('tab', { name: 'Facilities' }));
+    const navigation = categoryNavigation();
+    expect(categoryTrigger(navigation)).toHaveAccessibleName('Inventory category: Devices');
+    expect(within(categoryMenu(navigation)).getByRole('link', { name: 'Devices' })).toHaveAttribute('aria-current', 'page');
+    const table = screen.getByRole('table', { name: 'Devices' });
+    expect(within(table).getByRole('button', { name: /^Sort by Name/ })).toBeInTheDocument();
+    chooseCategory('Facilities', navigation);
     expect(screen.getByRole('searchbox', { name: 'Search facilities' })).toHaveValue('');
   });
 
@@ -57,9 +54,8 @@ describe('hardware directory', () => {
     browse('?kind=Device&record=private-device&namespace=private', { ...inventory, issues: { Device: { status: 403 } } });
     expect(screen.getByText('Inventory access needed')).toBeInTheDocument();
     expect(screen.queryByText(/private-device/)).not.toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Devices' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('tab', { name: 'Locations' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Facilities' }));
+    expect(categoryTrigger()).toHaveAccessibleName('Inventory category: Devices');
+    chooseCategory('Facilities');
     expect(screen.getByRole('link', { name: 'Example facility' })).toBeInTheDocument();
   });
 
@@ -82,9 +78,10 @@ describe('hardware directory', () => {
 
   it('offers physical kinds and operational Sites without writes or a report upload', () => {
     const { container } = browse();
-    const navigation = within(screen.getByRole('navigation', { name: 'Inventory categories' }));
-    for (const name of ['Equipment', 'Locations', 'Installation plans', 'Hardware catalog', 'Devices', 'Cables', 'Power feeds']) expect(navigation.getByRole('tab', { name })).toBeInTheDocument();
-    expect(navigation.queryByRole('tab', { name: 'Facilities' })).not.toBeInTheDocument();
+    const menu = within(categoryMenu());
+    for (const name of ['Devices', 'Cables', 'Power feeds', 'Operational sites', 'Facilities', 'Racks', 'Installation plans']) expect(menu.getByRole('link', { name })).toBeInTheDocument();
+    expect(menu.queryByRole('link', { name: 'Manufacturers' })).not.toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     expect(screen.getByRole('button', { name: /create/i })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /edit|delete|apply(?! search)|sync|import/i })).not.toBeInTheDocument();
     expect(container.querySelector('input[type="file"]')).toBeNull();
@@ -95,12 +92,15 @@ describe('hardware directory', () => {
     const facility = fixturePhysicalRecords.find(record => record.kind === 'Facility')!;
     browse(`?kind=Device&location=${facility.metadata.namespace}/${facility.metadata.name}&model=no-such-model`);
     expect(screen.getByText('No matching records')).toBeInTheDocument();
-    // One in the toolbar, one in the empty view.
+    // One in the Filter popover, one in the empty view.
+    openFilters();
     expect(screen.getAllByRole('button', { name: 'Clear filters' })).toHaveLength(2);
     fireEvent.click(within(screen.getByTestId('fleet-plugin-inventory-empty')).getByRole('button', { name: 'Clear filters' }));
     expect(screen.getByRole('link', { name: 'Example compute server' })).toBeInTheDocument();
     expect(screen.getByLabelText('Filter by facility')).toHaveValue('');
-    expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument();
+    // Only the popover's Clear filters remains, disabled until a filter is set.
+    expect(screen.getByRole('button', { name: 'Clear filters' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Filter' })).toBeInTheDocument();
   });
 
   it('searches identity and resets the filter when navigating categories', () => {
@@ -114,8 +114,7 @@ describe('hardware directory', () => {
     expect(screen.getByText('No matching records')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(screen.getByRole('link', { name: 'Example compute server' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('tab', { name: 'Locations' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Facilities' }));
+    chooseCategory('Facilities');
     expect(screen.getByRole('searchbox')).toHaveValue('');
     expect(screen.getByRole('link', { name: 'Example facility' })).toBeInTheDocument();
   });
@@ -184,7 +183,7 @@ describe('hardware directory', () => {
     const original = fixturePhysicalDevices[0];
     const panel = { ...original, metadata: { ...original.metadata, name: 'synthetic-patch-panel' }, spec: { ...original.spec, displayName: 'Synthetic patch panel', bmc: undefined, identity: { model: 'Example 24-port panel', unidentified: true, unidentifiedReason: 'passive panel; no serial on the chassis' } } };
     browse('?kind=Device', toInventory(fixturePhysicalClaims, [panel]));
-    expect(screen.getByRole('cell', { name: 'None' })).toHaveAttribute('title', 'passive panel; no serial on the chassis');
+    expect(screen.getByRole('cell', { name: 'None' }).querySelector('[title]')).toHaveAttribute('title', 'passive panel; no serial on the chassis');
     fireEvent.click(screen.getByRole('link', { name: 'Synthetic patch panel' }));
     expect(screen.getByText(/passive panel; no serial on the chassis · cannot back machine capacity/)).toBeInTheDocument();
   });

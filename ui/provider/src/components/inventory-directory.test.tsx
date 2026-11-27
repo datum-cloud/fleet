@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PhysicalInventory } from './physical-inventory';
 import { fixtureInventory } from '../lib/inventory-fixtures';
 import type { Inventory } from '../inventory';
+import { categoryMenu, categoryTrigger } from '../test/inventory-category';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -18,39 +19,39 @@ const row = (name: string) => screen.getByRole('link', { name }).closest('tr')!;
 const cell = (rowName: string, column: string, tableName: string) => within(row(rowName)).getAllByRole('cell')[heads(tableName).indexOf(column)];
 
 describe('directory header', () => {
-  it('has no breadcrumb, visible title, description or count strip; the tabs carry the place and the count', () => {
+  it('has no breadcrumb, visible title, description or count strip; the category switcher carries the place and the count', () => {
     const { container } = show('?kind=Device');
     expect(screen.queryByRole('navigation', { name: /breadcrumb/i })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: 'Devices' })).toHaveClass('sr-only');
     expect(container.querySelector('.inventory-page-title, .inventory-group-description, .inventory-record-count')).toBeNull();
     expect(screen.queryByText(/ of \d+ records/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Physical hardware, identity/)).not.toBeInTheDocument();
-    const devices = screen.getByRole('tab', { name: 'Devices' });
-    expect(devices).toHaveAccessibleDescription(`${within(table('Devices')).getAllByRole('row').length - 1} records`);
+    const trigger = categoryTrigger();
+    expect(trigger).toHaveAccessibleName('Inventory category: Devices');
+    expect(trigger).toHaveAccessibleDescription(`${within(table('Devices')).getAllByRole('row').length - 1} records`);
   });
 
-  it('reads "?" on the tab of a denied collection, never 0', () => {
+  it('reads "?" on the category of a denied collection, never 0', () => {
     show('?kind=Device', { ...fixtureInventory(), issues: { Cable: { status: 403 } } });
-    const cables = screen.getByRole('tab', { name: 'Cables' });
+    const cables = within(categoryMenu()).getByRole('link', { name: 'Cables' });
     expect(cables.querySelector('.inventory-tab-count')).toHaveTextContent('?');
     expect(cables).toHaveAccessibleDescription('Count unknown: this collection is unavailable');
   });
 
-  it('names the plans section "Installation plans" everywhere, with no empty second tab row', () => {
+  it('names the plans section "Installation plans" everywhere, with no tab rows', () => {
     const { container } = show('?kind=DeviceClaim');
-    expect(screen.getByRole('tab', { name: 'Installation plans' })).toHaveAttribute('aria-selected', 'true');
+    expect(categoryTrigger()).toHaveAccessibleName('Inventory category: Installation plans');
     expect(screen.getByRole('heading', { level: 1, name: 'Installation plans' })).toBeInTheDocument();
     expect(table('Installation plans')).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/Claims & registrations/);
-    expect(screen.getAllByRole('tablist')).toHaveLength(1);
-    expect(container.querySelector('.inventory-subcategories')).toBeNull();
+    expect(screen.queryAllByRole('tablist')).toHaveLength(0);
   });
 
-  it('keeps the full group name as the accessible name beside the phone label', () => {
-    show('?kind=Manufacturer');
-    const catalog = screen.getByRole('tab', { name: 'Hardware catalog' });
-    expect(catalog.querySelector('.inventory-tab-short')).toHaveAttribute('aria-hidden', 'true');
-    expect(catalog.querySelector('.inventory-tab-short')).toHaveTextContent('Catalog');
+  it('keeps Manufacturers and Device types out of the inventory switcher; the Catalog page toggles them', () => {
+    show('?kind=Device');
+    const menu = categoryMenu();
+    expect(within(menu).queryByRole('link', { name: 'Manufacturers' })).toBeNull();
+    expect(within(menu).queryByRole('link', { name: 'Device types' })).toBeNull();
   });
 });
 
@@ -91,7 +92,7 @@ describe('directory columns', () => {
     for (const [kind, [title, columns]] of Object.entries(expected)) {
       const view = show(`?kind=${kind}`);
       expect(heads(title)).toEqual(columns);
-      expect(table(title)).toHaveClass('inventory-dense-table');
+      expect(table(title).closest('[data-testid="fleet-plugin-inventory-table"]')).not.toBeNull();
       expect(table(title).querySelector('small')).toBeNull();
       view.unmount();
     }
@@ -147,7 +148,7 @@ describe('directory columns', () => {
     show('?kind=Cable', fixtureInventory('devices-denied'));
     const end = cell('DAC a01-01 eth0', 'A end', 'Cables');
     expect(end).toHaveTextContent(/^\? · eth0 · Device records unavailable$/);
-    expect(end).toHaveAttribute('title', 'Device records unavailable');
+    expect(end.querySelector('[title]')).toHaveAttribute('title', 'Device records unavailable');
     expect(row('DAC a01-01 eth0')).toHaveAttribute('data-attention', 'unavailable');
     expect(screen.queryByText(/Related endpoint unavailable|Compute a01-01/)).not.toBeInTheDocument();
   });

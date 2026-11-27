@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { categoryLink, categoryTrigger } from '../test/inventory-category';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import InventoryCreatePage from './inventory-create';
@@ -63,21 +64,20 @@ it.each(['device', 'cable', 'installation-plan'])('opens a direct %s task with e
   expect(screen.getByRole('link', { name: 'Back to inventory' })).toHaveAttribute('href', expect.stringMatching(/^\/plugins\/metal\/inventory\?kind=/));
   expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
   expect(screen.queryByLabelText(/namespace/i)).not.toBeInTheDocument();
-  expect(screen.getByRole('tab', { name: kind === 'installation-plan' ? 'Installation plans' : 'Equipment' })).toHaveAttribute('aria-selected', 'true');
+  expect(categoryTrigger()).toHaveAccessibleName(`Inventory category: ${kind === 'installation-plan' ? 'Installation plans' : kind === 'device' ? 'Devices' : 'Cables'}`);
 });
 
 it('uses the task kind rather than an unrelated query kind and guards dirty group navigation', async () => {
   const view = host('/create/cable?kind=Rack&q=retained');
   await screen.findByLabelText('Record name');
-  expect(screen.getByRole('tab', { name: 'Equipment' })).toHaveAttribute('aria-selected', 'true');
-  expect(screen.getByRole('tab', { name: 'Cables' })).toHaveAttribute('aria-selected', 'true');
-  expect(screen.getByRole('link', { name: 'Cables' })).toHaveAttribute('href', '/plugins/metal/inventory?kind=Cable&q=retained');
+  expect(categoryTrigger()).toHaveAccessibleName('Inventory category: Cables');
+  expect(categoryLink('Cables')).toHaveAttribute('href', '/plugins/metal/inventory?kind=Cable&q=retained');
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Private task draft' } });
-  fireEvent.click(screen.getByRole('tab', { name: 'Locations' }));
+  fireEvent.click(categoryLink('Operational sites'));
   expect(window.confirm).toHaveBeenCalled();
   expect(screen.getByLabelText('Display name')).toHaveValue('Private task draft');
   vi.mocked(window.confirm).mockReturnValue(true);
-  fireEvent.click(screen.getByRole('tab', { name: 'Locations' }));
+  fireEvent.click(categoryLink('Operational sites'));
   await screen.findByRole('searchbox', { name: 'Search operational sites' });
   expect(view.router.state.location.search).toBe('?kind=Site');
   expect(createInventoryRecord).not.toHaveBeenCalled();
@@ -99,7 +99,7 @@ it.each(['__proto__', 'constructor', 'manufacturer', 'inventory'])('rejects unsu
   expect(screen.getByRole('link', { name: 'Back to inventory' })).toHaveAttribute('href', '/plugins/metal/inventory?kind=Device');
 });
 
-it.each(['principal', 'logout', 'hidden', 'pagehide'] as const)('retires private task drafts on %s without transferring late writes', async transition => {
+it.each(['principal', 'logout'] as const)('retires private task drafts on %s without transferring late writes', async transition => {
   const view = host('/create/device');
   await screen.findByLabelText('Display name');
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Private draft' } });

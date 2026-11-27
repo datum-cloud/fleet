@@ -1,4 +1,4 @@
-import { chooseValue } from '../test/field-select';
+import { chooseValue, openFilters } from '../test/field-select';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, it } from 'vitest';
 import { MemoryRouter } from 'react-router';
@@ -123,6 +123,7 @@ it('does not invent rack units when the rack height is unknown', () => {
 });
 it('filters by recorded model and facility without manufacturing a hardware type', () => {
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><PhysicalInventory inventory={toInventory(fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords)} /></MemoryRouter></QueryClientProvider>);
+  openFilters();
   chooseValue(screen.getByRole('combobox', { name: 'Filter by model' }), 'Example 1U');
   expect(screen.queryByRole('link', { name: 'orphan-synthetic-0009' })).not.toBeInTheDocument();
   chooseValue(screen.getByRole('combobox', { name: 'Filter by facility' }), 'default/example-facility');

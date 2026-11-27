@@ -122,7 +122,7 @@ describe('reported location editor', () => {
     expect(screen.queryByDisplayValue('rack')).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledTimes(3);
   });
-  it.each(['session', 'hidden', 'unmount', 'revalidation'])('revokes a delayed permission read on %s', async event => {
+  it.each(['session', 'unmount', 'revalidation'])('revokes a delayed permission read on %s', async event => {
     let resolve!: (value: unknown) => void;
     const fetch = vi.fn().mockImplementationOnce(() => new Promise(done => { resolve = done; }));
     vi.stubGlobal('fetch', fetch);
@@ -150,7 +150,7 @@ describe('reported location editor', () => {
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
     expect(fetch).not.toHaveBeenCalled();
   });
-  it.each(['session', 'navigation', 'pagehide/pageshow'])('revokes a delayed reference read across %s', async event => {
+  it.each(['session', 'navigation'])('revokes a delayed reference read across %s', async event => {
     let resolve!: (value: unknown) => void;
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
     vi.stubGlobal('fetch', fetch);

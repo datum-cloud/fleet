@@ -54,7 +54,7 @@ export function RecordTabs({ tabs, label }: { tabs: RecordTab[]; label: string }
   if (!current) return null;
   return <div className="inventory-record-tabs">
     <Tabs value={current.id} activationMode="manual" className="inventory-tab-row">
-      <TabsList variant="line" aria-label={label}>
+      <TabsList aria-label={label}>
         {tabs.map(tab => <TabsLinkTrigger key={tab.id} value={tab.id} href={tabHref(tab.id)} linkComponent={Link}
           onClick={event => { if (tabHref(tab.id) === `${pathname}${search}`) event.preventDefault(); }}
           aria-current={tab.id === current.id ? 'page' : undefined} aria-controls={undefined}

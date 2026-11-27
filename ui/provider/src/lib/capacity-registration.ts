@@ -76,6 +76,7 @@ export async function registerCapacity(selected: Device, operationID: string, op
     metadata: { name, namespace: 'default', annotations: { [REGISTRATION_DEVICE_UID]: selected.metadata.uid!, [REGISTRATION_DEVICE_VERSION]: selected.metadata.resourceVersion!, [REGISTRATION_OPERATION]: operationID } },
     spec: { deviceRef: { name: selected.metadata.name }, allocationPolicy: 'Disabled', cleaningPolicyRef: { name: '' }, reclaimPolicy: 'Retain' },
   };
+  await operation.settle();
   operation.dispatch();
   try {
     const result = await proxyFetch<MachineCapacity>(PROVIDER_PROJECT, `${capacitiesPath}?fieldManager=fleet-capacity-registration&fieldValidation=Strict`, { method: 'POST', body });

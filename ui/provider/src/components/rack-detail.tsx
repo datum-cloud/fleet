@@ -10,6 +10,7 @@
 // collection shows "unavailable" and names nothing from it.
 
 import { Button } from '@datum-cloud/datum-ui/button';
+import { X } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@datum-cloud/datum-ui/table';
 import { Tabs, TabsLinkTrigger, TabsList } from '@datum-cloud/datum-ui/tabs';
 import { Title } from '@datum-cloud/datum-ui/typography';
@@ -147,7 +148,7 @@ function SelectedPanel({ slot, rack, inventory, phone, onClose }: { slot?: Equip
   return <section ref={panel} className="inventory-rack-panel" data-variant={phone ? 'sheet' : 'side'} role={phone ? 'dialog' : 'region'} aria-modal={phone ? false : undefined} aria-labelledby={titleId} data-testid={phone ? 'rack-device-sheet' : 'rack-device-panel'}>
     <div className="inventory-rack-panel-heading">
       <h3 id={titleId}>{title}</h3>
-      <Button data-panel-close="" type="secondary" theme="outline" size="small" htmlType="button" onClick={onClose} aria-label="Close device panel">Close</Button>
+      <Button data-panel-close="" type="secondary" theme="borderless" size="icon" htmlType="button" onClick={onClose} aria-label="Close device panel" title="Close" icon={<X size={16} aria-hidden="true" />} />
     </div>
     {!slot ? <p>This selection is not among the readable records for this rack. It may have moved, been removed, or be unavailable to you.</p> : <>
       {/* One line of facts; lifecycle only when it is not the normal state. */}
@@ -262,6 +263,29 @@ function PowerTab({ rack, slots, inventory }: { rack: PhysicalRecord; slots: Equ
   </div>;
 }
 
+/**
+ * The rack page's header subtitle: facility, height, and links to placement
+ * issues on the elevation. It replaces a separate summary row under the header.
+ */
+export function RackSummary({ rack, inventory }: { rack: PhysicalRecord; inventory: Inventory }) {
+  const [params] = useSearchParams();
+  const slots = rackPlacements(rack, inventory);
+  const issues = rackIssues(rack, slots, inventory);
+  const overlaps = issues.filter(issue => issue.kind === 'overlap').reduce((sum, issue) => sum + issue.slots.length, 0);
+  const unpositioned = issues.find(issue => issue.kind === 'unpositioned')?.slots.length ?? 0;
+  const elevation = new URLSearchParams(params);
+  for (const key of [RACK_PARAMS.tab, RACK_PARAMS.selected, RACK_PARAMS.selectedKind]) elevation.delete(key);
+  const elevationHref = `?${elevation}`;
+  const facility = rack.spec.facilityRef?.name;
+  const facilityRecord = facility && !inventory.issues?.Facility ? inventory.physical.find(record => record.kind === 'Facility' && record.metadata.namespace === rack.metadata.namespace && record.metadata.name === facility) : undefined;
+  return <span className="inventory-rack-summary">
+    <span>{!facility ? 'Facility not recorded' : inventory.issues?.Facility ? 'Facility unavailable' : facilityRecord ? <Link to={inventoryHref('Facility', rack.metadata.namespace, facility)}>{displayLabel(facilityRecord)}</Link> : 'Facility record not found'}</span>
+    <span>{rack.spec.heightUnits === undefined ? 'Height not recorded' : `${rack.spec.heightUnits}U`}</span>
+    {overlaps > 0 && <Link className="inventory-issue-badge" data-kind="overlap" to={elevationHref}><span aria-hidden="true">! </span>{overlaps} placements disagree</Link>}
+    {unpositioned > 0 && <Link className="inventory-issue-badge" data-kind="unpositioned" to={elevationHref}><span aria-hidden="true">? </span>{unpositioned} without a position</Link>}
+  </span>;
+}
+
 export function RackDetail({ rack, inventory }: { rack: PhysicalRecord; inventory: Inventory }) {
   const [params, setParams] = useSearchParams();
   const phone = usePhone();
@@ -319,25 +343,12 @@ export function RackDetail({ rack, inventory }: { rack: PhysicalRecord; inventor
     power: count(feeds?.length),
   };
   const nothingRelated = !slots.length && cables?.length === 0 && feeds?.length === 0 && !incomplete;
-  const facility = rack.spec.facilityRef?.name;
-  const facilityRecord = facility && !inventory.issues?.Facility ? inventory.physical.find(record => record.kind === 'Facility' && record.metadata.namespace === rack.metadata.namespace && record.metadata.name === facility) : undefined;
 
-  const overlaps = issues.filter(issue => issue.kind === 'overlap').reduce((sum, issue) => sum + issue.slots.length, 0);
-  const unpositioned = issues.find(issue => issue.kind === 'unpositioned')?.slots.length ?? 0;
-  const elevationHref = tabHref('elevation');
 
   return <div className="inventory-rack-page">
-    <div className="inventory-rack-header">
-      <p className="inventory-rack-summary">
-        <span>{!facility ? 'Facility not recorded' : inventory.issues?.Facility ? 'Facility unavailable' : facilityRecord ? <Link to={inventoryHref('Facility', rack.metadata.namespace, facility)}>{displayLabel(facilityRecord)}</Link> : 'Facility record not found'}</span>
-        <span>{rack.spec.heightUnits === undefined ? 'Height not recorded' : `${rack.spec.heightUnits}U`}</span>
-        {overlaps > 0 && <Link className="inventory-issue-badge" data-kind="overlap" to={elevationHref}><span aria-hidden="true">! </span>{overlaps} placements disagree</Link>}
-        {unpositioned > 0 && <Link className="inventory-issue-badge" data-kind="unpositioned" to={elevationHref}><span aria-hidden="true">? </span>{unpositioned} without a position</Link>}
-      </p>
-      {nothingRelated && <p className="inventory-muted">No related records found.</p>}
-    </div>
+    {nothingRelated && <p className="inventory-muted">No related records found.</p>}
     <Tabs value={tab} activationMode="manual" className="inventory-tab-row inventory-rack-tabs">
-      <TabsList variant="line" aria-label="Rack views">
+      <TabsList aria-label="Rack views">
         {RACK_TABS.map(item => <TabsLinkTrigger key={item.tab} value={item.tab} href={tabHref(item.tab)} linkComponent={Link} aria-current={item.tab === tab ? 'page' : undefined} aria-controls={undefined}
           onKeyDown={event => { if (event.key === ' ') { event.preventDefault(); event.currentTarget.click(); } }}>{item.title}{counts[item.tab] !== undefined && <span className="inventory-count"> {counts[item.tab]}</span>}</TabsLinkTrigger>)}
       </TabsList>

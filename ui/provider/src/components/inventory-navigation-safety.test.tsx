@@ -1,4 +1,5 @@
 import { findEnabledButton } from '../test/enabled-button';
+import { chooseCategory } from '../test/inventory-category';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
@@ -24,8 +25,8 @@ it('real directory category Link followed by fresh create remains usable', async
   }));
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'staff-a' } } }), element: <Outlet />, children: [{ path: 'inventory', element: <DeviceInventoryList /> }] }], { initialEntries: ['/inventory'] });
   render(<RouterProvider router={router} />);
-  fireEvent.click(await screen.findByRole('tab', { name: 'Locations' }));
-  fireEvent.click(await screen.findByRole('tab', { name: 'Facilities' }));
+  await screen.findByRole('navigation', { name: 'Inventory categories' });
+  chooseCategory('Facilities');
   await open(false);
   fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   expect(await screen.findByRole('status')).not.toHaveTextContent('No write was dispatched');
@@ -49,7 +50,7 @@ it.each([false, true])('same-principal query navigation retains usable managemen
   expect(writes).toEqual([editing ? 'PATCH' : 'POST']);
 });
 
-it.each([false, true].flatMap(editing => ['navigation', 'revalidation'].map(transition => ({ editing, transition }))))('$transition revokes pending work while admitting a fresh form: edit=$editing', async ({ editing, transition }) => {
+it.each([false, true])('navigation revokes pending work while admitting a fresh form: edit=%s', async editing => {
   let reviews = 0;
   let release: ((value: unknown) => void) | undefined;
   const writes: string[] = [];
@@ -66,16 +67,50 @@ it.each([false, true].flatMap(editing => ['navigation', 'revalidation'].map(tran
   await open(editing);
   fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
   await waitFor(() => expect(release).toBeDefined());
-  await act(async () => {
-    if (transition === 'revalidation') await router.revalidate();
-    else await router.navigate('/?kind=Facility&name=independent-review');
-  });
+  await act(async () => { await router.navigate('/?kind=Facility&name=independent-review'); });
   await open(editing);
   await act(async () => release!(response({ status: { allowed: true } })));
   expect(writes).toEqual([]);
   expect(screen.queryByText(/Display name saved\.|Facility created\./)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
   await screen.findByText(editing ? 'Display name saved.' : 'Facility created.');
+  expect(writes).toEqual([editing ? 'PATCH' : 'POST']);
+});
+
+it.each([false, true])('a same-user host revalidation holds a pending save, then lets it finish: edit=%s', async editing => {
+  let reviews = 0;
+  let release: ((value: unknown) => void) | undefined;
+  let confirm: (() => void) | undefined;
+  const writes: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+    if (url.includes('selfsubjectaccessreviews')) {
+      if (++reviews === 2) return new Promise(resolve => { release = resolve; });
+      return response({ status: { allowed: true } });
+    }
+    if (init.method !== 'GET') writes.push(init.method!);
+    return response(original);
+  }));
+  let held = false;
+  const loader = vi.fn(async () => {
+    if (held) await new Promise<void>(resolve => { confirm = resolve; });
+    return { user: { metadata: { uid: 'staff-a' } } };
+  });
+  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader, element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><InventoryManagement kind="Facility" record={editing ? original : undefined} facilities={[]} /></InventorySessionBoundary> }] }]);
+  render(<RouterProvider router={router} />);
+  await open(editing);
+  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
+  await waitFor(() => expect(release).toBeDefined());
+  held = true;
+  let revalidated: Promise<void> | undefined;
+  act(() => { revalidated = router.revalidate(); });
+  await waitFor(() => expect(confirm).toBeDefined());
+  // The permission review answers while the host is still confirming the user: nothing is sent yet.
+  await act(async () => release!(response({ status: { allowed: true } })));
+  expect(writes).toEqual([]);
+  expect(screen.getByRole('button', { name: 'Saving…' })).toBeInTheDocument();
+  await act(async () => { confirm!(); await revalidated; });
+  await screen.findByText(editing ? 'Display name saved.' : 'Facility created.');
+  expect(screen.queryByText(/No write was dispatched/)).not.toBeInTheDocument();
   expect(writes).toEqual([editing ? 'PATCH' : 'POST']);
 });
 

@@ -1,11 +1,13 @@
-import { selectedValue } from '../test/field-select';
+import { openFilters, selectedValue } from '../test/field-select';
 import { findEnabledButton } from '../test/enabled-button';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import DeviceInventoryList from '../pages/device-inventory-list';
+import HardwareCatalog from '../pages/hardware-catalog';
+import { categoryLink, categoryMenu, categoryNavigation, categoryTrigger, chooseCategory, switchCategory } from '../test/inventory-category';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
-import { inventoryGroups, inventoryGroup } from './inventory-groups';
+import { inventoryGroups, isCatalogKind } from './inventory-groups';
 import { sections } from './inventory-navigation';
 
 beforeEach(() => vi.stubGlobal('confirm', vi.fn(() => true)));
@@ -42,7 +44,7 @@ function host(query = '', management = false) {
     if (held) await new Promise<void>(resolve => { release = resolve; });
     return { user: principal ? { metadata: { uid: principal } } : null };
   });
-  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader, element: <Outlet />, children: [{ path: 'plugins/:slug/inventory', element: <DeviceInventoryList /> }] }], { initialEntries: [`/plugins/metal/inventory${query}`] });
+  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader, element: <Outlet />, children: [{ path: 'plugins/:slug/inventory', element: <DeviceInventoryList /> }, { path: 'plugins/:slug/catalog', element: <HardwareCatalog /> }] }], { initialEntries: [`/plugins/metal/inventory${query}`] });
   render(<RouterProvider router={router} />);
   return { router, loader, collections, writes, reviews,
     hold: () => { held = true; release = undefined; },
@@ -54,24 +56,23 @@ function host(query = '', management = false) {
   };
 }
 
-it('keeps actual tab DOM through host checks, reuses collections, and preserves detail/back/forward URLs', async () => {
+it('keeps the switcher DOM through host checks, reuses collections, and preserves detail/back/forward URLs', async () => {
   const view = host('?kind=Site');
   await screen.findByRole('searchbox', { name: 'Search operational sites' });
   expect(view.collections).toHaveBeenCalledTimes(9);
-  const navigation = screen.getByRole('navigation', { name: 'Inventory categories' });
-  const facilities = within(navigation).getByRole('tab', { name: 'Facilities' });
+  const navigation = categoryNavigation();
+  const trigger = categoryTrigger(navigation);
   // Wait for the loaded page: until then the search box belongs to the loading shell.
   await screen.findByRole('table');
   const search = screen.getByRole('searchbox', { name: 'Search operational sites' });
   view.hold();
-  fireEvent.click(facilities);
+  chooseCategory('Facilities', navigation);
   // A same-user presentation navigation keeps the page on screen while the host checks: no placeholder, no rebuild.
   await waitFor(() => expect(view.router.state.navigation.state).toBe('loading'));
   expect(screen.queryByText('Checking inventory access…')).not.toBeInTheDocument();
   expect(screen.getByRole('searchbox', { name: 'Search operational sites' })).toBe(search);
-  expect(screen.getByRole('navigation', { name: 'Inventory categories' })).toBe(navigation);
-  expect(within(navigation).getByRole('tab', { name: 'Facilities' })).toBe(facilities);
-  expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
+  expect(categoryNavigation()).toBe(navigation);
+  expect(categoryTrigger(navigation)).toBe(trigger);
   expect(screen.queryByTestId('fleet-plugin-loading')).not.toBeInTheDocument();
   await view.release();
   await screen.findByRole('searchbox', { name: 'Search facilities' });
@@ -85,27 +86,31 @@ it('keeps actual tab DOM through host checks, reuses collections, and preserves 
   await screen.findByRole('searchbox', { name: 'Search operational sites' });
   await act(async () => { await view.router.navigate(1); });
   await screen.findByRole('searchbox', { name: 'Search facilities' });
-  expect(screen.getByRole('navigation', { name: 'Inventory categories' })).toBe(navigation);
+  expect(categoryNavigation()).toBe(navigation);
+  // Exactly one toolbar however often the list and record pages swap.
+  expect(document.querySelectorAll('.inventory-toolbar')).toHaveLength(1);
   expect(view.collections).toHaveBeenCalledTimes(9);
   expect(view.loader).toHaveBeenCalledTimes(6);
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();
 });
 
-it.each([['Manufacturers', 'Search manufacturers'], ['Device types', 'Search device types']])('keeps the %s catalog tab mounted and reuses authorized collections', async (title, search) => {
+it.each([['Manufacturers', 'Search manufacturers'], ['Device types', 'Search device types']])('keeps the Catalog %s toggle mounted and reuses authorized collections', async (title, search) => {
   const view = host(title === 'Manufacturers' ? '?kind=DeviceType' : '?kind=Manufacturer');
   await screen.findByRole('searchbox', { name: title === 'Manufacturers' ? 'Search device types' : 'Search manufacturers' });
-  const navigation = screen.getByRole('navigation', { name: 'Inventory categories' });
-  const tab = within(navigation).getByRole('tab', { name: title });
+  expect(view.router.state.location.pathname).toBe('/plugins/metal/catalog');
+  const navigation = screen.getByRole('navigation', { name: 'Catalog categories' });
+  const link = within(navigation).getByRole('link', { name: title });
   view.hold();
-  fireEvent.click(tab);
+  fireEvent.click(link);
   await waitFor(() => expect(view.router.state.navigation.state).toBe('loading'));
   expect(screen.queryByText('Checking inventory access…')).not.toBeInTheDocument();
-  expect(within(navigation).getByRole('tab', { name: title })).toBe(tab);
+  expect(within(navigation).getByRole('link', { name: title })).toBe(link);
   expect(view.collections).toHaveBeenCalledTimes(9);
   await view.release();
   await screen.findByRole('searchbox', { name: search });
-  expect(screen.getByRole('navigation', { name: 'Inventory categories' })).toBe(navigation);
+  expect(screen.getByRole('navigation', { name: 'Catalog categories' })).toBe(navigation);
+  expect(within(navigation).getByRole('link', { name: title })).toHaveAttribute('aria-current', 'page');
   expect(view.collections).toHaveBeenCalledTimes(9);
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();
@@ -125,8 +130,7 @@ it('fences an in-flight create across a cached tab transition without carrying i
   await view.releaseReview();
   expect(view.collections).toHaveBeenCalledTimes(9);
   expect(view.writes).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('tab', { name: 'Locations' }));
-  fireEvent.click(await screen.findByRole('tab', { name: 'Facilities' }));
+  chooseCategory('Facilities');
   fireEvent.click(await findEnabledButton({ name: 'Create facility' }));
   expect(screen.getByLabelText('Display name')).toHaveValue('');
   expect(screen.queryByText('Facility created.')).not.toBeInTheDocument();
@@ -137,7 +141,7 @@ it('loads a direct namespaced link without requiring a previous directory visit'
   const view = host('?kind=Facility&record=example-facility&namespace=default');
   await screen.findByRole('heading', { name: 'Example facility' });
   expect(view.collections).toHaveBeenCalledTimes(9);
-  expect(within(screen.getByRole('navigation', { name: 'Inventory categories' })).getByRole('tab', { name: 'Facilities' })).toHaveAttribute('aria-current', 'page');
+  expect(categoryLink('Facilities')).toHaveAttribute('aria-current', 'page');
   view.router.dispose();
 });
 
@@ -171,89 +175,86 @@ it('applies the search at once on Enter', async () => {
   view.router.dispose();
 });
 
-it('puts counts on the kind tabs only after inventory access resolves', async () => {
+it('puts counts in the switcher only after inventory access resolves', async () => {
   const view = host();
-  const devices = await screen.findByRole('tab', { name: 'Devices' });
-  expect(devices.querySelector('.inventory-tab-count')).toBeNull();
+  const trigger = await screen.findByRole('button', { name: 'Inventory category: Devices' });
+  expect(trigger.querySelector('.inventory-tab-count')).toBeNull();
   await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
-  await waitFor(() => expect(devices).toHaveAccessibleDescription(`${fixturePhysicalDevices.length} records`));
-  expect(devices.querySelector('.inventory-tab-count')).toHaveTextContent(String(fixturePhysicalDevices.length));
-  expect(screen.getByRole('tab', { name: 'Cables' })).toHaveAccessibleDescription(/^\d+ records?$/);
+  await waitFor(() => expect(trigger).toHaveAccessibleDescription(`${fixturePhysicalDevices.length} records`));
+  expect(trigger.querySelector('.inventory-tab-count')).toHaveTextContent(String(fixturePhysicalDevices.length));
+  expect(categoryLink('Cables')).toHaveAccessibleDescription(/^\d+ records?$/);
   expect(screen.queryByText(/ of \d+ records$/)).not.toBeInTheDocument();
   view.router.dispose();
 });
 
-it('counts the filtered directory on its tab', async () => {
+it('counts the filtered directory on its category', async () => {
   const view = host('?kind=Device&q=no-such-device');
   await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
-  await waitFor(() => expect(screen.getByRole('tab', { name: 'Devices' })).toHaveAccessibleDescription(`0 of ${fixturePhysicalDevices.length} records`));
-  expect(screen.getByRole('tab', { name: 'Cables' })).not.toHaveAccessibleDescription(/ of /);
+  await waitFor(() => expect(categoryTrigger()).toHaveAccessibleDescription(`0 of ${fixturePhysicalDevices.length} records`));
+  expect(categoryLink('Cables')).not.toHaveAccessibleDescription(/ of /);
   view.router.dispose();
 });
 
-it.each(sections)('selects the correct group and only its subtabs for a direct $kind bookmark', async section => {
+it.each(sections)('shows the current $kind category for a direct bookmark, on the page it belongs to', async section => {
   const view = host(`?kind=${section.kind}`);
   await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
-  const group = inventoryGroup(section.kind);
-  const primary = screen.getByRole('tablist', { name: 'Inventory groups' });
-  expect(within(primary).getAllByRole('tab').map(tab => tab.getAttribute('aria-label'))).toEqual(inventoryGroups.map(item => item.title));
-  expect(within(primary).getByRole('tab', { name: group.title })).toHaveAttribute('aria-selected', 'true');
-  const navigation = screen.getByRole('navigation', { name: 'Inventory categories' });
-  expect(within(navigation).getAllByRole('tablist')).toHaveLength(group.kinds.length > 1 ? 2 : 1);
-  if (group.kinds.length > 1) {
-    const secondary = screen.getByRole('tablist', { name: `${group.title} categories` });
-    expect(within(secondary).getAllByRole('tab').map(tab => tab.getAttribute('aria-label'))).toEqual(sections.filter(item => group.kinds.some(kind => kind === item.kind)).map(item => item.title));
-    expect(within(secondary).getByRole('tab', { name: section.title })).toHaveAttribute('aria-selected', 'true');
-  } else expect(navigation.querySelector('.inventory-subcategories')).toBeNull();
+  if (isCatalogKind(section.kind)) {
+    expect(view.router.state.location.pathname).toBe('/plugins/metal/catalog');
+    expect(within(screen.getByRole('navigation', { name: 'Catalog categories' })).getByRole('link', { name: section.title })).toHaveAttribute('aria-current', 'page');
+  } else {
+    expect(categoryTrigger()).toHaveAccessibleName(`Inventory category: ${section.title}`);
+    const menu = categoryMenu();
+    expect(within(menu).getAllByRole('list').map(list => document.getElementById(list.getAttribute('aria-labelledby')!)?.textContent)).toEqual(inventoryGroups.map(group => group.title));
+    expect(within(menu).getAllByRole('link').filter(link => link.getAttribute('aria-current') === 'page').map(link => link.textContent?.replace(/\d+$/, ''))).toEqual([section.title]);
+  }
+  expect(screen.queryAllByRole('tablist').filter(list => list.closest('nav'))).toHaveLength(0);
   expect(view.collections).toHaveBeenCalledTimes(9);
   view.router.dispose();
 });
 
-it('defaults to Equipment / Devices and navigates group defaults without extra collection reads', async () => {
+it('defaults to Devices and switches to every category without extra collection reads', async () => {
   const view = host();
   await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
-  expect(screen.getByRole('tab', { name: 'Equipment' })).toHaveAttribute('aria-selected', 'true');
-  expect(screen.getByRole('tab', { name: 'Devices' })).toHaveAttribute('aria-selected', 'true');
-  const groups = screen.getByRole('tablist', { name: 'Inventory groups' });
-  const tabs = within(groups).getAllByRole('tab');
-  for (const group of [...inventoryGroups.slice(1), inventoryGroups[0]]) {
-    fireEvent.click(within(groups).getByRole('tab', { name: group.title }));
-    // The current page stays during the host check, so wait for the navigation itself.
-    await waitFor(() => expect(view.router.state.location.search).toBe(`?kind=${group.kinds[0]}`));
-    await waitFor(() => expect(view.router.state.navigation.state).toBe('idle'));
-    await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
-    expect(within(groups).getAllByRole('tab')).toEqual(tabs);
+  const navigation = categoryNavigation();
+  const trigger = categoryTrigger(navigation);
+  expect(trigger).toHaveAccessibleName('Inventory category: Devices');
+  const inventorySections = sections.filter(section => !isCatalogKind(section.kind));
+  for (const section of [...inventorySections.slice(1), inventorySections[0]]) {
+    // Wait for the committed page, not router.state: the router updates React in a transition.
+    await switchCategory(section.title, navigation);
+    expect(view.router.state.location.search).toBe(`?kind=${section.kind}`);
+    expect(view.router.state.navigation.state).toBe('idle');
+    expect(categoryTrigger(navigation)).toBe(trigger);
+    expect(trigger).toHaveAccessibleName(`Inventory category: ${section.title}`);
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
     expect(view.collections).toHaveBeenCalledTimes(9);
   }
+  // Choosing the current category is not a navigation.
   const loads = view.loader.mock.calls.length;
-  fireEvent.click(screen.getByRole('tab', { name: 'Equipment' }));
-  fireEvent.click(screen.getByRole('tab', { name: 'Devices' }));
+  chooseCategory('Devices', navigation);
   expect(view.loader).toHaveBeenCalledTimes(loads);
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();
 });
 
-it('supports roving keyboard focus with manual Space activation on real route tabs', async () => {
+it('opens the switcher on the current category and moves between categories with the arrow keys', async () => {
   const view = host();
   await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
-  const equipment = screen.getByRole('tab', { name: 'Equipment' });
-  const locations = screen.getByRole('tab', { name: 'Locations' });
-  equipment.focus();
-  fireEvent.keyDown(equipment, { key: 'ArrowRight' });
-  await waitFor(() => expect(locations).toHaveFocus());
-  expect(view.router.state.location.search).toBe('');
-  expect(equipment).toHaveAttribute('aria-selected', 'true');
-  fireEvent.keyDown(locations, { key: ' ' });
-  await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search operational sites' })).toBeEnabled());
-  expect(locations).toHaveFocus();
-  expect(locations).toHaveAttribute('aria-selected', 'true');
-  const sites = screen.getByRole('tab', { name: 'Operational sites' });
-  sites.focus();
-  fireEvent.keyDown(sites, { key: 'End' });
-  const racks = screen.getByRole('tab', { name: 'Racks' });
-  await waitFor(() => expect(racks).toHaveFocus());
-  fireEvent.keyDown(racks, { key: ' ' });
+  const trigger = categoryTrigger();
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+  const menu = await screen.findByRole('dialog', { name: 'Inventory categories' });
+  const devices = within(menu).getByRole('link', { name: 'Devices' });
+  await waitFor(() => expect(devices).toHaveFocus());
+  fireEvent.keyDown(devices, { key: 'ArrowDown' });
+  expect(within(menu).getByRole('link', { name: 'Cables' })).toHaveFocus();
+  fireEvent.keyDown(within(menu).getByRole('link', { name: 'Cables' }), { key: 'ArrowUp' });
+  expect(devices).toHaveFocus();
+  fireEvent.keyDown(devices, { key: 'ArrowUp' });
+  expect(within(menu).getByRole('link', { name: 'Installation plans' })).toHaveFocus();
+  fireEvent.click(within(menu).getByRole('link', { name: 'Racks' }));
   await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search racks' })).toBeEnabled());
+  expect(screen.queryByRole('dialog', { name: 'Inventory categories' })).not.toBeInTheDocument();
   expect(view.collections).toHaveBeenCalledTimes(9);
   view.router.dispose();
 });
@@ -264,19 +265,21 @@ it('restores search and filters with detail, group, Back and Forward presentatio
   await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
   await act(async () => { await view.router.navigate(`${query}&record=${fixturePhysicalDevices[0].metadata.name}&namespace=default`); });
   await screen.findByRole('heading', { name: 'Example compute server' });
-  const breadcrumb = screen.getByRole('navigation', { name: 'breadcrumb' });
-  expect(breadcrumb).toHaveTextContent('EquipmentDevicesExample compute server');
-  expect(within(breadcrumb).getByRole('link', { name: 'Devices' })).toHaveAttribute('href', `/plugins/metal/inventory${query}`);
-  fireEvent.click(screen.getByRole('tab', { name: 'Devices' }));
+  // The back link returns to the list with its search and filters.
+  const back = screen.getByRole('link', { name: 'Devices' });
+  expect(back).toHaveClass('inventory-back-link');
+  expect(back).toHaveAttribute('href', `/plugins/metal/inventory${query}`);
+  fireEvent.click(back);
   await waitFor(() => expect(screen.getByRole('searchbox')).toHaveValue('Example'));
+  openFilters();
   expect(selectedValue(screen.getByRole('combobox', { name: 'Filter by facility' }))).toBe('default/example-facility');
-  fireEvent.click(screen.getByRole('tab', { name: 'Locations' }));
+  chooseCategory('Operational sites');
   await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search operational sites' })).toBeEnabled());
   await act(async () => { await view.router.navigate(-1); });
   expect(screen.getByRole('searchbox')).toHaveValue('Example');
   expect(new URLSearchParams(view.router.state.location.search).get('model')).toBe('Example');
   await act(async () => { await view.router.navigate(1); });
-  expect(screen.getByRole('tab', { name: 'Locations' })).toHaveAttribute('aria-selected', 'true');
+  expect(categoryTrigger()).toHaveAccessibleName('Inventory category: Operational sites');
   expect(view.collections).toHaveBeenCalledTimes(9);
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();
@@ -286,11 +289,8 @@ it('restarts management authority after immediate same-principal host navigation
   const view = host('?kind=Facility', true);
   await findEnabledButton({ name: 'Create facility' });
   for (const [category, action] of [['Devices', 'Create device'], ['Facilities', 'Create facility'], ['Devices', 'Create device']]) {
-    fireEvent.click(screen.getByRole('tab', { name: category === 'Devices' ? 'Equipment' : 'Locations' }));
-    await screen.findByRole('tab', { name: category });
-    await act(async () => {
-      fireEvent.click(within(screen.getByRole('navigation', { name: 'Inventory categories' })).getByRole('tab', { name: category }));
-    });
+    const link = categoryLink(category);
+    await act(async () => { fireEvent.click(link); });
     await waitFor(() => expect(screen.getByRole('button', { name: action })).toBeEnabled());
   }
   expect(view.collections).toHaveBeenCalledTimes(9);
@@ -298,42 +298,25 @@ it('restarts management authority after immediate same-principal host navigation
   view.router.dispose();
 });
 
-it.each(['principal', 'logout', 'denial', 'hidden', 'pagehide', 'revalidation', 'unknown-query'])('retains only static chrome across a real %s boundary', async transition => {
+it.each(['principal', 'logout', 'denial', 'unknown-query'])('replaces private data after a real %s boundary', async transition => {
   const view = host();
   await screen.findByRole('searchbox', { name: 'Search devices' });
   const navigation = screen.getByRole('navigation', { name: 'Inventory categories' });
-  view.hold();
-  if (transition === 'principal') view.principal('staff-b');
-  if (transition === 'logout') view.principal(null);
-  if (transition === 'denial') view.deny();
-  if (transition === 'hidden') {
-    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
-    fireEvent(document, new Event('visibilitychange'));
-    expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
-    visibility.mockReturnValue('visible');
-    fireEvent(document, new Event('visibilitychange'));
-  } else if (transition === 'pagehide') {
-    fireEvent(window, new Event('pagehide'));
-    expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
-    fireEvent(window, new Event('pageshow'));
-  } else if (transition === 'principal' || transition === 'logout') {
-    fireEvent.click(within(navigation).getByRole('tab', { name: 'Locations' }));
-  } else if (transition === 'unknown-query') {
-    act(() => { void view.router.navigate('?kind=Device&scope=other'); });
-  } else act(() => { void view.router.revalidate(); });
-  if (transition === 'principal' || transition === 'logout') {
-    // A tab click is a presentation navigation: the page already on screen stays while the host checks,
-    // nothing new is shown, and the check's answer (another user, or none) clears it when it returns.
-    await waitFor(() => expect(view.router.state.navigation.state).toBe('loading'));
-    expect(screen.queryByText('Checking inventory access…')).not.toBeInTheDocument();
-    expect(view.router.state.location.search).not.toContain('kind=Site');
+  if (transition === 'denial') {
+    // A denial is observed on the next read, here an explicit refresh.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh inventory' })).toBeEnabled());
+    view.deny();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh inventory' }));
   } else {
-    await screen.findByText('Checking inventory access…');
-    expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
-    expect(navigation.textContent).not.toMatch(/\d/);
+    view.hold();
+    if (transition === 'principal') view.principal('staff-b');
+    if (transition === 'logout') view.principal(null);
+    if (transition === 'unknown-query') act(() => { void view.router.navigate('?kind=Device&scope=other'); });
+    else chooseCategory('Operational sites', navigation);
+    await waitFor(() => expect(view.router.state.navigation.state).toBe('loading'));
+    expect(screen.getByRole('navigation', { name: 'Inventory categories' })).toBe(navigation);
+    await view.release();
   }
-  expect(screen.getByRole('navigation', { name: 'Inventory categories' })).toBe(navigation);
-  await view.release();
   if (transition === 'logout') {
     await screen.findByText('Your session has expired');
     expect(view.collections).toHaveBeenCalledTimes(9);
@@ -343,7 +326,7 @@ it.each(['principal', 'logout', 'denial', 'hidden', 'pagehide', 'revalidation', 
     expect(view.collections).toHaveBeenCalledTimes(18);
   } else {
     await screen.findByRole('searchbox');
-    expect(view.collections).toHaveBeenCalledTimes(18);
+    await waitFor(() => expect(view.collections).toHaveBeenCalledTimes(18));
   }
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();
@@ -383,6 +366,40 @@ it('checks management access once per kind, not on every navigation, and again o
   expect(view.collections).toHaveBeenCalledTimes(9);
   fireEvent.click(screen.getByRole('button', { name: 'Refresh inventory' }));
   await waitFor(() => expect(view.reviews.mock.calls.length).toBeGreaterThan(checks));
+  expect(view.writes).not.toHaveBeenCalled();
+  view.router.dispose();
+});
+
+// Restored from the pre-#204 denial boundary, which re-read through a host
+// revalidation: exactly nine list GETs, no permission review, no write. The
+// denial now reaches the page through Refresh, which re-reads the nine
+// collections and, by design, also re-checks management access at once
+// (recheckInventoryPermission). That check is issued with the reads, before the
+// denial is known, so the count is one review for the page's one management
+// action (Create device). Once Devices is denied the action's permission query
+// is disabled, so no further review follows.
+it('a denied refresh reads exactly nine collections, one Refresh permission review and no write', async () => {
+  const view = host('?kind=Device', true);
+  await screen.findByRole('table');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh inventory' })).toBeEnabled());
+  await waitFor(() => expect(view.reviews).toHaveBeenCalledTimes(1));
+  const calls = () => vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+  const before = calls().length;
+  expect(view.collections).toHaveBeenCalledTimes(9);
+  view.deny();
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh inventory' }));
+  await screen.findByRole('heading', { name: 'Inventory access needed' });
+  expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
+  // Let anything still scheduled run before counting.
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+  const after = calls().slice(before);
+  const lists = after.filter(([url]) => !url.includes('selfsubjectaccessreviews'));
+  const reviews = after.filter(([url]) => url.includes('selfsubjectaccessreviews'));
+  expect(lists).toHaveLength(9);
+  expect(lists.every(([, init]) => init.method === 'GET')).toBe(true);
+  expect(new Set(lists.map(([url]) => url)).size).toBe(9);
+  expect(reviews).toHaveLength(1);
+  expect(reviews[0][1].method).toBe('POST');
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();
 });

@@ -89,6 +89,7 @@ export async function createInventoryRecord(kind: ManagedKind, values: Inventory
     operation.assertCurrent();
     if (!facility?.metadata?.uid || facility.metadata.deletionTimestamp) throw new ApiError(409, 'Facility is not available. Refresh inventory before continuing.');
   }
+  await operation.settle();
   operation.dispatch();
   const record = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${resourcePath(kind, values.namespace)}?fieldManager=${INVENTORY_FIELD_MANAGER}${kind === 'Device' && values.catalog ? '&fieldValidation=Strict' : ''}`, { method: 'POST', body: payload }).catch(error => { operation.assertCurrent(); throw error; });
   operation.assertCurrent();
@@ -108,6 +109,7 @@ export async function editInventoryLabel(original: ManagedRecord, values: Invent
   operation.assertCurrent();
   if (!current || current.metadata.uid !== original.metadata.uid || current.metadata.resourceVersion !== original.metadata.resourceVersion || !canEditInventoryLabel(current)) throw new ApiError(409, 'The record or its ownership changed. Reload it before editing.');
   const validated = inventoryPayload('Facility', { ...values, name: original.metadata.name, namespace });
+  await operation.settle();
   operation.dispatch();
   const record = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${path}?fieldManager=${INVENTORY_FIELD_MANAGER}`, { method: 'PATCH', contentType: 'application/json-patch+json', body: [
     { op: 'test', path: '/metadata/uid', value: current.metadata.uid },

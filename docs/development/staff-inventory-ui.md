@@ -1,77 +1,52 @@
 # Staff physical inventory UI
 
-## Grouped inventory navigation (implemented)
+## Inventory and Catalog navigation (implemented)
 
-This follow-up starts from PR133's exact head
-`15f99a3234019faac8dca53248216d7719b60f97`. PR133 merged into
-`feat/manual-inventory-records` as `ce65b369ccf4a0d113cd23db7ab5052b089a5b87`;
-this navigation change retains that required source head rather than incorporating
-unrelated target-branch changes. It supersedes the flat nine-category navigation
-described in the historical notes below, not inventory contracts or IAM.
+List pages follow staff-portal's list style (its Customers page): one toolbar
+row directly on top of a compact sortable table, then the "rows per page ·
+1–N of M" footer. This replaces the earlier two rows of group and kind tabs.
 
-| Primary route tab | Secondary navigation | Meaning |
+| Page | Navigation | Categories |
 | --- | --- | --- |
-| Equipment | Devices, Cables, Power feeds | Physical assets and recorded connections/supplies |
-| Locations | Operational sites, Facilities, Racks | Site operational membership is distinct from physical Facility premises and rack containment |
-| Installation plans | None | The directory is **Installation plans**, named once in the breadcrumb: installation plans and the devices registered against them. Plans do not allocate capacity |
-| Hardware catalog | Manufacturers, Device types | Reference descriptions/templates, not installed assets or available capacity |
+| Inventory | A category switcher (like staff-portal's `SectionSwitcher`): a datum-ui Popover of links grouped by Equipment, Locations and Installation plans | Devices, Cables, Power feeds · Operational sites, Facilities, Racks · Installation plans |
+| Catalog (its own Bare Metal tab) | A two-option pill toggle (like staff-portal's `ViewTabs`) | Manufacturers, Device types |
 
-- Uses the installed Datum `Tabs`, `TabsList variant="line"`, and
-  `TabsLinkTrigger` with React Router links, matching the pinned Compute and
-  cloud-portal sources. No custom underline imitation, sidebar, or category menu.
-  Primary tabs remain mounted; secondary tabs depend only on the selected group,
-  never access results. A group with one kind (Installation plans) has no
-  second tab row. At phone width the group tabs show short labels (Plans,
-  Catalog, and Sites for Operational sites) so all four fit on one row; the
-  accessible name stays the full title.
-- Kind tabs carry the directory's count ("Devices 18"). A filtered directory
-  shows "shown/total" on its own tab, and a denied collection reads "?". The
-  count is the tab's accessible description; its name stays the title.
-  `PhysicalInventory` reports counts through `InventoryCountsProvider` only
-  after the session boundary resolves, so the public shell, pending and
-  unavailable states render no number.
-- Equipment / Devices is the default. Group links select the first kind unless
-  already in that group. `?kind=...` and record/namespace bookmarks and the
-  child create routes are the only inventory URLs. Directories have no
-  breadcrumb, visible title or description: the tabs say where the reader is,
-  and an `sr-only` `h1` names the page. Detail and task breadcrumbs
-  include group and category, for example Equipment / Devices / record name.
-  Protected names appear only after successful access checks, not from URL text.
-- Search, filters, Refresh and Create are page controls, not navigation. They
-  share one toolbar row above the table: search, the facility and model
-  filters, **Clear filters** (only while a filter is set), an icon-only
-  Refresh named "Refresh inventory", then Create.
-  Same-category links retain `q`, `location`, and `model`; switching categories
-  starts an unfiltered directory, and browser Back/Forward restores prior URLs.
-  Clicking the already-current tab is a no-op, not an implicit refresh.
-- Same-principal presentation navigation reuses authorized default-namespace
-  collection data, including changes to the three known client-side filters
-  and the detail pages' `tab`, `view`, `selectedKind` and `selected` parameters.
-  The narrow presentation allowlist does not include unknown query parameters,
-  route changes, form submissions, or explicit revalidation. Host loaders still
-  verify navigations. During a presentation navigation the page already on
-  screen stays (the location has not changed yet, so nothing new is shown) and
-  writes are withheld until the host check finishes; other navigations show the
-  pending shell. Changed principal, logout, real denial, hidden/pagehide, and
-  unknown-scope boundaries still fence/clear private data. Operation
-  generations restart independently of retained read caches.
-- Route tabs use manual activation: arrows/Home/End move focus, Enter or Space
-  activates the focused link. Lists are named and selected tabs expose their
-  selected/current state, with visible keyboard focus. No dangling panel IDs are
-  emitted for route-linked tabs. Dirty dialog/task navigation, immutable edit
-  baselines, unknown write outcomes, and visible blur/focus no-op behavior remain.
+Manufacturers and Device types are reference descriptions and templates, not
+installed equipment or capacity, so they live on the Catalog page. A record
+link always reaches the page its kind lives on: links are absolute, and a kind
+requested on the other page is redirected there, which keeps old bookmarks and
+relative links working.
 
-Synthetic validation covers direct links for all nine kinds, group defaults,
-detail/task breadcrumbs, dirty task navigation, keyboard focus/activation,
-Back/Forward and filters, stable access-state navigation, and zero additional
-collection reads for same-principal presentation changes. Provider and consumer
-full tests, typechecks, and production builds pass. Local Chromium fixture checks
-at 1280px and 390px verify actual underline components, mobile scroll containment,
-group and secondary routes, rack breadcrumbs, and Arrow/End/Enter/Space navigation
-without page errors. The 390px page stays 390px wide while the primary tab row
-scrolls internally. These are not authenticated staff-portal or staging acceptance.
-No live writes, deployment, schema changes, or new capacity-allocation semantics
-are introduced; Go validation is not rerun because this follow-up changes no Go.
+- The navigation renders outside the session boundary and is laid over the left
+  end of the toolbar row by the page frame (`.inventory-list-frame`); the row
+  reserves its measured width (`--inventory-switcher-w`). On detail pages
+  (`.inventory-detail-frame`) it is hidden but stays mounted. At phone width it
+  sits above the row and the Filter button shows only its icon.
+- Each category carries its count ("Devices 18"): the switcher trigger shows the
+  current one, and the menu and Catalog toggle show every one. A filtered
+  directory shows "shown/total" and a denied collection "?". The count is the
+  link's accessible description, never part of its name. `PhysicalInventory`
+  reports counts through `InventoryCountsProvider` only after the session
+  boundary resolves, so the public shell and pending and unavailable states
+  render no number.
+- The switcher opens on the current category; arrow keys move between
+  categories. Choosing the current category is not a navigation. Devices is the
+  Inventory default and Manufacturers the Catalog default. Directories have no
+  breadcrumb, visible title or description; an `sr-only` `h1` names the page.
+- The toolbar row: a borderless search (applies as the reader types; Enter
+  applies at once), one **Filter** popover for facility and model with
+  **Clear filters**, an icon-only Refresh named "Refresh inventory", then
+  Create. Same-category links retain `q`, `location` and `model`; switching
+  categories starts an unfiltered directory; Back and Forward restore prior URLs.
+- The table is datum-ui's `DataTable.Client` at compact density: sortable
+  uppercase headers, one-line cells, the whole row opens the record. Columns
+  come from `inventory-directory-rows.ts` per record type. A row that needs a
+  second look keeps its coloured edge (red for a conflict, amber for
+  unavailable data) and its reasons as the row tooltip (`data-attention` and
+  `title`, set on each row by `InventoryListTable`).
+- Same-principal presentation navigation reuses loaded collections and keeps the
+  page on screen while the host loads; see
+  [Session boundary](#session-boundary-a-change-of-signed-in-user-implemented).
 
 ## Page design rules
 
@@ -272,15 +247,17 @@ access-dependent navigation descriptions in the historical phase notes below.
   access results. No private record names or counts appear in the public shell.
 - Pending, allowed, and denied directory states share the heading and the
   toolbar's search, filter, action and status slots. Actions remain mounted
-  and disabled until usable; successful authorization adds no “access checked”
-  clutter. Missing management access and ownership restrictions are the
+  and disabled until usable; neither a pending permission check nor a
+  successful one adds visible text. Missing management access and ownership restrictions are the
   disabled button's tooltip and accessible description, not a sentence.
   Explanations for unavailable references, expired sessions, and uncertain
   saves remain visible. Long failure explanations
   may wrap rather than being clipped. The composition follow-up below replaces
   expanding forms with focused dialogs and child task pages.
 - Existing immutable edit baselines, submit-time authorization, read/write
-  generation guards, principal/logout and hidden/pagehide fences are retained.
+  generation guards and principal/logout fences are retained. Hidden/pagehide
+  fences were removed on 2026-11-24 (see
+  [Session boundary](#session-boundary-a-change-of-signed-in-user-implemented)).
   Visible window blur/focus remains a complete no-op, including draft, DOM,
   request, loader, and operation-authority behavior.
 
@@ -523,47 +500,131 @@ original UID/resourceVersion and use atomic JSON Patch test operations. They do
 not silently adopt a refreshed baseline. No automatic write retries occur.
 
 Existing session protections are retained: principal-isolated QueryClients,
-authority invalidation at session/revalidation/navigation/background/unmount
-boundaries, fresh authority generations even for React-batched revalidation,
-and generation-guarded background-return checks. Already-dispatched uncertain
+operation invalidation at principal/navigation/unmount boundaries, operations
+held (not retired) while the host re-runs its loaders or confirms the user on a
+tab return, and a fresh cache even for a React-batched A→B→A principal change. Already-dispatched uncertain
 outcomes stay unknown rather than becoming cancelled-success.
 
-### Browser focus is not a session boundary
+### Session boundary: a change of signed-in user (implemented)
 
-Implemented against PR103's merged staging base
-`f190d28397fc6110e02c9c83e6819a3a584258d0`. Ordinary visible window blur/focus
-is deliberately ignored. Opening the URL bar does not change the session:
-it does not suspend reads or writes, reset edit baselines, close or disable forms,
-change controls, or start host/permission/inventory requests.
-Both the session boundary and individual management/location forms have no
-blur/focus listeners. QueryClient defaults and inventory queries disable window
-focus refetch. Drafts and frozen baselines remain usable without reopening.
+The inventory treats a change of signed-in user, as the host observes it, as
+the only session boundary. Nothing else discards loaded inventory or open forms,
+and nothing is shown while the user is being confirmed.
 
-Actual document hidden/pagehide events still synchronously invalidate operation
-and read scopes, cancel queries and mask private children. Visibility restoration
-or pageshow revalidates the host only after an observed hidden/pagehide boundary.
-Overlapping background events advance a generation so an older verification
-cannot restore authority. Failed verification remains masked. Explicit host
-revalidation/navigation and observed principal changes also fence operations and
-replace the private query cache, including fast batched A→B→A transitions.
-Cached permission is never substituted for a confirmed denial; denied references
-are redacted. Genuine session boundaries do not transfer drafts, immutable edit
-baselines or pending intents into a new authority generation.
+**Decision (2026-11-24).** The earlier design treated hiding the tab
+(`visibilitychange` to hidden, `pagehide`) and every host loader revalidation as
+session boundaries. On each one the page masked the inventory behind "Checking
+inventory access…", re-ran the host loaders, discarded the private query cache
+and read all nine collections again. In use this flashed on every return to the
+tab and on host events such as a theme change, and it cancelled in-flight saves.
+That masking and re-reading was removed.
 
-The original PR104 disable-on-blur/reopen design was superseded by this simpler
-trigger model before review/merge. Stable wrappers and native disabled controls
-remain useful for actual permission refreshes, but browser chrome focus alone
-never activates those states. This is not a new inventory or IAM contract.
+**Decision (2026-11-25): re-check the user when a tab returns.** Removing the
+hidden/pagehide handling also removed the only re-check of the signed-in user
+after a tab had been in the background or in the back-forward cache. If another
+user signed in elsewhere meanwhile, the old user's inventory stayed on screen
+and a save went out under the new session. The host does not cover this:
 
-Backend per-request authentication/authorization, submit-time exact permission
-checks, after-await operation checks, and atomic UID/resourceVersion JSON Patch
-tests remain required. A cookie/account change not yet observed by the host
-cannot be detected atomically by this UI. Focus is not authentication, and this
-change does not claim protection against an unobserved cookie transition between
-requests. Observed host boundaries revoke pending work; backend checks protect
-each dispatched request. Unknown dispatched outcomes are not reported as success.
+- The principal reaches the plugin only through the `layouts/milo.layout`
+  loader data, read by `HostedInventory` (`useRouteLoaderData`) and the router
+  subscription in `SessionQueries`. That loader calls `requireStaffUser`
+  ([milo.layout.tsx L16-L18](https://github.com/datum-cloud/staff-portal/blob/ba00ea6322933632f87ca37a175a386163d1bf02/app/layouts/milo.layout.tsx#L16-L18)) and runs
+  only on navigations and explicit revalidations.
+- Staff-portal has no `focus`, `visibilitychange` or `pageshow` handling under
+  `app/` (searched at staff-portal `ba00ea6`). Its only automatic
+  `revalidate()` is the colour-scheme client hint
+  ([client-hints.tsx L28-L29](https://github.com/datum-cloud/staff-portal/blob/ba00ea6322933632f87ca37a175a386163d1bf02/app/components/misc/client-hints.tsx#L28-L29)),
+  and the root loader opts out of ordinary revalidation
+  ([root.tsx L73-L85](https://github.com/datum-cloud/staff-portal/blob/ba00ea6322933632f87ca37a175a386163d1bf02/app/root.tsx#L73-L85)).
+- The host's shared QueryClient
+  ([query.ts L41-L47](https://github.com/datum-cloud/staff-portal/blob/ba00ea6322933632f87ca37a175a386163d1bf02/app/modules/tanstack/query.ts#L41-L47)) keeps
+  TanStack's default refetch on window focus, but that refreshes host queries,
+  not the Milo loader, so it never delivers a new principal to the plugin.
+
+So `SessionQueries` re-checks the user itself (`useReturnCheck` in
+`ui/provider/src/components/inventory-session-boundary.tsx`), invisibly:
+
+1. Hiding the tab or `pagehide` *holds* the session's reads and operations.
+   A hold is not a cancellation. Loaded data stays, and a read or save in flight
+   simply waits: a read waits to start or to deliver its result, and a save
+   waits before it dispatches its write (`InventoryOperation.settle()` runs
+   immediately before every `dispatch()`).
+2. Showing the tab again, or a `pageshow` (always when `persisted`, i.e. a
+   back-forward-cache restore), calls the host's `router.revalidate()`, which
+   re-runs the Milo loader.
+3. When the host loaders have settled: if they name the same user, the hold is
+   released and held reads and saves go on. If they name another user or no
+   user, report an error, or `revalidate()` rejects, the session's operations
+   are invalidated and its reads suspended. Held writes are never sent, and a
+   new principal remounts the private cache, as for any change of user. After a
+   failed check, a later successful check opens the session again for new work
+   only.
+
+No "Checking…" text, placeholder or re-render is shown for any of this, and a
+same-user return makes no request except the host loader.
+
+What happens now:
+
+| Event | Inventory on screen | Private cache | Open forms and in-flight saves |
+| --- | --- | --- | --- |
+| Focus or blur | Unchanged | Kept | Unchanged |
+| Tab hidden, then shown; `pagehide`, then `pageshow` (including a back-forward-cache restore); same user | Unchanged | Kept | Held while hidden and until the host confirms the user, then continue |
+| Tab return or `pageshow` that finds another user, no user, or cannot confirm the user | Replaced (another user) or session expired / host error | Replaced or discarded | Ended; a held write is never sent |
+| Host loader revalidation, same user (for example a theme change) | Unchanged | Kept | New reads and saves wait while the loaders run, then continue |
+| Filter, record or tab change (presentation navigation) | Stays until the host finishes loading | Kept | Operations pause while the navigation is pending |
+| Change of non-presentation URL parameters | Stays until the host finishes loading | Replaced | Ended |
+| Change of signed-in user, including a fast A→B→A change | Replaced | Replaced, one fresh read | Ended; nothing transfers to the new user |
+| Sign-out | Session expired state | Discarded | Ended |
+
+Retained protections:
+
+- One private QueryClient per signed-in user, never the host's shared client.
+- The API authenticates and authorizes every request as the caller, through the
+  staff portal's caller-preserving proxy.
+- Submit-time permission checks, after-await operation checks, and atomic
+  UID/resourceVersion JSON Patch tests on edits, so a stale page cannot
+  overwrite a changed record.
+- 401 and 403 responses are handled where they occur: expired sessions and
+  denials are shown, and denied references are redacted from the view.
+- Dispatched saves whose outcome is uncertain are reported as unknown, never as
+  success.
+
+Limit: a write already dispatched before the tab was hidden is not recalled; its
+result is reported as unknown if the user turns out to have changed. A denial or
+permission change that happens while the page is idle is seen on the next read
+or save, as on other staff-portal pages. Refresh inventory re-reads on demand
+and re-checks management access with a SelfSubjectAccessReview.
+
+Tests (`ui/provider/src/components/`):
+
+- `inventory-return-check.test.tsx`: the real inventory page. A same-user return
+  shows nothing and requests nothing but the host loader, and a held create
+  resumes. Refresh during a check reads nothing until it resolves. A different
+  user on return removes the old records, and the held create is never sent. A
+  back-forward-cache `pageshow` re-checks, with or without a `pagehide` first.
+  A failed check sends nothing.
+- `inventory-visible-focus-save.test.tsx`: create, display-name and placement
+  saves held at their permission review or baseline read across a tab return,
+  for the same and another user.
+- `reviewer-exact-staging.test.tsx`: overlapping return checks stay held until
+  the newest loader finishes, and logout or host failure on return (immediate
+  and held) removes the private page and refuses held work.
+- `adversarial-review.test.tsx`: a check answered after another `pagehide`
+  keeps work held until the next return.
+- `inventory-session-boundary.test.tsx`: same-user revalidation, hidden and
+  `pagehide` keep data and authority. A failed check stays closed until a later
+  check succeeds.
+- `inventory-navigation-safety.test.tsx`: a same-user host revalidation holds a
+  pending save, then lets it finish with one write.
 
 ### Regression evidence and acceptance limits
+
+The evidence below predates the 2026-11-24 session-boundary change. Statements
+about hidden/pagehide masking describe removed behaviour. The background-return
+check was restored on 2026-11-25 without masking (see
+[Session boundary](#session-boundary-a-change-of-signed-in-user-implemented)),
+and its generation, after-pagehide, failed-check and logout/failure tests were
+restored in that form.
 
 PR104's integration with feature-target revision
 `5b60656759033b61674ee202a9ad94f4d49f4a64` retains PR106's removal of provenance,
@@ -622,8 +683,9 @@ Open `/session-fixture.html`. This mounts the actual inventory page and boundary
 under a synthetic host loader, not the preview bypass. API calls are handled in
 memory; writes return a synthetic failure and never reach an API. The console's
 `inventorySessionFixture` exposes `hold(boolean)`, `release()`,
-`principal(string|null)`, `denied(boolean)`, and `stats()`. Blur/focus should do
-nothing; pagehide followed by pageshow exercises held restoration. This harness
+`principal(string|null)`, `denied(boolean)`, and `stats()`. Blur/focus should
+do nothing. Pagehide/pageshow re-runs the host loader with no visible change. A
+principal change replaces the data. This harness
 is not a production build entry and is not evidence of real Safari acceptance.
 
 Read-only users browse without enabled writes. No-read and direct-link denials

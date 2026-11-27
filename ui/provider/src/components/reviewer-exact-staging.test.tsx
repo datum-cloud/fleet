@@ -7,6 +7,9 @@ import { DevicePlacementEdit } from './device-placement-edit';
 import { InventorySessionBoundary } from './inventory-session-boundary';
 import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-management';
 import { fixturePhysicalDevices } from '../lib/fixtures';
+import { useContext } from 'react';
+import { InventoryOperationContext, InventoryOperationInvalidated, type InventoryOperationScope } from '../lib/inventory-operation';
+import { InventoryReadContext, type InventoryReadScope } from '../lib/inventory-read';
 
 const metadata = { name: 'review-only', namespace: 'default', uid: 'synthetic-review', resourceVersion: '7', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] };
 const facility = { ...inventoryPayload('Facility', { name: 'review-only', namespace: 'default', displayName: 'Original', facility: '', height: '' }), metadata };
@@ -14,31 +17,110 @@ const device = { ...fixturePhysicalDevices[0], metadata, spec: { ...fixturePhysi
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data }) });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it('settled host keeps earlier foreground generations masked until the newest loader finishes', async () => {
+// Exposes the session's operation and read scopes beside some private content.
+const session: { scope?: InventoryOperationScope; reads?: InventoryReadScope } = {};
+function Private({ text }: { text: string }) {
+  session.scope = useContext(InventoryOperationContext);
+  session.reads = useContext(InventoryReadContext);
+  return <p>{text}</p>;
+}
+
+// Restored from the pre-#204 "keeps earlier foreground generations masked" test.
+// The page is no longer masked during a return check (nothing flashes); what a
+// check withholds now is work: reads and operations stay held until the newest
+// check has finished, and an earlier check finishing does not release them.
+it('settled host keeps earlier return-check generations held until the newest loader finishes', async () => {
   const releases: (() => void)[] = [];
   let reads = 0;
   const loader = vi.fn(async () => {
     if (++reads > 1) await new Promise<void>(resolve => releases.push(resolve));
     return { user: { metadata: { uid: 'synthetic-staff' } } };
   });
-  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader, element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary>Private generation inventory</InventorySessionBoundary> }] }]);
+  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader, element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><Private text="Private generation inventory" /></InventorySessionBoundary> }] }]);
   await act(async () => { render(<RouterProvider router={router} />); });
   await screen.findByText('Private generation inventory');
   await act(async () => {});
+  const operation = session.scope!.begin();
+  let settled = false;
+  const fetcher = vi.fn(async () => 'synthetic read');
   for (const expectedReads of [1, 2]) {
     await act(async () => {
       fireEvent(window, new Event('pagehide'));
       fireEvent(window, new Event('pageshow'));
     });
     await waitFor(() => expect(releases).toHaveLength(expectedReads));
-    expect(screen.queryByText('Private generation inventory')).not.toBeInTheDocument();
+    expect(session.scope!.held).toBe(true);
+    expect(screen.getByText('Private generation inventory')).toBeInTheDocument();
   }
+  void operation.settle().then(() => { settled = true; });
+  const read = session.reads!.read(fetcher);
   await act(async () => releases[0]());
-  expect(screen.queryByText('Private generation inventory')).not.toBeInTheDocument();
+  expect(session.scope!.held).toBe(true);
+  expect(session.reads!.held).toBe(true);
+  expect(settled).toBe(false);
+  expect(fetcher).not.toHaveBeenCalled();
   await act(async () => releases[1]());
-  await screen.findByText('Private generation inventory');
+  await waitFor(() => expect(settled).toBe(true));
+  await expect(read).resolves.toBe('synthetic read');
+  expect(session.scope!.held).toBe(false);
+  expect(screen.getByText('Private generation inventory')).toBeInTheDocument();
   expect(router.state.revalidation).toBe('idle');
   expect(loader).toHaveBeenCalledTimes(3);
+  router.dispose();
+});
+
+// Restored from the pre-#204 "settled host restoration" test: a return that finds
+// the user signed out, or cannot confirm the user, removes the private page and
+// never lets a held operation through. Focus alone re-checks nothing.
+it.each(['logout', 'failure'].flatMap(outcome => ['pagehide', 'hidden'].flatMap(transition => ['immediate', 'held'].map(timing => ({ outcome, transition, timing })))))('settled host $transition return handles $timing $outcome', async ({ outcome, transition, timing }) => {
+  let expired = false;
+  let release: (() => void) | undefined;
+  const loader = vi.fn(async () => {
+    if (!expired) return { user: { metadata: { uid: 'synthetic-staff' } } };
+    if (timing === 'held') await new Promise<void>(resolve => { release = resolve; });
+    if (outcome === 'failure') throw new Response('Synthetic failure', { status: 503 });
+    return { user: null };
+  });
+  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader, element: <Outlet />, errorElement: <p>Host failure</p>, children: [{ index: true, element: <InventorySessionBoundary><Private text="Private review inventory" /></InventorySessionBoundary> }] }]);
+  await act(async () => { render(<RouterProvider router={router} />); });
+  await screen.findByText('Private review inventory');
+  await act(async () => {});
+  expired = true;
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  await act(async () => {
+    if (transition === 'hidden') {
+      visibility.mockReturnValue('hidden');
+      fireEvent(document, new Event('visibilitychange'));
+    } else fireEvent(window, new Event('pagehide'));
+  });
+  const operation = session.scope!.begin();
+  const outcomeOf = operation.settle().then(() => 'sent', error => error);
+  await act(async () => {
+    if (transition === 'hidden') {
+      visibility.mockReturnValue('visible');
+      fireEvent(document, new Event('visibilitychange'));
+    } else fireEvent(window, new Event('pageshow'));
+  });
+  if (timing === 'held') {
+    await waitFor(() => expect(release).toBeDefined());
+    expect(router.state.revalidation).toBe('loading');
+    // No flash while the check runs: the page stays, its work is held.
+    expect(screen.getByText('Private review inventory')).toBeInTheDocument();
+    expect(session.scope!.held).toBe(true);
+    await act(async () => release!());
+  }
+  await waitFor(() => expect(router.state.revalidation).toBe('idle'));
+  expect(loader).toHaveBeenCalledTimes(2);
+  if (outcome === 'logout') expect(router.state.loaderData['layouts/milo.layout']).toEqual({ user: null });
+  else expect(router.state.errors).not.toBeNull();
+  await waitFor(() => expect(screen.queryByText('Private review inventory')).not.toBeInTheDocument());
+  const result = await outcomeOf;
+  expect(result).toBeInstanceOf(InventoryOperationInvalidated);
+  expect((result as InventoryOperationInvalidated).dispatched).toBe(false);
+  fireEvent(window, new Event('focus'));
+  await act(async () => {});
+  expect(screen.queryByText('Private review inventory')).not.toBeInTheDocument();
+  expect(loader).toHaveBeenCalledTimes(2);
   router.dispose();
 });
 
@@ -99,51 +181,5 @@ it.each(['label', 'location'].flatMap(mode => [401, 403, 404, 409, 422, 503, 0].
     expect(patch[2].path).toBe('/spec/reportedPlacement');
     expect(patch.some((entry: { path: string }) => entry.path.includes('provenance'))).toBe(false);
   }
-  router.dispose();
-});
-
-it.each(['logout', 'failure'].flatMap(outcome => ['pagehide', 'hidden'].flatMap(transition => ['immediate', 'held'].map(timing => ({ outcome, transition, timing })))))('settled host $transition restoration handles $timing $outcome', async ({ outcome, transition, timing }) => {
-  let expired = false;
-  let release: (() => void) | undefined;
-  const loader = vi.fn(async () => {
-    if (!expired) return { user: { metadata: { uid: 'synthetic-staff' } } };
-    if (timing === 'held') await new Promise<void>(resolve => { release = resolve; });
-    if (outcome === 'failure') throw new Response('Synthetic failure', { status: 503 });
-    return { user: null };
-  });
-  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader, element: <Outlet />, errorElement: <p>Host failure</p>, children: [{ index: true, element: <InventorySessionBoundary>Private review inventory</InventorySessionBoundary> }] }]);
-  await act(async () => { render(<RouterProvider router={router} />); });
-  await screen.findByText('Private review inventory');
-  await act(async () => {});
-  expired = true;
-  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-  await act(async () => {
-    if (transition === 'hidden') {
-      visibility.mockReturnValue('hidden');
-      fireEvent(document, new Event('visibilitychange'));
-    } else fireEvent(window, new Event('pagehide'));
-  });
-  expect(screen.queryByText('Private review inventory')).not.toBeInTheDocument();
-  await act(async () => {
-    if (transition === 'hidden') {
-      visibility.mockReturnValue('visible');
-      fireEvent(document, new Event('visibilitychange'));
-    } else fireEvent(window, new Event('pageshow'));
-  });
-  if (timing === 'held') {
-    await waitFor(() => expect(release).toBeDefined());
-    expect(router.state.revalidation).toBe('loading');
-    expect(screen.queryByText('Private review inventory')).not.toBeInTheDocument();
-    await act(async () => release!());
-  }
-  await waitFor(() => expect(router.state.revalidation).toBe('idle'));
-  expect(loader).toHaveBeenCalledTimes(2);
-  if (outcome === 'logout') expect(router.state.loaderData['layouts/milo.layout']).toEqual({ user: null });
-  else expect(router.state.errors).not.toBeNull();
-  expect(screen.queryByText('Private review inventory')).not.toBeInTheDocument();
-  fireEvent(window, new Event('focus'));
-  await act(async () => {});
-  expect(screen.queryByText('Private review inventory')).not.toBeInTheDocument();
-  expect(loader).toHaveBeenCalledTimes(2);
   router.dispose();
 });

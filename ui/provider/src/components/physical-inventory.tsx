@@ -1,9 +1,10 @@
 import { Button } from '@datum-cloud/datum-ui/button';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@datum-cloud/datum-ui/table';
+import { RefreshCw } from 'lucide-react';
 import { Title } from '@datum-cloud/datum-ui/typography';
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { InventoryNavigation, sections, useReportInventoryCounts, type InventoryCounts } from './inventory-navigation';
+import { isCatalogKind } from './inventory-groups';
 import {
   modelLabel,
   placementLabel,
@@ -23,14 +24,15 @@ import { DevicePlacementEdit } from './device-placement-edit';
 import type { ManagedKind, ManagedRecord } from '../lib/inventory-management';
 import { InventoryReadAccessContext, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 import { inventoryHref } from './inventory-location';
-import { RackDetail } from './rack-detail';
+import { RackDetail, RackSummary } from './rack-detail';
 import { devicePlacement, placementFacility, reportedPlacementLabel } from '../lib/device-placement';
 import { facilitySites } from '../lib/site-membership';
 import { deviceCatalog } from '../lib/hardware-catalog';
 import { INVENTORY_NAMESPACE } from '../lib/inventory-namespace';
 import { InventoryDirectoryHeading, InventoryToolbar } from './inventory-directory-heading';
 import { InventoryPageTitle, inventoryDirectoryPath, inventoryReturnSearch } from './inventory-page-title';
-import { directoryColumns, directoryRows, rowText } from './inventory-directory-rows';
+import { directoryColumns, directoryRows, rowText, type Cell } from './inventory-directory-rows';
+import { InventoryListTable, type InventoryListColumn } from './inventory-list-table';
 import { IssueBanners, RecordFooter, RecordSummary, RecordTabs, SummaryParts } from './inventory-record-layout';
 import { cableDetail, claimDetail, deviceDetail, deviceTypeDetail, facilityDetail, powerFeedDetail, type DetailHelpers, type DetailView } from './inventory-record-detail';
 import { useTelemetry } from './power-telemetry';
@@ -45,7 +47,7 @@ function recordName(entry: RecordEntry) {
   return entry.record.spec.displayName || entry.record.metadata.name;
 }
 
-export function PhysicalInventory({ inventory: source, onRetry, showNavigation = true }: { inventory: Inventory; onRetry?: () => void; showNavigation?: boolean }) {
+export function PhysicalInventory({ inventory: source, onRetry, showNavigation = true, scope = 'inventory' }: { inventory: Inventory; onRetry?: () => void; showNavigation?: boolean; scope?: 'inventory' | 'catalog' }) {
   const [readIssues, setReadIssues] = useState<Inventory['issues']>({});
   const telemetry = useTelemetry();
   const inventory = redactInventory(source, readIssues);
@@ -58,11 +60,13 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
   const setLocationFilter = (value: string) => setFilter('location', value);
   const setModelFilter = (value: string) => setFilter('model', value);
   const heading = useRef<HTMLDivElement>(null);
-  const section = sections.find((item) => item.kind === params.get('kind')) ?? sections[0];
+  const defaultKind = scope === 'catalog' ? 'Manufacturer' : 'Device';
+  const section = sections.find((item) => item.kind === params.get('kind')) ?? sections.find(item => item.kind === defaultKind)!;
+  // Absolute, so a link reaches the Inventory or Catalog page its kind lives on.
   const href = (kind: string, namespace?: string, name?: string) => {
     const next = new URLSearchParams(inventoryHref(kind, namespace, name));
     if (kind === section.kind) for (const key of ['q', 'location', 'model']) { const value = params.get(key); if (value) next.set(key, value); }
-    return `?${next}`;
+    return `${inventoryDirectoryPath(pathname, kind)}?${next}`;
   };
   const entries: RecordEntry[] = [
     ...inventory.slots.flatMap((slot) => slot.devices.map((record) => ({ kind: 'Device' as const, record }))),
@@ -244,23 +248,37 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
     /> : null;
   const placementEditor = selected?.kind === 'Device' && !inventory.issues?.Device ? <DevicePlacementEdit key={`${selectedNamespace}/${selectedName}`} device={selected.record as RawDevice} locations={inventory.physical} issues={inventory.issues} /> : null;
   const navigate = useNavigate();
-  const openRow = (event: MouseEvent<HTMLElement>, target: string) => {
-    if ((event.target as HTMLElement).closest('a,button,input,select,summary')) return;
-    if (window.getSelection()?.toString()) return;
-    void navigate(target);
-  };
+  // DataTable hands cells copies of the row objects, so rows are found by record key, not identity.
+  const entryKey = (entry: RecordEntry) => `${entry.kind}/${slotKey(entry.record.metadata.namespace, entry.record.metadata.name)}`;
+  const rowsByKey = new Map([...rows].map(([entry, row]) => [entryKey(entry), row]));
+  const rowOf = (entry: RecordEntry) => rowsByKey.get(entryKey(entry))!;
+  // The list's columns come from the directory rows: the name links to the
+  // record; other cells may link, carry a tooltip, or be marked for attention.
+  const cellText = (cell: Cell | undefined) => !cell ? null : cell.text === '?' ? <><span aria-hidden="true">?</span><span className="inventory-visually-hidden">{cell.title ?? 'Unknown'}</span></> : <>{cell.to ? <Link to={cell.to} onClick={event => event.stopPropagation()}>{cell.text}</Link> : cell.text}{cell.attention && cell.title && <span className="inventory-visually-hidden"> · {cell.title.split('\n')[0]}</span>}</>;
+  const listColumns: InventoryListColumn<RecordEntry>[] = [
+    { id: 'name', header: 'Name', sort: entry => recordName(entry), cell: entry => { const row = rowOf(entry); return <span title={[recordName(entry), ...row.reasons].join('\n')}>
+      <Link to={href(entry.kind, entry.record.metadata.namespace, entry.record.metadata.name)} onClick={event => event.stopPropagation()}>{recordName(entry)}</Link>
+      {row.note && <span className="inventory-muted" title={row.note.title}> · {row.note.text}</span>}
+      {row.reasons.length > 0 && <span className="inventory-visually-hidden"> · {row.reasons.join(' · ')}</span>}
+    </span>; } },
+    ...columns.map((column): InventoryListColumn<RecordEntry> => ({
+      id: column.head, header: column.head,
+      sort: entry => { const cell = rowOf(entry).cells[column.head]; if (!cell || cell.text === '?') return ''; const number = Number.parseFloat(cell.text.replace(/^U/, '')); return cell.numeric || /^U\d/.test(cell.text) ? (Number.isNaN(number) ? cell.text : number) : cell.text; },
+      cell: entry => { const cell = rowOf(entry).cells[column.head]; return <span className={cell?.numeric ? 'inventory-numeric' : undefined} title={cell?.title ?? (cell && cell.text.length > 24 ? cell.text : undefined)} data-attention={cell?.attention}>{cellText(cell)}</span>; },
+    })),
+  ];
   if (unauthenticated) return <InventoryAccessState status={401} />;
   const view = selected ? detailView(selected, placementEditor) : undefined;
-  const refresh = onRetry && <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={onRetry}>Refresh inventory</Button>;
+  const refresh = onRetry && <Button type="secondary" theme="borderless" size="icon" htmlType="button" aria-label="Refresh inventory" title="Refresh inventory" onClick={onRetry} icon={<RefreshCw size={16} aria-hidden="true" />} />;
   const titleActions = <>{refresh}{management}</>;
   return (
     <InventoryReadAccessContext.Provider value={error => setReadIssues(previous => ({ ...previous, ...readFailureIssues(error) }))}>
     <section className="fleet-inventory" aria-label="Physical inventory">
-      {showNavigation && <InventoryNavigation counts={counts} />}
+      {showNavigation && <InventoryNavigation counts={counts} scope={isCatalogKind(section.kind) ? 'catalog' : scope} />}
       <div className="inventory-body">
           {inventory.issues?.[section.kind] ? <><InventoryDirectoryHeading section={section} /><InventoryToolbar section={section} onRetry={onRetry} management={management} /><InventoryAccessState status={inventory.issues[section.kind]!.status} onRetry={onRetry} /></> : selectedName !== null ? (
             <>
-              <div ref={heading} tabIndex={-1} className="inventory-record-header"><InventoryPageTitle title={selected ? recordName(selected) : 'Record not found'} category={section} directory={href(section.kind)} description={view?.summary} actions={titleActions} /></div>
+              <div ref={heading} tabIndex={-1} className="inventory-record-header"><InventoryPageTitle title={selected ? recordName(selected) : 'Record not found'} category={section} directory={href(section.kind)} description={selected?.kind === 'Rack' ? <RackSummary rack={selected.record as PhysicalRecord} inventory={inventory} /> : view?.summary} actions={titleActions} /></div>
               {selected?.kind === 'Rack' ? <RackDetail rack={selected.record as PhysicalRecord} inventory={inventory} /> : selected && view ? (
                 <>
                   <IssueBanners issues={view.issues} />
@@ -279,35 +297,11 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
               <InventoryDirectoryHeading section={section} />
               <InventoryToolbar key={section.kind} section={section} search={search} onSearch={value => setFilter('q', value)} location={locationFilter} onLocation={inventory.issues?.Facility ? undefined : setLocationFilter} facilities={inventory.physical.filter(record => record.kind === 'Facility').map(record => ({ value: slotKey(record.metadata.namespace, record.metadata.name), label: record.spec.displayName || record.metadata.name }))} model={modelFilter} onModel={setModelFilter} models={filterOptions} onClear={clearFilters} onRetry={onRetry} management={management} />
               {matching.length ? (
-                <div className="inventory-scroll" tabIndex={0} role="region" aria-label={`${section.title} table scroll area`}>
-                  <Table aria-label={section.title} data-testid="fleet-plugin-inventory-table" className="inventory-dense-table inventory-directory-table">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        {columns.map(column => <TableHead key={column.head}>{column.head}</TableHead>)}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {matching.map((entry) => {
-                        const target = href(entry.kind, entry.record.metadata.namespace, entry.record.metadata.name);
-                        const row = rows.get(entry)!;
-                        return <TableRow key={slotKey(entry.record.metadata.namespace, entry.record.metadata.name)} className="inventory-row-link" data-attention={row.attention} title={row.reasons.join('\n') || undefined} onClick={event => openRow(event, target)}>
-                          <TableCell title={[recordName(entry), ...row.reasons].join('\n')}>
-                            <Link to={target}>{recordName(entry)}</Link>
-                            {row.note && <span className="inventory-muted" title={row.note.title}> · {row.note.text}</span>}
-                            {row.reasons.length > 0 && <span className="inventory-visually-hidden"> · {row.reasons.join(' · ')}</span>}
-                          </TableCell>
-                          {columns.map(column => {
-                            const cell = rows.get(entry)!.cells[column.head];
-                            return <TableCell key={column.head} className={cell?.numeric ? 'inventory-numeric' : undefined} title={cell?.title ?? (cell && cell.text.length > 24 ? cell.text : undefined)} data-attention={cell?.attention}>
-                              {!cell ? null : cell.text === '?' ? <><span aria-hidden="true">?</span><span className="inventory-visually-hidden">{cell.title ?? 'Unknown'}</span></> : <>{cell.to ? <Link to={cell.to}>{cell.text}</Link> : cell.text}{cell.attention && cell.title && <span className="inventory-visually-hidden"> · {cell.title.split('\n')[0]}</span>}</>}
-                            </TableCell>;
-                          })}
-                        </TableRow>;
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
+                <InventoryListTable key={`table-${section.kind}`} label={section.title} rows={matching} total={records.length} columns={listColumns} resource={section.title.toLowerCase()}
+                  rowKey={entry => slotKey(entry.record.metadata.namespace, entry.record.metadata.name)}
+                  rowMeta={entry => { const row = rowOf(entry); return { attention: row.attention, title: row.reasons.join('\n') || undefined }; }}
+                  onOpen={entry => void navigate(href(entry.kind, entry.record.metadata.namespace, entry.record.metadata.name))}
+                  empty="No matching records" />
               ) : (
                 <div className="inventory-empty" data-testid="fleet-plugin-inventory-empty">
                   <section.icon size={32} aria-hidden="true" />

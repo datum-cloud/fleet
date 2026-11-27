@@ -27,6 +27,6 @@ it('shows cached counts on Inventory without reading any Bare Metal list', () =>
 
 it('renders the tabs without counts outside a QueryClient', () => {
   renderInventory();
-  expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Capacity', 'Profiles', 'Classes', 'Inventory']);
+  expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Capacity', 'Profiles', 'Classes', 'Inventory', 'Catalog']);
   expect(fetcher).not.toHaveBeenCalled();
 });

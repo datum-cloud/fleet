@@ -8,6 +8,8 @@ import { InventorySessionBoundary } from './inventory-session-boundary';
 import DeviceInventoryList from '../pages/device-inventory-list';
 import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-management';
 import { focusManager } from '@tanstack/react-query';
+import { useContext } from 'react';
+import { InventoryOperationContext, type InventoryOperationScope } from '../lib/inventory-operation';
 
 const values = { name: 'review-facility', namespace: 'default', displayName: 'Original label', facility: '', height: '' };
 const original = { ...inventoryPayload('Facility', values), metadata: { name: values.name, namespace: 'default', uid: 'synthetic-only', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
@@ -138,16 +140,33 @@ it('must not silently advance an open edit form to a refreshed resourceVersion',
   expect(patches).toEqual([]);
 });
 
-it('must keep inventory concealed if foreground verification finishes after another pagehide', async () => {
+// Restored from "must keep inventory concealed if foreground verification
+// finishes after another pagehide". The page is no longer concealed during a
+// check; the risk it guarded is that a check answered for an earlier return
+// lets work through after the page has gone away again. It must not.
+it('must keep work held if a return check finishes after another pagehide', async () => {
   let release: (() => void) | undefined;
   let count = 0;
-  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: async () => { if (++count === 2) await new Promise<void>(resolve => { release = resolve; }); return { user: { metadata: { uid: 'staff-a' } } }; }, element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary>Private inventory label</InventorySessionBoundary> }] }]);
+  let scope: InventoryOperationScope | undefined;
+  function Private() { scope = useContext(InventoryOperationContext); return <p>Private inventory label</p>; }
+  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: async () => { if (++count === 2) await new Promise<void>(resolve => { release = resolve; }); return { user: { metadata: { uid: 'staff-a' } } }; }, element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><Private /></InventorySessionBoundary> }] }]);
   render(<RouterProvider router={router} />);
   await screen.findByText('Private inventory label');
   fireEvent(window, new Event('pagehide'));
   fireEvent(window, new Event('pageshow'));
   await waitFor(() => expect(release).toBeDefined());
   fireEvent(window, new Event('pagehide'));
+  const operation = scope!.begin();
+  let settled = false;
+  void operation.settle().then(() => { settled = true; });
   await act(async () => { release!(); });
-  expect(screen.queryByText('Private inventory label')).not.toBeInTheDocument();
+  await waitFor(() => expect(router.state.revalidation).toBe('idle'));
+  expect(scope!.held).toBe(true);
+  expect(settled).toBe(false);
+  // The next return checks again, and only then does the work go on.
+  fireEvent(window, new Event('pageshow'));
+  await waitFor(() => expect(settled).toBe(true));
+  expect(count).toBe(3);
+  expect(screen.getByText('Private inventory label')).toBeInTheDocument();
+  router.dispose();
 });
