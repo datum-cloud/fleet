@@ -328,6 +328,17 @@ with tempfile.TemporaryDirectory() as tmp:
           and 'step release-installer' in (root / 'hack/multiplane/acceptance.sh').read_text() and "installerHold" in (root / 'hack/multiplane/evidence.py').read_text())
     steps = (root / 'hack/multiplane/steps.sh').read_text()
     evidence = (root / 'hack/multiplane/evidence.py').read_text()
+    # The partition marker is counted from real output only: the shell's
+    # trace of its printf shows the format, and a kernel message may prefix it.
+    import re as _re
+    partitioned = _re.compile(_re.search(r"PARTITIONED = re.compile\(r'([^']+)'\)", evidence).group(1))
+    receipt = 'ab' * 32
+    traced = subprocess.run(['sh', '-xc', "printf 'FLEET-PARTITIONED:%s\\n' \"$1\"", 'sh', receipt], text=True, capture_output=True)
+    log = traced.stderr + '[    1.5] vda: vda1\n' + traced.stdout.replace('FLEET-', '[    1.6] virtio_blk: ok FLEET-', 1)
+    check('init prints the partition marker after sfdisk', "sfdisk /dev/vda\n# One line" in (root / 'hack/local-vm/init').read_text()
+          and "printf 'FLEET-PARTITIONED:%s\\n' \"$receipt\"" in (root / 'hack/local-vm/init').read_text())
+    check('partition marker ignores its own trace', 'FLEET-PARTITIONED:' in traced.stderr and partitioned.findall(log) == [receipt], log)
+    check('partition marker counts a second partition', partitioned.findall(log + traced.stdout) == [receipt, receipt])
     for name, text in (('steps', steps), ('evidence', evidence), ('harness', harness.read_text())):
         check('no docker process launch in site execution: ' + name, '-vm' not in text and 'cell.pid' not in text)
     sequence = (root / 'hack/multiplane/acceptance.sh').read_text()
