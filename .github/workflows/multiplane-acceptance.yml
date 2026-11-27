@@ -50,7 +50,20 @@ jobs:
         HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       run: printf 'Tested commit %s for head %s\n' "$(git rev-parse HEAD)" "$HEAD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
     - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-      with: {go-version-file: go.mod, cache: true}
+      with: {go-version-file: go.mod, cache: false}
+    # This job's own Go build cache: the readiness tests build with the race
+    # detector and the site binary without cgo, so a cache saved by another
+    # workflow holds neither. Keyed by commit, restoring the newest for the
+    # same go.sum.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: multiplane-go-${{ matrix.mode }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+        restore-keys: |
+          multiplane-go-${{ matrix.mode }}-${{ hashFiles('go.mod', 'go.sum') }}-
+          multiplane-go-${{ matrix.mode }}-
     - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
       with: {python-version: '3.12.12'}
     - uses: imranismail/setup-kustomize@2ba527d4d055ab63514ba50a99456fc35684947f # v2
@@ -70,15 +83,14 @@ jobs:
         mkdir -p "$HOME/.local/bin"
         mv kubectl "$HOME/.local/bin/kubectl"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-    - name: Free runner disk and record capacity
+    # The runner's disk has far more free space than the 12 GiB the harness
+    # requires in the Docker data root, and preflight checks it.
+    - name: Record runner capacity
       run: |
-        # Preinstalled toolchains this job does not use. The harness needs
-        # 12 GiB free in the Docker data root.
         {
           echo "FLEET_MULTIPLANE_STATE_ROOT=$RUNNER_TEMP/fleet-multiplane"
           echo "METRICS=$RUNNER_TEMP/runner-metrics"
         } >> "$GITHUB_ENV"
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
         nproc
         free -m
         df -h / /var/lib/docker
@@ -92,12 +104,13 @@ jobs:
     - name: Sample runner memory
       run: |
         mkdir -m 0700 "$METRICS"
-        # Every 10 s: memory, swap and the run's container memory. Container
+        # Every 10 s: memory, swap, the run's container memory and free disk. Container
         # names and byte counts only. The script expands in its own shell.
         # shellcheck disable=SC2016
         nohup sh -c 'while :; do
           printf "%s %s\n" "$(date -u +%FT%TZ)" "$(awk "/^(MemTotal|MemAvailable|SwapTotal|SwapFree):/ {printf \"%s=%s \", \$1, \$2}" /proc/meminfo)" >> "$1/meminfo.log"
           docker stats --no-stream --format "{{.Name}} {{.MemUsage}}" 2>/dev/null | sed "s/^/$(date -u +%FT%TZ) /" >> "$1/containers.log"
+          printf "%s %s\n" "$(date -u +%FT%TZ)" "$(df -k --output=avail /var/lib/docker | tail -1)" >> "$1/disk.log"
           sleep 10
         done' sh "$METRICS" >/dev/null 2>&1 &
         echo $! > "$METRICS/sampler.pid"
@@ -126,6 +139,9 @@ jobs:
             low = min(int(r['MemAvailable:']) for r in rows) / 2**20
             swap = max(int(r['SwapTotal:']) - int(r['SwapFree:']) for r in rows) / 2**20
             print('Runner memory: %.1f GiB total, %.1f GiB peak used, %.1f GiB minimum available, %.2f GiB peak swap, %d samples' % (total, total - low, low, swap, len(rows)))
+        disk = [int(l.split()[1]) for l in (m / 'disk.log').read_text().splitlines()] if (m / 'disk.log').exists() else []
+        if disk:
+            print('Runner disk: %.1f GiB minimum available in the Docker data root' % (min(disk) / 2**20))
         oom = (m / 'oom.log').read_text().strip().splitlines() if (m / 'oom.log').exists() else []
         print('Kernel OOM events: %d' % len(oom))
         PY
@@ -133,7 +149,7 @@ jobs:
         for state in "$FLEET_MULTIPLANE_STATE_ROOT"/fleet-multiplane.*; do
           [ -d "$state/evidence" ] || continue
           mkdir -p "$state/evidence/runner"
-          cp "$METRICS"/meminfo.log "$METRICS"/containers.log "$METRICS"/summary.txt "$METRICS"/oom.log "$state/evidence/runner/" 2>/dev/null || true
+          cp "$METRICS"/meminfo.log "$METRICS"/containers.log "$METRICS"/summary.txt "$METRICS"/oom.log "$METRICS"/disk.log "$state/evidence/runner/" 2>/dev/null || true
           if ! python3 hack/multiplane/harness.py scan --state "$state"; then
             redacted=true
             python3 hack/multiplane/harness.py scan --state "$state"
