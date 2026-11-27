@@ -6,6 +6,7 @@ prefix=$(cat "$state/prefix")
 [[ $prefix =~ ^fleet-mp-[a-f0-9]{8}$ ]] || exit 1
 # The coordinator is a workstation process: stop it before its clusters.
 bash hack/multiplane/coordinator.sh stop "$state" >/dev/null
+bash hack/multiplane/media-central.sh stop "$state" >/dev/null
 export DOCKER_CONTEXT=colima-fleet-acceptance-tcg
 # The cell node holds the site runtime, journal volume, kro and worker Jobs; the
 # platform node holds the Milo APIs and their etcd volumes; the registry holds

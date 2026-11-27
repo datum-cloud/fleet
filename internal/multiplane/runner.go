@@ -67,6 +67,13 @@ type Config struct {
 	// Fleet synchronizes. Empty means the site's DHCP is configured
 	// independently, as in the lab.
 	BootAddressClass string `json:",omitempty"`
+	// DeliveryMethods is the cell's declared boot delivery methods, in its
+	// order of preference. The coordinator admits against it and the Metal
+	// provider selects from it. A cell that declares none offers none.
+	DeliveryMethods []custody.OfferedMethod `json:",omitempty"`
+	// MediaService is the central media service's endpoint, as BMCs and
+	// installed servers reach it, when the acceptance runs one.
+	MediaService string `json:",omitempty"`
 }
 
 type Project struct {
@@ -148,7 +155,7 @@ func coordinator(ctx context.Context, c Config, registry *custody.Registry) (*cu
 		return nil, nil, nil, nil, err
 	}
 	hub := &coordination.Hub{API: dynamicHub, Namespace: "fleet-coordination", Cell: c.Cell, MaxAge: time.Minute}
-	sites := &delivery.Sites{Sites: map[string]delivery.Site{c.Cell: hub}, Devices: map[string][]string{}}
+	sites := &delivery.Sites{Sites: map[string]delivery.Site{c.Cell: hub}, Devices: map[string][]string{}, Methods: map[string][]custody.OfferedMethod{c.Cell: c.DeliveryMethods}}
 	for key := range c.Enrollment {
 		namespace, name, _ := strings.Cut(key, "/")
 		if namespace == DeviceNamespace {
@@ -239,6 +246,7 @@ func New(ctx context.Context, c Config) (*Runner, error) {
 			return custody.SpecDigest(`{"method":"overwrite","disks":"all"}`)
 		},
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
+		DeliveryMethods: c.DeliveryMethods,
 	}
 	if c.BootAddressClass != "" {
 		// IPAM, aggregated by the provider project's Milo API, binds each claim
@@ -389,6 +397,12 @@ func (r *Runner) projectPower(ctx context.Context, q *request) error {
 // installation creates the consumer's DeviceInstallation once and returns
 // it with the allocation.
 func (r *Runner) installation(ctx context.Context, index int) (*request, *fleet.MachineAllocation, *fleet.Installation, *ops.DeviceInstallation, error) {
+	return r.installationNamed(ctx, index, "debian-pxe")
+}
+
+// installationNamed creates the DeviceInstallation for one of the
+// consumer's Installations once and returns it with the allocation.
+func (r *Runner) installationNamed(ctx context.Context, index int, name string) (*request, *fleet.MachineAllocation, *fleet.Installation, *ops.DeviceInstallation, error) {
 	q, err := r.request(ctx, index)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -401,12 +415,12 @@ func (r *Runner) installation(ctx context.Context, index int) (*request, *fleet.
 		return nil, nil, nil, nil, errNoActiveAllocation
 	}
 	var install fleet.Installation
-	if err := q.project.API.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: "debian-pxe"}, &install); err != nil {
+	if err := q.project.API.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: name}, &install); err != nil {
 		return nil, nil, nil, nil, err
 	}
 	operation := &ops.DeviceInstallation{}
-	name := custody.InstallationName(current.Name, string(install.UID))
-	if err := r.Provider.API.Get(ctx, client.ObjectKey{Namespace: DeviceNamespace, Name: name}, operation); apierrors.IsNotFound(err) {
+	key := client.ObjectKey{Namespace: DeviceNamespace, Name: custody.InstallationName(current.Name, string(install.UID))}
+	if err := r.Provider.API.Get(ctx, key, operation); apierrors.IsNotFound(err) {
 		previous := ""
 		if ref := q.machine.Status.CurrentInstallationRef; ref != nil {
 			previous = ref.Name

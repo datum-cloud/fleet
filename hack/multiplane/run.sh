@@ -9,8 +9,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 umask 077
-usage() { echo 'usage: hack/multiplane/run.sh [--redfish [--synced-dhcp]] [--preflight-only] [--bootstrap] [--keep] [--leave-running] [--skip-readiness-tests]' >&2; exit 64; }
-preflight_only=0 bootstrap=() keep=0 leave=0 skip_tests=() provider=libvirt lab_dhcp=static
+usage() { echo 'usage: hack/multiplane/run.sh [--redfish [--synced-dhcp | --virtual-media]] [--preflight-only] [--bootstrap] [--keep] [--leave-running] [--skip-readiness-tests]' >&2; exit 64; }
+preflight_only=0 bootstrap=() keep=0 leave=0 skip_tests=() provider=libvirt lab_dhcp=static media=0
 for arg in "$@"; do
  case "$arg" in
   --preflight-only) preflight_only=1 ;;
@@ -26,10 +26,14 @@ for arg in "$@"; do
   # (milo-os/ipam) aggregated by the provider Milo API
   # (docs/operations/redfish-lab.md).
   --synced-dhcp) lab_dhcp=synced ;;
+  # Virtual media: the Redfish lab's suite that installs over Redfish
+  # VirtualMedia and the site's media service (docs/operations/redfish-lab.md).
+  --virtual-media) media=1 ;;
   *) usage ;;
  esac
 done
 [[ $lab_dhcp == static || $provider == redfish ]] || usage
+[[ $media == 0 || ($provider == redfish && $lab_dhcp == static) ]] || usage
 export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker FLEET_SITE_PROVIDER=$provider FLEET_LAB_DHCP=$lab_dhcp
 harness=(python3 hack/multiplane/harness.py)
 state=$(mktemp -d "${FLEET_MULTIPLANE_STATE_ROOT:-/tmp}/fleet-multiplane.XXXXXX")
@@ -135,7 +139,12 @@ python3 - "$state" "$provider" "$lab_dhcp" <<'PY'
 import json,pathlib,sys
 s=pathlib.Path(sys.argv[1]).resolve()
 enrollment=json.loads((s/'redfish'/'fixture-enrollment.json').read_text() if sys.argv[2]=='redfish' else pathlib.Path('config/site/base/enrollment.json').read_text())
-c={'State':str(s),'HubKubeconfig':str(s/'management-hub.json'),'Cell':(s/'prefix').read_text().strip()+'-cell','Image':(s/'image').read_text().strip(),'Enrollment':enrollment}
+c={'State':str(s),'HubKubeconfig':str(s/'management-hub.json'),'Cell':(s/'prefix').read_text().strip()+'-cell','Image':(s/'image').read_text().strip(),'Enrollment':enrollment,
+   # The cell's declared boot delivery methods: network boot only. The
+   # virtual media suite adds virtual media as an operator would.
+   'DeliveryMethods':[{'method':'NetworkBoot'}],
+   # The central media service, as lab Pods and guests reach the workstation.
+   'MediaService':'https://192.168.5.2:28443'}
 if sys.argv[3]=='synced':c['BootAddressClass']='lab-provisioning'
 (s/'acceptance.json').write_text(json.dumps(c))
 PY
@@ -146,7 +155,9 @@ ph coordinator 120 bash hack/multiplane/coordinator.sh start "$state"
 ph flux-site 1200 "${flux[@]}" publish "$state" --revision 2 --site off --purpose 'shared site services and dispatcher, dispatch disabled' --cluster cell --cluster hub --cluster platform --timeout 900
 ph site-install 900 bash hack/multiplane/site.sh check "$state"
 ph flux-verify 300 "${flux[@]}" verify "$state"
-if [[ $provider == redfish ]]; then
+if [[ $media == 1 ]]; then
+ bash hack/multiplane/acceptance-media.sh "$state" & wait $!
+elif [[ $provider == redfish ]]; then
  bash hack/multiplane/acceptance-redfish.sh "$state" & wait $!
 else
  bash hack/multiplane/acceptance.sh "$state" & wait $!

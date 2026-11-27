@@ -56,16 +56,19 @@ def can(*args):
  return r.stdout.strip()=='yes'
 allowed=[('create','jobs','-n',site),('create','serviceaccounts','-n',site),('create','roles','-n',ns),('create','rolebindings','-n',ns),
  ('list','deployments','-A'),('list','services','-A'),('watch',h,'-A'),('get','persistentvolumeclaims','-n',site)]
-redfish=os.environ.get('FLEET_SITE_PROVIDER')=='redfish';creds_ns='fleet-site-credentials'
+redfish=os.environ.get('FLEET_SITE_PROVIDER')=='redfish';creds_ns='fleet-site-credentials';ident_ns='fleet-site-worker-identity'
 if redfish:
  # Redfish mode: kro creates each worker's Role to get its one BMC credential
  # Secret, so it holds get there and nothing more; it cannot list or watch.
- allowed+=[('create','roles','-n',creds_ns),('create','rolebindings','-n',creds_ns),('get','secrets','-n',creds_ns)]
+ allowed+=[('create','roles','-n',creds_ns),('create','rolebindings','-n',creds_ns),('get','secrets','-n',creds_ns),
+  # and each worker's Role to get the site worker identity Secret.
+  ('create','roles','-n',ident_ns),('create','rolebindings','-n',ident_ns),('get','secrets','-n',ident_ns)]
 denied=[('create','deployments','-n',site),('patch','deployments','-n',site),('create','services','-n',site),('delete','services','-n',site),
  ('delete','persistentvolumeclaims','-n',site),('patch','configmaps','-n',site),('create','jobs','-n','default'),('create','jobs','-n','kube-system'),
  ('create','roles','-n',site),('create','rolebindings','-n','kube-system'),('create','clusterroles'),('get','secrets','-n',site),
  ('patch',h,'-n',ns),('update',h,'--subresource=status','-n',ns),('delete','validatingadmissionpolicies')]+(
- [('list','secrets','-n',creds_ns),('create','secrets','-n',creds_ns),('watch','secrets','-n',creds_ns)] if redfish else [])
+ [('list','secrets','-n',creds_ns),('create','secrets','-n',creds_ns),('watch','secrets','-n',creds_ns),
+  ('list','secrets','-n',ident_ns),('create','secrets','-n',ident_ns),('watch','secrets','-n',ident_ns)] if redfish else [])
 bad=[' '.join(a) for a in allowed if not can(*a)]+['denied '+' '.join(a) for a in denied if can(*a)]
 if bad:raise SystemExit('kro RBAC is not the narrowed grant: '+'; '.join(bad))
 # Grants the kro chart keeps because kro needs them: it creates the CRD for each
@@ -98,7 +101,8 @@ if redfish:
  # its Device's credential Secret, by name, through a per-operation Role.
  named=[{'apiGroups':[''],'resources':['secrets'],'resourceNames':['bmc-'+'0'*20],'verbs':['get']}]
  listing=[{'apiGroups':[''],'resources':['secrets'],'verbs':['list']}]
- cases['admitted'].update({'Redfish worker Job':job(),'worker credential Role':role(named,creds_ns)})
+ identity=[{'apiGroups':[''],'resources':['secrets'],'resourceNames':['fleet-site-worker-media'],'verbs':['get']}]
+ cases['admitted'].update({'Redfish worker Job':job(),'worker credential Role':role(named,creds_ns),'worker identity Role':role(identity,ident_ns)})
  cases['denied'].update({'Redfish worker mounting the libvirt socket':job(volumeMounts=[{'name':'state','mountPath':'/run/fleet-libvirt','subPath':'libvirt-socket'}]),
   'Redfish worker mounting the lab disks':job(volumeMounts=[{'name':'state','mountPath':'/var/lib/fleet-lab/disks','subPath':'lab-disks'}]),
   'Redfish worker with a libvirt URI':job(env=[{'name':'FLEET_SITE_PROVIDER','value':'redfish'},{'name':'FLEET_LIBVIRT_URI','value':'qemu:///system?socket=/run/fleet-libvirt/libvirt-sock'}]),
@@ -110,7 +114,11 @@ if redfish:
   'credential Role getting every Secret':role([dict(named[0],resourceNames=[])],creds_ns),
   'credential Role getting two Secrets':role([dict(named[0],resourceNames=['bmc-'+'0'*20,'bmc-'+'1'*20])],creds_ns),
   'credential Role naming a Secret outside the rule':role([dict(named[0],resourceNames=['fleet-site-bmc-credentials'])],creds_ns),
-  'credential RoleBinding to another Role':binding('w-op-admission-probe','w-op-admission-probe','fleet-site-kro-worker-credentials',creds_ns)})
+  'credential RoleBinding to another Role':binding('w-op-admission-probe','w-op-admission-probe','fleet-site-kro-worker-credentials',creds_ns),
+  'identity Role naming another site\'s Secret':role([dict(identity[0],resourceNames=['fleet-site-worker-media-another-cell'])],ident_ns),
+  'identity Role getting two Secrets':role([dict(identity[0],resourceNames=['fleet-site-worker-media','fleet-site-worker-media-another-cell'])],ident_ns),
+  'identity Role getting a BMC credential name':role([dict(identity[0],resourceNames=['bmc-'+'0'*20])],ident_ns),
+  'identity Role listing Secrets':role(listing,ident_ns)})
 record={'identity':kro,'allowed':[' '.join(a) for a in allowed],'denied':[' '.join(a) for a in denied],'chartGrantsRetained':retained,'admission':{}}
 for outcome,objs in cases.items():
  for name,obj in objs.items():
@@ -123,7 +131,7 @@ for outcome,objs in cases.items():
 # A credential Role that lists Secrets is outside kro's own grant: kro holds
 # only get there, so RBAC escalation refuses it before admission. Every other
 # shape is within kro's grant and must be refused by the policies.
-outside_grant={'credential Role listing Secrets'}
+outside_grant={'credential Role listing Secrets','identity Role listing Secrets'}
 wrong=[n for n,v in record['admission'].items() if not v['admitted'] and v['deniedBy']!=('RBAC' if n in outside_grant else 'ValidatingAdmissionPolicy')]
 if wrong:
  raise SystemExit('a shape was refused by the wrong layer (%s): %s'%(', '.join(wrong),record['admission']))

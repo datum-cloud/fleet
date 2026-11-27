@@ -23,6 +23,7 @@ never the BMC credential, boot capabilities or request bodies.
   dhcp-synced         synced DHCP: boot addresses, reservations, Kea leases
                       and IPAM's allocations agree, and nothing remains held
 """
+import base64
 import datetime
 import hashlib
 import json
@@ -45,7 +46,13 @@ LIBVIRT = 'qemu:///system?socket=/run/fleet-libvirt/libvirt-sock'
 SECRET = 'fleet-site-bmc-credentials'
 TLS_SECRET = 'fleet-site-bmc-tls'
 CREDENTIALS = 'fleet-site-credentials'
+IDENTITY, IDENTITY_SECRET = 'fleet-site-worker-identity', 'fleet-site-worker-media'
 BMC_IP = '10.96.0.81'
+BOOT_IP = '10.96.0.80'
+# The workstation as lab Pods and guests reach it (the Colima host gateway),
+# where the central media service listens on loopback.
+MEDIA_HOST = '192.168.5.2'
+MEDIA_PORT = 28443
 
 
 def now():
@@ -169,6 +176,31 @@ def enroll(s):
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', str(d / 'bmc-tls.key'),
                     '-out', str(d / 'bmc-tls.crt'), '-days', '2', '-subj', '/CN=fleet-lab-bmc', '-addext', 'subjectAltName=IP:%s' % BMC_IP],
                    check=True, capture_output=True)
+    # The central media service's TLS key, also per run. It runs on the
+    # workstation, which lab Pods and guests reach at the runtime's host
+    # gateway. The lab BMC, the workers and the installed OS verify it
+    # against this certificate.
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', str(d / 'media-tls.key'),
+                    '-out', str(d / 'media-tls.crt'), '-days', '2', '-subj', '/CN=fleet-lab-media', '-addext', 'subjectAltName=IP:%s,IP:127.0.0.1,IP:::1' % MEDIA_HOST],
+                   check=True, capture_output=True)
+    # Site workers authenticate to the central media service with client
+    # certificates from a CA generated per run: the cell's workers, and one
+    # other identity the service must refuse.
+    cell = (s / 'prefix').read_text().strip() + '-cell'
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', str(d / 'media-worker-ca.key'),
+                    '-out', str(d / 'media-worker-ca.crt'), '-days', '2', '-subj', '/CN=fleet-lab-media-workers', '-addext', 'basicConstraints=critical,CA:TRUE',
+                    '-addext', 'keyUsage=critical,keyCertSign'], check=True, capture_output=True)
+    for name, identity in (('media-worker', 'fleet-site-worker:' + cell), ('media-worker-other', 'fleet-site-worker:another-cell')):
+        subprocess.run(['openssl', 'req', '-new', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', str(d / (name + '.key')),
+                        '-out', str(d / (name + '.csr')), '-subj', '/CN=' + identity], check=True, capture_output=True)
+        ext = d / (name + '.ext')
+        ext.write_text('extendedKeyUsage=clientAuth\nkeyUsage=critical,digitalSignature\n')
+        subprocess.run(['openssl', 'x509', '-req', '-in', str(d / (name + '.csr')), '-CA', str(d / 'media-worker-ca.crt'), '-CAkey', str(d / 'media-worker-ca.key'),
+                        '-CAcreateserial', '-days', '2', '-extfile', str(ext), '-out', str(d / (name + '.crt'))], check=True, capture_output=True)
+    env_path = s / 'gitops-environment.json'
+    env = json.loads(env_path.read_text())
+    env['mediaCA'] = base64.b64encode((d / 'media-tls.crt').read_bytes()).decode()
+    env_path.write_text(json.dumps(env, indent=2) + '\n')
     spki = subprocess.run(['openssl', 'x509', '-in', str(d / 'bmc-tls.crt'), '-pubkey', '-noout'], check=True, capture_output=True).stdout
     der = subprocess.run(['openssl', 'pkey', '-pubin', '-outform', 'der'], input=spki, check=True, capture_output=True).stdout
     pin = hashlib.sha256(der).hexdigest()
@@ -177,8 +209,16 @@ def enroll(s):
         p.chmod(0o600)
     kubectl(s, '-n', SITE, 'create', 'secret', 'generic', SECRET, '--from-file=username=%s' % (d / 'bmc-username'), '--from-file=password=%s' % (d / 'bmc-password.token'))
     kubectl(s, '-n', SITE, 'create', 'secret', 'tls', TLS_SECRET, '--cert=%s' % (d / 'bmc-tls.crt'), '--key=%s' % (d / 'bmc-tls.key'))
+    kubectl(s, '-n', SITE, 'create', 'secret', 'generic', 'fleet-site-media-ca', '--from-file=ca.crt=%s' % (d / 'media-tls.crt'))
     if synced(s):
         enroll_dhcp(s, d)
+    # The site worker's own media service identity, one Secret per site
+    # worker identity, apart from every BMC credential; and another site's,
+    # which no worker here may read.
+    if kubectl(s, 'get', 'namespace', IDENTITY, check=False).returncode != 0:
+        kubectl(s, 'create', 'namespace', IDENTITY)
+    for name, files in ((IDENTITY_SECRET, 'media-worker'), (IDENTITY_SECRET + '-another-cell', 'media-worker-other')):
+        kubectl(s, '-n', IDENTITY, 'create', 'secret', 'tls', name, '--cert=%s' % (d / (files + '.crt')), '--key=%s' % (d / (files + '.key')))
     # One credential Secret per Device, by the BMC discovery contract.
     if kubectl(s, 'get', 'namespace', CREDENTIALS, check=False).returncode != 0:
         kubectl(s, 'create', 'namespace', CREDENTIALS)

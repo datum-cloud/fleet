@@ -26,6 +26,13 @@ tasks:
     cmds:
       - ./hack/multiplane/run.sh --redfish {{.CLI_ARGS}}
 
+  multiplane:media-acceptance:
+    desc: "The Redfish-mode virtual media suite: the worker installs a lab VM over Redfish VirtualMedia from the site's media service, then proves release (same exit codes)."
+    env:
+      FLEET_MULTIPLANE_INOTIFY: '1024'
+    cmds:
+      - ./hack/multiplane/run.sh --redfish --virtual-media {{.CLI_ARGS}}
+
   multiplane:preflight:
     desc: Check local prerequisites and implementation readiness without creating resources.
     env:

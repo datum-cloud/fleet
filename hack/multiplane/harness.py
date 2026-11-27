@@ -446,6 +446,12 @@ def secrets(state):
                 found.add(json.loads(text).get('token') or '')
             except (ValueError, AttributeError):
                 pass
+        # A copied rendered config medium carries its URL capability.
+        if p.suffix == '.json' and p.parent.name == 'mediacfg':
+            try:
+                found.add(json.loads(text).get('capability') or '')
+            except (ValueError, AttributeError):
+                pass
         for m in re.finditer(r'-----BEGIN [A-Z ]*PRIVATE KEY-----[^-]+', text):
             found.add(m.group(0)[40:100])
     return {s for s in found if s and len(s) >= 16}

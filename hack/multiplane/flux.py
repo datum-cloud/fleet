@@ -305,7 +305,10 @@ def stage(args):
             if args.site != 'absent':
                 resources.insert(2, '../../config/multiplane/clusters/cell-site')
                 data.update(FLEET_SITE_IMAGE=env['siteImage'], FLEET_BOOT_SERVICE_IP=BOOT_SERVICE_IP,
-                            FLEET_SITE_DISPATCH='true' if args.site == 'dispatch' else 'false')
+                            FLEET_SITE_DISPATCH='true' if args.site == 'dispatch' else 'false',
+                            # The central media service's certificate (public), so
+                            # Redfish workers verify it; empty where none runs.
+                            FLEET_MEDIA_CA=env.get('mediaCA', ''))
             if args.bad_kro_chart:
                 patches.append(child_patch('kro', [{'target': {'kind': 'OCIRepository', 'name': 'kro-chart'},
                                                     'patch': '- op: replace\n  path: /spec/ref/digest\n  value: %s\n' % MISSING_DIGEST}]))

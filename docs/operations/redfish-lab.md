@@ -509,6 +509,108 @@ Redfish-specific evidence files are `redfish-upstream.json`,
 `physicalHardware`, `physicalBMC`, `vendorRedfishQualified`, `bmcTLS` and
 `mediaSanitization` flags as `false`.
 
+## Virtual media suite (prototype)
+
+A prototype of virtual media, the second boot delivery method proposed in
+[#227](https://github.com/datum-cloud/fleet/pull/227), built to the
+product owner's revision of that contract. It runs as its own Redfish-mode
+suite:
+
+```sh
+task multiplane:media-acceptance
+# equivalent:
+FLEET_MULTIPLANE_INOTIFY=1024 hack/multiplane/run.sh --redfish --virtual-media
+```
+
+Status: **implemented and verified by unit tests**. The end-to-end record is
+in the pull request that adds it. Network boot is unchanged behind the same
+seam; the regular Redfish suite above covers it.
+
+### How an install works
+
+1. The Metal provider selects the method: the held installation's method
+   when it settles a hold, or else the first method in the site's order the
+   server is qualified for. The installation records the method, the central
+   media service, the address mode and the two phase windows. Admission
+   checks them again under the custody update.
+2. The worker renders a config medium with a fresh report token and salt,
+   and opens the operation's window at the central media service. The
+   service opens it only while custody names that operation active at that
+   fence.
+3. The worker ejects any leftover media, inserts the boot and config media,
+   reads both URLs back by digest, sets a one-time boot from CD and powers
+   the server on. The BMC fetches both media over HTTPS it verifies.
+4. The installer installs the image, reads the bootstrap payload back from
+   disk, and powers off. It reports nothing.
+5. The worker boots the installed disk once. At first boot the installed OS
+   brings up its data network and posts its report over HTTPS, verifying the
+   media service: the report token, the boot medium's content digest and the
+   salted bootstrap digest.
+6. The worker takes exactly one report with the token and the expected
+   digests before the report deadline. It then closes every window of the
+   Device, ejects every device, and proves release from the BMC (every
+   device empty, no override) and the media service (no open window, no
+   transfer in progress, no reused token).
+
+Any step that was sent and cannot be proven ends `OutcomeUnknown` with a
+hold, after an attempt to undo delivery that is never proof. A window the
+media service refuses outright ends the operation `Failed` when the journal
+holds no BMC step, and `OutcomeUnknown` otherwise.
+
+A site may stop offering a method at any time: new operations no longer
+select it, and a running one finishes with it. A hold prepared with it waits,
+because only that method can prove its release. Admission refuses a settling
+operation while no serving site offers the method, and the coordinator
+records `HeldMethodNotOffered` on the hold for staff until a site offers it
+again. The serial
+console is diagnostics only and never carries a token.
+
+The deadline is the sum of the fetch window, 15 minutes by default, and the
+report window, 30 minutes by default. A site may set shorter ones; the lab
+uses 5 and 10 minutes.
+
+### What is real and what is stubbed
+
+| Part | In the prototype |
+| --- | --- |
+| Delivery inputs | Real. Each installation records its method and the method's inputs before admission; the input digest pins them. |
+| Site declaration | Real, with one simplification: the coordinator's site configuration declares each site's methods in preference order. The Metal provider selects from the same declaration. |
+| Admission | Real for the site and qualification checks, the settling-hold rule, input consistency and digest-pinned downloads. A machine class cannot restrict methods yet. |
+| Qualification | Stubbed. Staff set the `fleet.datumapis.com/qualified-delivery-methods` annotation on the Device. A Device without it is qualified for network boot only. Commissioning will replace it. |
+| Central media service | Real windows, fences from custody, media, report endpoint, transfer records and a background sweep that drops config media no window can serve. The sweep skips and counts a window file it cannot read, and goes on. In the lab it runs on the workstation beside the coordinator, on loopback, which lab Pods and guests reach through the runtime's host gateway. |
+| Worker authentication | Real. Each site worker presents a client certificate from the site workers' CA. The certificate is its own Secret, `fleet-site-worker-media`, one per site worker identity, in the `fleet-site-worker-identity` namespace. Each worker gets exactly that Secret through a per-operation Role, and BMC credential Secrets hold only BMC credentials. Only virtual media reads it: network boot installs and wipes neither read nor need it. The service refuses every window operation from a client with no certificate, or one that is not the worker for that Device's site. |
+| BMC | Real Redfish VirtualMedia on the lab emulator: two CD devices, insert over verified HTTPS, eject, readback, one-time boot from CD. |
+| First-boot report | Real. The installed lab OS posts it over HTTPS. Bootstrap data is always empty because the sealed store is not on this branch; admission still refuses bootstrap data. |
+| Installer downloads | Admission refuses any download that is not pinned by digest. The config medium lists the pinned downloads, and the first-boot report names each download by the digest the installer fetched. The worker refuses a report whose downloads are not exactly the recorded ones. The lab installer fetches nothing; it reports what its config medium lists. |
+| Report source | Each window records where its first-boot report may come from, and the media service refuses a report from any other address. In the lab every report reaches the service through the runtime's host gateway on IPv4 loopback, so the lab checks this with a report sent over IPv6 loopback. Restricting reports to the Machine's own address needs a real site network. |
+| BMCs that do not verify HTTPS | Stubbed. Staff record `fleet.datumapis.com/virtual-media-tls: Unverified`, and admission refuses virtual media for that server. The fallback that mounts only the public medium and fetches bootstrap data with a single-use token is not implemented. |
+| Lab data network | The lab provisioning network stands in for the customer's data network. Its firewall lets guests reach the boot Service and the central media service's report endpoint, and nothing else. |
+| Addresses | `DataNetwork` only: the config medium carries no address and Fleet assigns none. `Static` needs NSO interface claims, which are not on this branch. |
+| Media service client scoping | Weaker than proposed. In the lab every request reaches it from loopback, so it cannot tell the Device's BMC from any other client. |
+
+Talos installs from its ISO by pulling the installer container image that
+`machine.install.image` names from a registry, so a Talos image offered on
+virtual media must list that image, pinned by digest, as a download. Talos
+v1.9.5 installs from a digest-only reference: booted from its metal ISO under
+QEMU with `machine.install.image` set to
+`ghcr.io/siderolabs/installer@sha256:9e6c6564b870813b0f88032dabf1140fd1157f9ecf8736dfbf8d3df25cb891dd`,
+it pulled that reference, installed, and booted the installed disk.
+
+### Suite phases
+
+| Phase | What it proves |
+| --- | --- |
+| `media-not-offered` | While the cell declares network boot only, a virtual media installation is refused with `DeliveryMethodNotOffered`. The fence does not change and nothing is delivered. |
+| `media-central`, `media-offer` | The central media service starts with the image's pinned artifacts. The operator adds virtual media after network boot; staff record target A as qualified for virtual media only. |
+| `media-unpinned` | An installation whose installer downloads an image by tag is refused with `InstallDownloadUnpinned`. |
+| `media-arm-corrupt-token`, `media-install-held`, `media-held-report` | The lab BMC's config medium carries another report token. The installed OS's report is refused, as are a report with no token, one with another token, and one from an address that is not the Machine's, posted while the window is open. No report is taken, and the installation ends `OutcomeUnknown` at its report deadline with a hold that records virtual media. |
+| `media-arm-add-download`, `media-install-download`, `media-held-download` | The next installation settles that hold with the held method. The lab BMC adds a download the operation never pinned to its config medium; the first-boot report names it, so the report is never verified and the installation is held. |
+| `media-arm-lost-eject`, `media-install-lost`, `media-held-eject` | The next installation settles that hold with the held method. Its report is taken, then the BMC withholds an eject response past the client timeout: `OutcomeUnknown`, release never journaled. |
+| `media-install` | A fourth installation settles the third hold, succeeds, and clears it. |
+| `media-release-proof` | The BMC reads back both devices empty and no override. The media service reports four windows, none open, no transfer in progress and no reused token, and denies each one live. No config medium is kept anywhere. |
+| `media-stale-fence` | For each of the four operations, the media service refuses a window open with no client certificate (401), with another site's worker certificate (403), and as the cell's worker once custody no longer names the operation (409). The site store refuses a media window and step below the stored fence. |
+| `media-evidence` | Each taken report carries its operation's digests; target A booted media then disk four times; the console carries no token; target B was never touched. Writes `virtual-media.json`. |
+
 ## Offline checks
 
 ```sh
