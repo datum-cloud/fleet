@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Without rg the scan below would read nothing and pass.
+command -v rg >/dev/null || { echo 'validate-doc-links: rg (ripgrep) is required' >&2; exit 1; }
 failed=0
 while IFS=: read -r file _ target; do
   target=${target%%#*}

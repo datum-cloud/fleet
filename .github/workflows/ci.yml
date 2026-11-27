@@ -5,21 +5,76 @@ on:
     branches: [main]
 permissions:
   contents: read
+# The checks run as parallel jobs, so wall time is the slowest job rather than
+# their sum. Each job restores its own Go build cache: the race-instrumented
+# test builds and the plain vet and tool builds never share compiled packages,
+# so one shared cache would hold only whichever job saved first. A cache key
+# changes with go.sum; a miss restores the newest older cache for the job.
 jobs:
-  validate:
+  # Every Go test runs once, with the race detector. No package is excluded
+  # from race runs by a build tag. The shards partition `go list ./...`: the
+  # last shard takes every package the others do not name, so a new package
+  # is always tested. -count=1 keeps a restored cache from replaying results.
+  go-test:
+    name: go-test (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [custody, api, rest]
     steps:
     - uses: actions/checkout@v6
     - uses: actions/setup-go@v6
-      with: {go-version-file: go.mod, cache: true}
+      with: {go-version-file: go.mod, cache: false}
+    - uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: go-test-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}
+        restore-keys: go-test-${{ matrix.shard }}-${{ runner.os }}-
+    - uses: actions/cache@v6
+      with:
+        path: ~/.local/share/kubebuilder-envtest
+        key: envtest-${{ runner.os }}-v0.25.2-1.37.0
+    # Runs the envtest-based tests against real API servers; without these
+    # assets they skip, so a missing directory fails the job.
+    - name: Install envtest assets
+      run: |
+        assets=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.25.2 use 1.37.0 -p path)
+        test -x "$assets/kube-apiserver" && test -x "$assets/etcd"
+        echo "KUBEBUILDER_ASSETS=$assets" >> "$GITHUB_ENV"
+    - name: go test -race (${{ matrix.shard }})
+      env:
+        SHARD: ${{ matrix.shard }}
+      run: |
+        module=$(go list -m)
+        all=$(go list ./...)
+        case "$SHARD" in
+          custody) packages=$(grep -x "$module/internal/custody" <<<"$all") ;;
+          api) packages=$(grep "^$module/internal/api/" <<<"$all") ;;
+          rest) packages=$(grep -vx -e "$module/internal/custody" -e "$module/internal/api/.*" <<<"$all") ;;
+        esac
+        [ -n "$packages" ] || { echo "shard $SHARD has no packages"; exit 1; }
+        # shellcheck disable=SC2086
+        go test -race -count=1 $packages
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-go@v6
+      with: {go-version-file: go.mod, cache: false}
+    - uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: go-checks-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}
+        restore-keys: go-checks-${{ runner.os }}-
     - uses: imranismail/setup-kustomize@v2
       with: {kustomize-version: 5.8.1}
-    # Runs the manager's multi-project end-to-end test against real API
-    # servers; without these assets it is skipped.
-    - name: Install envtest assets
-      run: echo "KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.25.2 use 1.37.0 -p path)" >> "$GITHUB_ENV"
-    - run: go test ./...
-    - run: go test -race ./...
     - run: go vet ./...
     - run: go run ./test/acceptance/milo/cmd validate --root .
     - run: kustomize build config/base/crd >/dev/null
@@ -35,6 +90,17 @@ jobs:
     - run: ./hack/test-standalone-source-id.sh
     - run: ./hack/test-standalone-preflight.sh
     - run: ./hack/test-standalone-build-context.sh
+  # Script self-tests, shell lint and documentation links. None of them builds
+  # Go code.
+  harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@v6
+    - uses: imranismail/setup-kustomize@v2
+      with: {kustomize-version: 5.8.1}
+    - name: Install ripgrep for the link check
+      run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ripgrep
     - run: ./hack/test-run-standalone-smoke.sh
     - run: ./hack/validate-doc-links.sh
     - run: ./hack/multiplane/test-harness.sh
