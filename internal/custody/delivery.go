@@ -64,6 +64,9 @@ func ParseOffered(data []byte) ([]OfferedMethod, error) {
 	if decoder.More() {
 		return nil, fmt.Errorf("custody: the delivery declaration has trailing data")
 	}
+	if offered == nil {
+		return nil, fmt.Errorf("custody: the delivery declaration is null, not a list")
+	}
 	seen := map[ops.DeliveryMethod]bool{}
 	for _, offer := range offered {
 		if !slices.Contains(ops.DeliveryMethods, offer.Method) || seen[offer.Method] {
@@ -77,7 +80,8 @@ func ParseOffered(data []byte) ([]OfferedMethod, error) {
 			continue
 		}
 		service, err := url.Parse(offer.MediaService)
-		if offer.Addresses != ops.AddressesDataNetwork || err != nil || service.Scheme != "https" || service.Host == "" || service.Path != "" {
+		if offer.Addresses != ops.AddressesDataNetwork || err != nil || service.Scheme != "https" || service.Host == "" || service.User != nil ||
+			service.Path != "" || service.RawQuery != "" || service.Fragment != "" || service.Opaque != "" {
 			return nil, fmt.Errorf("custody: the delivery declaration's virtual media needs DataNetwork addresses and an https media service")
 		}
 		for _, window := range []*metav1.Duration{offer.FetchWindow, offer.ReportWindow} {

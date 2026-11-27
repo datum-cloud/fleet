@@ -85,9 +85,11 @@ type Observation struct {
 }
 
 // DeliveryDeclaration is the delivery methods the site's enrollment
-// declares, in its order of preference. An empty list offers none.
+// declares, in its order of preference, as the declaration's JSON. A string
+// survives Karmada's status aggregation exactly, where an empty list could
+// come back as an object or not at all. "[]" offers none.
 type DeliveryDeclaration struct {
-	Methods []custody.OfferedMethod `json:"methods"`
+	Methods string `json:"methods"`
 }
 
 // CellStatus is the status the cell writes.
@@ -244,7 +246,11 @@ func (h *Hub) DeliveryMethods(ctx context.Context, device string) ([]custody.Off
 	if err != nil || spec.Device != device || observation.AssignmentDigest != "" || h.now().Sub(observation.ObservedAt) > h.MaxAge || observation.Delivery == nil {
 		return nil, false, nil
 	}
-	return observation.Delivery.Methods, true, nil
+	methods, err := custody.ParseOffered([]byte(observation.Delivery.Methods))
+	if err != nil {
+		return nil, false, nil
+	}
+	return methods, true, nil
 }
 
 // Results returns each unanswered assignment's reflected result. A result

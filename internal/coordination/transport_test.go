@@ -322,6 +322,12 @@ func TestTheHubReadsTheSiteDeliveryDeclaration(t *testing.T) {
 	if methods, known, _ := f.hub.DeliveryMethods(f.ctx, device); !known || len(methods) != 1 || methods[0] != media {
 		t.Fatalf("a removed method is still declared: %+v", methods)
 	}
+	// A site may offer nothing: that is a declaration, not a missing one.
+	declared = []custody.OfferedMethod{}
+	f.observe()
+	if methods, known, _ := f.hub.DeliveryMethods(f.ctx, device); !known || len(methods) != 0 {
+		t.Fatalf("an empty declaration = %+v, %v", methods, known)
+	}
 	unreadable = errors.New("unreadable")
 	f.observe()
 	if _, known, _ := f.hub.DeliveryMethods(f.ctx, device); known {

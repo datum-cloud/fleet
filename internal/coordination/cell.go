@@ -27,8 +27,8 @@ type Cell struct {
 	Namespace string
 	Name      string
 	Now       func() time.Time
-	// Delivery reads the site enrollment's delivery declaration each time
-	// the observer publishes a report. An error publishes no declaration.
+	// Delivery reads the site enrollment's delivery declaration, once per
+	// observer pass. An error publishes no declaration.
 	Delivery func() ([]custody.OfferedMethod, error)
 }
 
@@ -75,10 +75,32 @@ func (c *Cell) Work(ctx context.Context, name string, runner *site.Runner) error
 	return err
 }
 
-// Publish writes the observation of one handoff: the Device's stored fences
-// and, for an assignment, its stored result. It deletes the site's copy of a
-// result the coordinator answered.
+// declaration reads the delivery declaration for one pass, or nil.
+func (c *Cell) declaration() (*DeliveryDeclaration, error) {
+	if c.Delivery == nil {
+		return nil, errors.New("coordination: the cell has no delivery declaration")
+	}
+	methods, err := c.Delivery()
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(methods)
+	if err != nil {
+		return nil, err
+	}
+	return &DeliveryDeclaration{Methods: string(data)}, nil
+}
+
+// Publish writes the observation of one handoff: the Device's stored fences,
+// the site's delivery declaration on a report, and, for an assignment, its
+// stored result. It deletes the site's copy of a result the coordinator
+// answered.
 func (c *Cell) Publish(ctx context.Context, object *unstructured.Unstructured, store *site.Store, results *site.Results) error {
+	declared, _ := c.declaration()
+	return c.publish(ctx, object, store, results, declared)
+}
+
+func (c *Cell) publish(ctx context.Context, object *unstructured.Unstructured, store *site.Store, results *site.Results, declared *DeliveryDeclaration) error {
 	observation := Observation{Cell: c.Name, ObservedAt: c.now()}
 	var device string
 	switch object.GetLabels()[RoleLabel] {
@@ -104,12 +126,7 @@ func (c *Cell) Publish(ctx context.Context, object *unstructured.Unstructured, s
 		if err != nil || spec.Cell != c.Name || object.GetLabels()[CellLabel] != c.Name || spec.AssignmentJSON != "" || spec.Credential != "" || object.GetName() != ReportName(spec.Device) {
 			return ErrNotDelivered
 		}
-		device = spec.Device
-		if c.Delivery != nil {
-			if methods, err := c.Delivery(); err == nil {
-				observation.Delivery = &DeliveryDeclaration{Methods: methods}
-			}
-		}
+		device, observation.Delivery = spec.Device, declared
 	default:
 		return ErrNotDelivered
 	}
@@ -140,8 +157,13 @@ func (c *Cell) Observe(ctx context.Context, interval time.Duration, store *site.
 		if err != nil {
 			onError("", err)
 		} else {
+			// One read per pass, so an invalid declaration is reported once.
+			declared, err := c.declaration()
+			if err != nil {
+				onError("delivery declaration", err)
+			}
 			for index := range list.Items {
-				if err := c.Publish(ctx, &list.Items[index], store, results); err != nil {
+				if err := c.publish(ctx, &list.Items[index], store, results, declared); err != nil {
 					onError(list.Items[index].GetName(), err)
 				}
 			}

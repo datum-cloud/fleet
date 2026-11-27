@@ -169,14 +169,10 @@ func run() error {
 		// the enrollment's delivery declaration, read again on every pass.
 		cellView.Delivery = func() ([]custody.OfferedMethod, error) {
 			data, err := os.ReadFile(*deliveryFile)
-			if err == nil {
-				var methods []custody.OfferedMethod
-				if methods, err = custody.ParseOffered(data); err == nil {
-					return methods, nil
-				}
+			if err != nil {
+				return nil, err
 			}
-			fmt.Fprintf(os.Stderr, "observer: no delivery declaration published: %v\n", err)
-			return nil, err
+			return custody.ParseOffered(data)
 		}
 		return cellView.Observe(ctx, *interval, store, site.NewResults(store), func(name string, err error) {
 			fmt.Fprintf(os.Stderr, "observer: handoff %s not published: %s\n", name, classify(err))

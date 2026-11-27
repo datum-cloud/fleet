@@ -61,16 +61,12 @@ type Report struct {
 	Site    string
 	Store   *Store
 	Targets StaticTargets
-	// Methods is the site's declared boot delivery methods, in its order
-	// of preference.
-	Methods []custody.OfferedMethod
 }
 
-func (r Report) DeliveryMethods(_ context.Context, site string, _ *inventory.Device) ([]custody.OfferedMethod, bool, error) {
-	if site != r.Site {
-		return nil, false, nil
-	}
-	return r.Methods, true, nil
+// DeliveryMethods reports no declaration: the site's declaration reaches the
+// coordinator only through the cell's report handoff.
+func (r Report) DeliveryMethods(context.Context, string, *inventory.Device) ([]custody.OfferedMethod, bool, error) {
+	return nil, false, nil
 }
 
 var _ custody.Sites = Report{}

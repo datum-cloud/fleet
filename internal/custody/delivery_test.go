@@ -414,6 +414,9 @@ func TestParseOffered(t *testing.T) {
 		"service with a path":   `[{"method":"VirtualMedia","addresses":"DataNetwork","mediaService":"https://192.0.2.10:8443/media"}]`,
 		"zero report window":    `[{"method":"VirtualMedia","addresses":"DataNetwork","mediaService":"https://192.0.2.10:8443","reportWindow":"0s"}]`,
 		"trailing data":         `[{"method":"NetworkBoot"}] []`,
+		"null":                  `null`,
+		"service with a user":   `[{"method":"VirtualMedia","addresses":"DataNetwork","mediaService":"https://user:secret@192.0.2.10:8443"}]`,
+		"service with a query":  `[{"method":"VirtualMedia","addresses":"DataNetwork","mediaService":"https://192.0.2.10:8443?x=1"}]`,
 	} {
 		if _, err := ParseOffered([]byte(data)); err == nil {
 			t.Errorf("%s: accepted", name)
