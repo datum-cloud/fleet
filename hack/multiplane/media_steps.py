@@ -387,7 +387,7 @@ def release_proof(s):
     denials = []
     for op in ops:
         w = window_record(s, op['metadata']['uid'])
-        url = 'https://%s:%d/media/%s/boot/%s/boot.iso' % (rf.MEDIA_HOST, rf.MEDIA_PORT, key(op['metadata']['uid']), w['bootDigest'])
+        url = 'https://%s:%d/media/%s/boot/%s/boot.iso' % (rf.media_host(s), rf.MEDIA_PORT, key(op['metadata']['uid']), w['bootDigest'])
         probe = ("import ssl,sys,urllib.request,urllib.error\nc=ssl.create_default_context(cafile='/etc/fleet-bmc-media-ca/ca.crt')\n"
                  "try:\n urllib.request.urlopen(sys.argv[1],context=c,timeout=20); print(200)\nexcept urllib.error.HTTPError as e: print(e.code)\n")
         answer = rf.bmc(s, 'python3', '-c', probe, url).stdout.strip()

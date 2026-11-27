@@ -132,6 +132,17 @@ ph flux-tools 300 "${flux[@]}" tools "$state"
 docker network inspect kind >/dev/null 2>&1 || docker network create kind >/dev/null
 # Disposable infrastructure only: registry and three kind clusters, no services.
 ph topology 900 bash hack/multiplane/topology.sh "$state"
+# Where lab Pods reach this host's central media service, and the network
+# their connections arrive from: Colima's host gateway, which arrives on
+# loopback, or on a CI runner the kind network's gateway and subnet.
+if [[ $FLEET_MULTIPLANE_RUNTIME == ci ]]; then
+ docker network inspect kind -f '{{range .IPAM.Config}}{{.Gateway}} {{.Subnet}}{{"\n"}}{{end}}' |
+  awk -v host="$state/media-host" -v clients="$state/media-clients" '$1 ~ /^[0-9.]+$/ {print $1 > host; print $2 > clients; exit}'
+ [[ -s $state/media-host && -s $state/media-clients ]] || { echo 'the kind network has no IPv4 gateway' >&2; exit 1; }
+else
+ printf '192.168.5.2\n' > "$state/media-host"
+ printf '127.0.0.0/8\n' > "$state/media-clients"
+fi
 ph site-image-push 600 bash hack/multiplane/site.sh push "$state"
 # Revision 1: platform services only. The bootstrap boundary applies each
 # cluster's Flux components and sync objects once; Flux then owns them too.
@@ -152,7 +163,7 @@ s=pathlib.Path(sys.argv[1]).resolve()
 enrollment=json.loads((s/'redfish'/'fixture-enrollment.json').read_text() if sys.argv[2]=='redfish' else pathlib.Path('config/site/base/enrollment.json').read_text())
 c={'State':str(s),'HubKubeconfig':str(s/'management-hub.json'),'Cell':(s/'prefix').read_text().strip()+'-cell','Image':(s/'image').read_text().strip(),'Enrollment':enrollment,
    # The central media service, as lab Pods and guests reach the workstation.
-   'MediaService':'https://192.168.5.2:28443'}
+   'MediaService':'https://%s:28443'%(s/'media-host').read_text().strip()}
 if sys.argv[3]=='1':c['BootAddressClass']='lab-provisioning'
 (s/'acceptance.json').write_text(json.dumps(c))
 PY

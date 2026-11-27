@@ -337,7 +337,9 @@ def stage(args):
                             FLEET_MEDIA_CA=env.get('mediaCA', ''),
                             # The site enrollment's delivery declaration, which
                             # the observer publishes to the coordinator.
-                            FLEET_SITE_DELIVERY_METHODS=delivery_methods(s, args.delivery_methods), FLEET_LOCAL_VM_ACCEL=harness.ACCEL)
+                            FLEET_SITE_DELIVERY_METHODS=delivery_methods(s, args.delivery_methods), FLEET_LOCAL_VM_ACCEL=harness.ACCEL,
+                            # Where lab Pods reach the central media service.
+                            FLEET_MEDIA_HOST=(s / 'media-host').read_text().strip() if (s / 'media-host').exists() else '192.168.5.2')
             if args.bad_kro_chart:
                 patches.append(child_patch('kro', [{'target': {'kind': 'OCIRepository', 'name': 'kro-chart'},
                                                     'patch': '- op: replace\n  path: /spec/ref/digest\n  value: %s\n' % MISSING_DIGEST}],
