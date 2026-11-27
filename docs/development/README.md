@@ -886,8 +886,10 @@ go vet ./...
 ```
 
 CI runs every Go test once, with the race detector, split across parallel
-jobs by package. Render, kustomize and script checks run in their own jobs.
-The documentation link check needs ripgrep and fails without it.
+jobs by package and, for the custody package, by test. A skipped test fails
+its job, because each skip here means a missing tool or envtest assets.
+Render, kustomize and script checks run in their own jobs. The documentation
+link check needs ripgrep and fails without it.
 
 The manager's multi-project envtest test needs envtest binaries. CI installs
 them; locally, run:
