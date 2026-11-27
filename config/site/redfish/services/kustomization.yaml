@@ -33,7 +33,7 @@ patches:
               - name: report-relay
                 image: "${FLEET_SITE_IMAGE}"
                 imagePullPolicy: IfNotPresent
-                command: [fleet-multiplane, report-relay, --listen, "192.168.77.1:28443", --upstream, "192.168.5.2:28444"]
+                command: [fleet-multiplane, report-relay, --listen, "192.168.77.1:28443", --upstream, "${FLEET_MEDIA_HOST}:28444"]
                 securityContext:
                   runAsUser: 65534
                   runAsNonRoot: true

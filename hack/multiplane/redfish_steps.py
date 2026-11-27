@@ -51,7 +51,10 @@ BMC_IP = '10.96.0.81'
 BOOT_IP = '10.96.0.80'
 # The workstation as lab Pods and guests reach it (the Colima host gateway),
 # where the central media service listens on loopback.
-MEDIA_HOST = '192.168.5.2'
+def media_host(s):
+    """Where lab Pods reach the central media service, as run.sh recorded
+    it for the runtime."""
+    return (s / 'media-host').read_text().strip()
 # The report relay on the lab bridge, where guests post their reports.
 REPORT_RELAY = '192.168.77.1'
 MEDIA_PORT = 28443
@@ -183,7 +186,7 @@ def enroll(s):
     # gateway. The lab BMC, the workers and the installed OS verify it
     # against this certificate.
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', str(d / 'media-tls.key'),
-                    '-out', str(d / 'media-tls.crt'), '-days', '2', '-subj', '/CN=fleet-lab-media', '-addext', 'subjectAltName=IP:%s,IP:%s,IP:127.0.0.1,IP:::1' % (MEDIA_HOST, REPORT_RELAY)],
+                    '-out', str(d / 'media-tls.crt'), '-days', '2', '-subj', '/CN=fleet-lab-media', '-addext', 'subjectAltName=IP:%s,IP:%s,IP:127.0.0.1,IP:::1' % (media_host(s), REPORT_RELAY)],
                    check=True, capture_output=True)
     # Site workers authenticate to the central media service with client
     # certificates from a CA generated per run: the cell's workers, and one
