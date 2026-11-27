@@ -159,22 +159,35 @@ func coordinator(ctx context.Context, c Config, registry *custody.Registry) (*cu
 	return &custody.Coordinator{Client: api, Registry: registry, Sites: sites, Config: custody.Config{Namespace: DeviceNamespace, Principals: p}}, hub, sites, api, nil
 }
 
+// CoordinatorOptions are the lab coordinator's overrides; zero keeps the
+// default. The deadline scenario uses both.
+type CoordinatorOptions struct {
+	// InstallationDeadline replaces the installation kind's deadline for
+	// operations this process admits.
+	InstallationDeadline time.Duration
+	// SkewMargin replaces the margin added to a deadline before it is
+	// declared exceeded. Only the coordinator daemon declares deadlines
+	// exceeded; the one-shot phases built by New keep the default margin.
+	SkewMargin time.Duration
+}
+
 // Coordinate is the coordinator process: the custody loop, delivering
 // through Karmada, and fixture discovery for the cell's Devices under the
 // discovery identity.
-// A positive installationDeadline replaces the installation kind's deadline
-// for operations this process admits; the deadline scenario uses it.
-func Coordinate(ctx context.Context, c Config, installationDeadline time.Duration, onError func(error)) error {
+func Coordinate(ctx context.Context, c Config, o CoordinatorOptions, onError func(error)) error {
 	registry, err := custody.DefaultRegistry()
 	if err != nil {
 		return err
 	}
-	if installationDeadline > 0 {
-		registry.Kind("DeviceInstallation").Deadline = installationDeadline
+	if o.InstallationDeadline > 0 {
+		registry.Kind("DeviceInstallation").Deadline = o.InstallationDeadline
 	}
 	coord, _, sites, api, err := coordinator(ctx, c, registry)
 	if err != nil {
 		return err
+	}
+	if o.SkewMargin > 0 {
+		coord.Config.SkewMargin = o.SkewMargin
 	}
 	discovery, err := API(filepath.Join(c.State, "provider", "discovery-project.json"))
 	if err != nil {
