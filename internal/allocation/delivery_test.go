@@ -20,6 +20,16 @@ func (undeclared) DeliveryMethods(context.Context, string, *inventory.Device) ([
 	return nil, false, nil
 }
 
+// offering is a site that declares the given methods.
+type offering struct {
+	custody.Sites
+	methods []custody.OfferedMethod
+}
+
+func (o offering) DeliveryMethods(context.Context, string, *inventory.Device) ([]custody.OfferedMethod, bool, error) {
+	return o.methods, true, nil
+}
+
 // TestNoInstallationUntilTheSiteDeclaresItsMethods creates no installation
 // while the serving site has not reported its delivery declaration, and
 // the same request installs once it has.

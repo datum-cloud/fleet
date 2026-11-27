@@ -248,7 +248,7 @@ func TestAVirtualMediaInstallRecordsTheMachinesAddress(t *testing.T) {
 	e := startEnv(t)
 	recorder := &ipam{Client: e.admin}
 	e.allocator.Provider, e.allocator.Releaser = writer{recorder, "DeviceInstallation"}, writer{recorder, "DeviceWipe"}
-	e.allocator.DeliveryMethods = []custody.OfferedMethod{{Method: ops.DeliveryVirtualMedia, Addresses: ops.AddressesDataNetwork, MediaService: "https://192.0.2.10:8443"}}
+	e.allocator.Sites = offering{Sites: e.allocator.Sites, methods: []custody.OfferedMethod{{Method: ops.DeliveryVirtualMedia, Addresses: ops.AddressesDataNetwork, MediaService: "https://192.0.2.10:8443"}}}
 	device := e.server(1)
 	e.until("staff record the server as qualified for virtual media", func() bool {
 		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(device), device); err != nil {

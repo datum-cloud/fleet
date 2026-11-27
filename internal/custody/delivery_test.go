@@ -164,7 +164,8 @@ func TestDeliveryMethodAdmission(t *testing.T) {
 		e := e.sub(t)
 		device := held(e, "VirtualMedia")
 		fence := e.custody(device.Name).Spec.Fence
-		if refusal := checkDelivery(&Admission{Device: device, Custody: e.custody(device.Name), Offered: e.sites.DeliveryMethods("")}, &ops.DeviceInstallationSpec{Delivery: virtualMedia}); refusal == nil || refusal.Reason != ReasonReportAddressRequired {
+		offers, _, _ := e.sites.DeliveryMethods(e.ctx, "", device)
+		if refusal := checkDelivery(&Admission{Device: device, Custody: e.custody(device.Name), Offered: offers, OfferedKnown: true}, &ops.DeviceInstallationSpec{Delivery: virtualMedia}); refusal == nil || refusal.Reason != ReasonReportAddressRequired {
 			t.Fatalf("virtual media with no report address: %+v", refusal)
 		}
 		// Another operation's claim does not hold this one's address.
