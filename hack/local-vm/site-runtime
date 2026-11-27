@@ -2,13 +2,20 @@
 # VM runtime for the Kubernetes site: libvirtd only. Workers reach it through
 # the socket directory shared on the site volume; nothing listens on TCP.
 set -eu
-[ "${FLEET_LOCAL_VM_ACCEL:-}" = tcg ] || { echo 'site runtime requires FLEET_LOCAL_VM_ACCEL=tcg' >&2; exit 1; }
+accel=${FLEET_LOCAL_VM_ACCEL:-}
+case "$accel" in
+ tcg) ;;
+ kvm) [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ] || { echo 'KVM device unavailable; no automatic software fallback' >&2; exit 1; } ;;
+ *) echo 'site runtime requires FLEET_LOCAL_VM_ACCEL=tcg or kvm' >&2; exit 1 ;;
+esac
 boot_ip=${FLEET_BOOT_IP:?boot Service ClusterIP required}
 case "$boot_ip" in *[!0-9.]*|'') echo 'invalid boot Service IP' >&2; exit 1 ;; esac
 sock=/run/fleet-libvirt
 mkdir -p "$sock" /run/libvirt /var/lib/libvirt/images /var/log/libvirt/qemu
 # A previous runtime Pod's socket is stale; libvirtd recreates it.
 rm -f "$sock"/libvirt-sock "$sock"/libvirt-sock-ro "$sock"/libvirt-admin-sock
+# Workers refuse to run unless the runtime they reach publishes their accelerator.
+printf '%s\n' "$accel" > "$sock/accelerator.tmp" && mv "$sock/accelerator.tmp" "$sock/accelerator"
 # Firmware on the provisioning bridge may reach this namespace (DHCP) and the
 # boot Service only. Anything else forwarded from the bridge is dropped.
 iptables -t mangle -N FLEET-PXE 2>/dev/null || iptables -t mangle -F FLEET-PXE

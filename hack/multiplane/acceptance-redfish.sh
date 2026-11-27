@@ -6,7 +6,7 @@
 set -euo pipefail
 umask 077
 state=${1:?private state directory}
-export DOCKER_CONTEXT=colima-fleet-acceptance-tcg FLEET_SITE_PROVIDER=redfish
+export DOCKER_CONTEXT=${FLEET_MULTIPLANE_DOCKER_CONTEXT:-colima-fleet-acceptance-tcg} FLEET_SITE_PROVIDER=redfish
 host="$state/fleet-multiplane-host"
 ph() { python3 hack/multiplane/harness.py phase --state "$state" --name "$1" --timeout "$2" --echo -- "${@:3}"; }
 step() { ph "$1" "$2" bash hack/multiplane/steps.sh "$1" "$state"; }

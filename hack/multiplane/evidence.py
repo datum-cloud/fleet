@@ -20,7 +20,9 @@ import harness  # noqa: E402  (site store layout, provider custody)
 s = pathlib.Path(sys.argv[1])
 prefix = (s / 'prefix').read_text().strip()
 ev = s / 'evidence'
-os.environ['DOCKER_CONTEXT'] = 'colima-fleet-acceptance-tcg'
+os.environ['DOCKER_CONTEXT'] = os.environ.get('FLEET_MULTIPLANE_DOCKER_CONTEXT', 'colima-fleet-acceptance-tcg')
+# The run parameters; the guest evidence below must show the accelerator.
+ACCEL, RUNTIME = harness.ACCEL, harness.RUNTIME
 REDFISH = (s / 'site-provider').exists() and (s / 'site-provider').read_text().strip() == 'redfish'
 
 
@@ -197,6 +199,8 @@ def libvirt_provider():
     copy_out('/var/log/libvirt/qemu', raw / 'libvirt-qemu')
     store, ops, provider, held = site_operations(raw)
     interrupt = json.loads((ev / 'interrupt.json').read_text())
+    if not interrupt.get('installerHold', {}).get('held') or interrupt['installerHold'].get('domain') != interrupt.get('domain'):
+        fail('the interruptions did not land while the installer guest was held')
     a, b = check_sequence(ops, held, interrupt)
     installs = [o for o in ops if o['kind'] == 'DeviceInstallation']
     wipes = [o for o in ops if o['kind'] == 'DeviceWipe']
@@ -218,6 +222,8 @@ def libvirt_provider():
         boot = boot_record(raw, 'vmboot', harness.key(uid))
         if not boot.get('closed') or boot.get('open') or boot.get('fence') != o['fence']:
             fail('boot admission not closed at the install fence')
+        if boot.get('accelerator') != ACCEL:
+            fail('the journal bound accelerator %s, not %s' % (boot.get('accelerator'), ACCEL))
         log = raw / 'boot-evidence' / harness.key(uid) / 'boot-delivery.log'
         written = log.read_text() if log.exists() else ''
         for name in ('boot.ipxe', 'kernel', 'installer.gz'):
@@ -244,7 +250,13 @@ def libvirt_provider():
         blocks = [b for b in re.split(r'^\S+ \S+: starting up ', qemu, flags=re.M)[1:]]
         network = [b for b in blocks if '-netdev' in b and '52:54:00:77:00:02' in b]
         disk_only = [b for b in blocks if '-netdev' not in b and 'virtio-disk0' in b]
-        starts[uid] = {'qemuStarts': len(blocks), 'networkInstallerStarts': len(network), 'diskOnlyStarts': len(disk_only)}
+        # Every component ran the selected accelerator: both domain definitions
+        # and every QEMU command line libvirt logged.
+        domain_types = {re.match(r"<domain type='(\w+)'", x).group(1) for x in (installer, disk)}
+        qemu_accels = [re.findall(r'-accel (\w+)', b) for b in blocks]
+        if domain_types != {'kvm' if ACCEL == 'kvm' else 'qemu'} or any(a != [ACCEL] for a in qemu_accels):
+            fail('guest accelerator is not %s: domain types %s, QEMU accelerators %s' % (ACCEL, sorted(domain_types), qemu_accels))
+        starts[uid] = {'qemuStarts': len(blocks), 'networkInstallerStarts': len(network), 'diskOnlyStarts': len(disk_only), 'accelerator': ACCEL}
         if len(blocks) != 2 or len(network) != 1 or len(disk_only) != 1 or blocks.index(network[0]) != 0:
             fail('expected exactly one network installer start followed by one disk-only start, got %s' % starts[uid])
     # The release wipes deleted every installation disk of the Device.
@@ -469,8 +481,8 @@ summary = {
     'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'prefix': prefix,
     'qualification': {'nativeMiloProjectAPIs': True, 'actualKarmadaDeliveryAndReflection': True, 'realLocalPXE': True,
                       'kubernetesJobExecution': True, 'actualKroController': True, 'fluxReconciledServices': True,
-                      'kvm': False, 'uefi': False, 'productionAuthority': False, 'productionEquivalence': False},
-    'versions': {'milo': 'v0.32.5', 'karmada': 'v1.16.0', 'kro': 'v0.9.4', 'flux': 'v2.9.6', 'kindNode': 'v1.35.0', 'architecture': arch, 'guestArchitecture': 'amd64', 'accelerator': 'tcg', 'firmware': 'SeaBIOS/iPXE (legacy BIOS)'},
+                      'kvm': ACCEL == 'kvm', 'uefi': False, 'productionAuthority': False, 'productionEquivalence': False},
+    'versions': {'milo': 'v0.32.5', 'karmada': 'v1.16.0', 'kro': 'v0.9.4', 'flux': 'v2.9.6', 'kindNode': 'v1.35.0', 'architecture': arch, 'guestArchitecture': 'amd64', 'accelerator': ACCEL, 'firmware': 'SeaBIOS/iPXE (legacy BIOS)'},
     'scenarios': {
         'exclusiveContention': True,
         'partitionPublicReadyStayedFalse': True,
@@ -503,6 +515,10 @@ summary = {
               'reflection faults injected with bootstrap credentials while the Karmada controller is stopped'],
     'privateArtifacts': 'state directory outside evidence/ contains authority; do not publish',
 }
+if RUNTIME == 'ci':
+    # A GitHub-hosted runner is a cloud VM: KVM there is nested virtualization,
+    # a qualification target separate from the Colima TCG runs and from hardware.
+    summary['qualification'].update(runtime='GitHub-hosted runner (CI mode)', physicalHardware=False)
 if REDFISH:
     summary['qualification'].update(redfishExecutor=True, dmtfRedfishInterfaceEmulator='1.2.2 (unmodified) + lab-only libvirt adapter', bootedWipeEnvironment=True,
                                     physicalHardware=False, physicalBMC=False, vendorRedfishQualified=False, bmcTLS=True, mediaSanitization=False)

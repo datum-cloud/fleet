@@ -1,0 +1,167 @@
+name: multiplane-acceptance
+# The multi-plane acceptance in CI mode (docs/operations/multiplane.md#ci-mode)
+# on a disposable GitHub-hosted runner: three kind clusters, Milo, Karmada, kro,
+# Flux and a privileged libvirt/QEMU site Pod. Local VM mode runs its guest
+# under KVM; Redfish mode keeps its lab targets on TCG. It runs on demand,
+# nightly, and on a pull request only when the multiplane-acceptance label is
+# applied, never on every push.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Site provider
+        type: choice
+        options: [both, localvm, redfish]
+        default: both
+  schedule:
+    - cron: '23 5 * * *'
+  pull_request:
+    types: [labeled]
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'multiplane-acceptance'
+    name: acceptance (${{ matrix.mode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.mode != 'both' && format('["{0}"]', inputs.mode) || '["localvm","redfish"]') }}
+    # A newer labeled run for the same pull request replaces an older one;
+    # nightly and manual runs never cancel each other. A cancelled run never
+    # counts as passed.
+    concurrency:
+      group: multiplane-acceptance-${{ github.event.pull_request.number || github.run_id }}-${{ matrix.mode }}
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      FLEET_MULTIPLANE_RUNTIME: ci
+      FLEET_MULTIPLANE_DOCKER_CONTEXT: default
+      FLEET_MULTIPLANE_ARCH: amd64
+      # The Redfish lab adapter defines TCG domains only.
+      FLEET_MULTIPLANE_ACCEL: ${{ matrix.mode == 'localvm' && 'kvm' || 'tcg' }}
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      with: {persist-credentials: false}
+    # A pull request run tests GitHub's merge of the head into the base.
+    - name: Record the tested commits
+      env:
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: printf 'Tested commit %s for head %s\n' "$(git rev-parse HEAD)" "$HEAD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      with: {go-version-file: go.mod, cache: true}
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      with: {python-version: '3.12.12'}
+    - uses: imranismail/setup-kustomize@2ba527d4d055ab63514ba50a99456fc35684947f # v2
+      with: {kustomize-version: 5.8.1}
+    - name: Install pinned kind, kubectl and task
+      run: |
+        set -euo pipefail
+        go install sigs.k8s.io/kind@v0.31.0
+        go install github.com/go-task/task/v3/cmd/task@v3.53.1
+        directory=$(mktemp -d)
+        trap 'rm -rf "$directory"' EXIT
+        cd "$directory"
+        curl --fail --location --retry 3 --max-time 60 -o kubectl https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl
+        curl --fail --location --retry 3 --max-time 60 -o kubectl.sha256 https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl.sha256
+        echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+        chmod +x kubectl
+        mkdir -p "$HOME/.local/bin"
+        mv kubectl "$HOME/.local/bin/kubectl"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+    - name: Free runner disk and record capacity
+      run: |
+        # Preinstalled toolchains this job does not use. The harness needs
+        # 12 GiB free in the Docker data root.
+        {
+          echo "FLEET_MULTIPLANE_STATE_ROOT=$RUNNER_TEMP/fleet-multiplane"
+          echo "METRICS=$RUNNER_TEMP/runner-metrics"
+        } >> "$GITHUB_ENV"
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+        nproc
+        free -m
+        df -h / /var/lib/docker
+        docker version --format 'docker {{.Server.Version}}'
+        # Hosted runners restrict /dev/kvm to the kvm group; grant the runner
+        # access, as GitHub documents for hardware acceleration.
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        ls -l /dev/kvm || true
+    - name: Sample runner memory
+      run: |
+        mkdir -m 0700 "$METRICS"
+        # Every 10 s: memory, swap and the run's container memory. Container
+        # names and byte counts only. The script expands in its own shell.
+        # shellcheck disable=SC2016
+        nohup sh -c 'while :; do
+          printf "%s %s\n" "$(date -u +%FT%TZ)" "$(awk "/^(MemTotal|MemAvailable|SwapTotal|SwapFree):/ {printf \"%s=%s \", \$1, \$2}" /proc/meminfo)" >> "$1/meminfo.log"
+          docker stats --no-stream --format "{{.Name}} {{.MemUsage}}" 2>/dev/null | sed "s/^/$(date -u +%FT%TZ) /" >> "$1/containers.log"
+          sleep 10
+        done' sh "$METRICS" >/dev/null 2>&1 &
+        echo $! > "$METRICS/sampler.pid"
+    - name: Run multi-plane acceptance (${{ matrix.mode }})
+      timeout-minutes: 100
+      env:
+        TASK: ${{ matrix.mode == 'localvm' && 'multiplane:acceptance' || 'multiplane:redfish-acceptance' }}
+      run: |
+        mkdir -m 0700 "$FLEET_MULTIPLANE_STATE_ROOT"
+        task "$TASK"
+    # A timeout or cancellation can stop run.sh before its own scan, so the
+    # evidence is scanned again here. A match is redacted in place, and the
+    # second scan must be clean before anything is uploaded.
+    - name: Record memory and secret-scan evidence
+      id: scan
+      if: always()
+      run: |
+        kill "$(cat "$METRICS/sampler.pid")" 2>/dev/null || true
+        sudo dmesg | grep -iE 'out of memory|oom-kill' > "$METRICS/oom.log" || true
+        python3 - "$METRICS" <<'PY' | tee "$METRICS/summary.txt" >> "$GITHUB_STEP_SUMMARY"
+        import pathlib, sys
+        m = pathlib.Path(sys.argv[1])
+        rows = [dict(f.split('=') for f in l.split()[1:]) for l in (m / 'meminfo.log').read_text().splitlines()] if (m / 'meminfo.log').exists() else []
+        if rows:
+            total = int(rows[0]['MemTotal:']) / 2**20
+            low = min(int(r['MemAvailable:']) for r in rows) / 2**20
+            swap = max(int(r['SwapTotal:']) - int(r['SwapFree:']) for r in rows) / 2**20
+            print('Runner memory: %.1f GiB total, %.1f GiB peak used, %.1f GiB minimum available, %.2f GiB peak swap, %d samples' % (total, total - low, low, swap, len(rows)))
+        oom = (m / 'oom.log').read_text().strip().splitlines() if (m / 'oom.log').exists() else []
+        print('Kernel OOM events: %d' % len(oom))
+        PY
+        found=false
+        for state in "$FLEET_MULTIPLANE_STATE_ROOT"/fleet-multiplane.*; do
+          [ -d "$state/evidence" ] || continue
+          mkdir -p "$state/evidence/runner"
+          cp "$METRICS"/meminfo.log "$METRICS"/containers.log "$METRICS"/summary.txt "$METRICS"/oom.log "$state/evidence/runner/" 2>/dev/null || true
+          if ! python3 hack/multiplane/harness.py scan --state "$state"; then
+            redacted=true
+            python3 hack/multiplane/harness.py scan --state "$state"
+          fi
+          found=true
+        done
+        echo "found=$found" >> "$GITHUB_OUTPUT"
+        echo "redacted=${redacted:-false}" >> "$GITHUB_OUTPUT"
+    # Only evidence/ is uploaded, never the private state directory.
+    - name: Upload sanitized evidence
+      if: always() && steps.scan.outcome == 'success' && steps.scan.outputs.found == 'true'
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: multiplane-evidence-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/fleet-multiplane/fleet-multiplane.*/evidence/
+        if-no-files-found: error
+        retention-days: 14
+    # The job passes only if exactly one run recorded passed with every phase
+    # passed and teardown passed. A killed, timed-out or cancelled run fails.
+    - name: Verify the recorded result
+      if: always()
+      run: |
+        states=("$FLEET_MULTIPLANE_STATE_ROOT"/fleet-multiplane.*)
+        [ "${#states[@]}" -eq 1 ] && [ -d "${states[0]}" ] || { echo "expected exactly one run, found ${#states[@]}"; exit 1; }
+        python3 hack/multiplane/harness.py verify --state "${states[0]}"
+    # A secret that reached evidence fails the job, even after its redaction.
+    - name: Fail on redacted evidence
+      if: always() && steps.scan.outputs.redacted == 'true'
+      run: |
+        echo 'evidence matched a retained secret and was redacted; see the scan step'
+        exit 1

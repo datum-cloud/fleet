@@ -34,7 +34,7 @@ and reach two persistent lab VMs only through the DMTF Redfish Interface Emulato
 | Coordination intent | Karmada v1.16.0 API (hub Flux `HelmRelease`), separate from the host Kubernetes API | The coordinator's credential creates immutable handoffs and labels them answered; it cannot write status |
 | Selected cell | Separate kind Kubernetes API running its own Flux, the Flux-owned shared site services, kro v0.9.4 and the `HandoffDispatcher` graph | Karmada delivers intent; the site observer ServiceAccount is the only local status writer |
 | Reflected results | Karmada interpreter aggregates each member's identity and observation | Karmada; management validates before projection |
-| Physical effects | Privileged, Flux-owned VM runtime Deployment (libvirt/QEMU) on the cell; amd64 guest under native arm64 TCG | One bounded kro-created worker Job per assignment runs the site worker; the site store holds each Device's fence, journal and results, and the boot evidence, on a retained, Flux-owned PVC |
+| Physical effects | Privileged, Flux-owned VM runtime Deployment (libvirt/QEMU) on the cell; amd64 guest under native arm64 TCG on Colima, or under KVM on an amd64 runner in [CI mode](#ci-mode) | One bounded kro-created worker Job per assignment runs the site worker; the site store holds each Device's fence, journal and results, and the boot evidence, on a retained, Flux-owned PVC |
 
 The platform integration choices were discovered in these connected sources:
 
@@ -150,6 +150,60 @@ caused an installer OOM in an earlier fresh run. Evidence fails on any OOM kill
 in the runtime Pod, any kind node, or the site, kro, Flux, Karmada or Milo containers. Expect 20 to 60 minutes,
 mostly bootstrap, image pulls and builds. Every phase has an explicit bound.
 Do not run another full acceptance topology concurrently on an 8 GiB VM.
+
+### CI mode
+
+The `multiplane-acceptance` workflow runs the same acceptance on a disposable
+GitHub-hosted `ubuntu-24.04` runner, one job per mode. Status: **verified**.
+Both modes passed on a hosted runner, local VM mode under KVM.
+
+To run it, apply the `multiplane-acceptance` label to a pull request whose
+branch contains the workflow. Each application starts one run of both modes,
+and a newer run for the same pull request cancels the older one. Pushing to a
+labeled pull request does not start a run, so its result goes stale: remove and
+reapply the label to test the new head. The workflow
+also runs nightly on `main`, and on demand from `main` with a `mode` input
+(`both`, `localvm` or `redfish`). It never runs on every push.
+
+Explicit run parameters select the runtime. Their defaults are the Colima run
+above, unchanged:
+
+| Variable | Default | CI value |
+| --- | --- | --- |
+| `FLEET_MULTIPLANE_RUNTIME` | `colima` | `ci` |
+| `FLEET_MULTIPLANE_DOCKER_CONTEXT` | `colima-fleet-acceptance-tcg` | `default` |
+| `FLEET_MULTIPLANE_ARCH` (site binary and runtime architecture) | `arm64` | `amd64` |
+| `FLEET_MULTIPLANE_ACCEL` | `tcg` | `kvm` in local VM mode, `tcg` in Redfish mode |
+
+In CI mode, preflight requires a GitHub-hosted runner (`GITHUB_ACTIONS=true` and
+`RUNNER_ENVIRONMENT=github-hosted`) and a context that points at
+exactly `unix:///var/run/docker.sock`. It reads free disk, inotify and a readable, writable `/dev/kvm`
+on the runner itself, and memory and CPUs from the runner's daemon. It never
+calls Colima. Every other check still applies. Preflight fails closed on an
+accelerator it cannot honor: KVM without an amd64 runtime, without `/dev/kvm`,
+or with Redfish mode, and any unknown value. `preflight.json` records the
+parameters.
+
+Every component must agree on the accelerator. The site runtime refuses KVM
+without `/dev/kvm`, with no software fallback, and publishes the accelerator it
+runs. A worker runs only against a runtime that published its own accelerator,
+and each installation's journaled boot admission binds it, so a replacement
+worker never resumes an installation under another. Evidence then requires both
+domain definitions and every QEMU command line to show the selected accelerator,
+and `summary.json` records it.
+
+The job passes only if exactly one run recorded `passed` with every phase
+passed, teardown passed and no retained container. After the run, including
+after a timeout or cancellation, the job scans the evidence for secrets again
+and redacts any match. It uploads only `evidence/`, and only after a clean scan.
+A match fails the job even after its redaction.
+The evidence includes `runner/`, the runner's memory and swap sampled every
+10 seconds, per-container memory, and any kernel OOM events. The job removes
+preinstalled toolchains to free disk, and every tool and action is pinned.
+
+KVM on a GitHub-hosted runner is nested virtualization in a cloud VM. It is a
+qualification target of its own, separate from the Colima TCG runs and from
+physical hardware, and a pass in one qualifies neither of the others.
 
 ### State and evidence layout
 
@@ -271,7 +325,14 @@ The phases are then:
    The cell's own Flux reconciles it from the registry with no hub access. kro
    creates the per-operation ServiceAccount, Role, RoleBinding and Job from its
    local replica.
-5. **Pod interruption.** `interrupt-pod` waits until the Device's journal shows
+5. **Pod interruption.** Before dispatch, `hold-installer` arms a watcher in the
+   runtime Pod. It suspends the installer guest as soon as its kernel prints,
+   and reports it missed if the guest printed its receipt first, so the
+   interruptions land mid-install at any accelerator speed. The guest is
+   therefore paused, not running, while its worker is lost. A guest that
+   finishes while no worker runs is covered by the site worker's unit tests and
+   by Redfish mode, not by this phase. `interrupt-pod`
+   requires that hold, then waits until the Device's journal shows
    the install's installer boot requested *and* its libvirt domain running. It then
    force-deletes the worker Pod with no grace period. It requires:
    - no local result;
@@ -280,7 +341,10 @@ The phases are then:
    - the same unfinished operation.
 6. **Job interruption.** `interrupt-job` deletes the whole worker Job as soon as
    the replacement exists, still mid-install. kro must recreate the Job under
-   a new UID for the same operation.
+   a new UID for the same operation. `release-installer` then resumes the
+   guest, which still has printed no receipt, and records the hold in
+   `interrupt.json`. Evidence fails without it. Redfish mode holds no guest; its
+   TCG installer is slow enough for these interruptions.
 7. **Exact resume.** `resume` requires the recreated Job to be `Complete` with
    one succeeded Pod, and the observer to publish the stored `Succeeded` result.
    The Device's journal must show the installer boot requested exactly once. Evidence later proves exactly one

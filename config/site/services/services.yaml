@@ -56,7 +56,7 @@ spec:
           imagePullPolicy: IfNotPresent
           command: [/usr/local/bin/fleet-site-runtime]
           env:
-            - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
+            - {name: FLEET_LOCAL_VM_ACCEL, value: "${FLEET_LOCAL_VM_ACCEL}"}
             - {name: FLEET_BOOT_IP, value: "${FLEET_BOOT_SERVICE_IP}"}
           securityContext:
             privileged: true
@@ -100,7 +100,7 @@ spec:
           imagePullPolicy: IfNotPresent
           command: [fleet-multiplane, boot-service]
           env:
-            - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
+            - {name: FLEET_LOCAL_VM_ACCEL, value: "${FLEET_LOCAL_VM_ACCEL}"}
             - {name: FLEET_BOOT_ORIGIN, value: "http://${FLEET_BOOT_SERVICE_IP}:8080"}
             - {name: FLEET_BOOT_EVIDENCE, value: /var/lib/fleet-boot}
             # Lab-only fault hook: while this file exists the boot service
@@ -150,7 +150,7 @@ spec:
           imagePullPolicy: IfNotPresent
           command: [fleet-multiplane, site-observer, --cell, "${FLEET_CELL}", --interval, 10s]
           env:
-            - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
+            - {name: FLEET_LOCAL_VM_ACCEL, value: "${FLEET_LOCAL_VM_ACCEL}"}
           securityContext:
             runAsUser: 0
             allowPrivilegeEscalation: false
