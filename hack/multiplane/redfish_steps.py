@@ -358,8 +358,9 @@ def bmc_interrupt(s):
     write(s / 'evidence' / 'redfish-bmc-interrupt.json', {'observedAt': now(), 'deletedBMCPodUIDs': [o['metadata']['uid'] for o in old], 'replacementBMCPodUID': new['metadata']['uid'],
                                                           'operationID': ops[0]['operation'], 'fence': ops[0]['fence'], 'stageAtInterrupt': ops[0]['stage'], 'stageAfter': after[0]['stage'],
                                                           'guestRunningAfter': TARGET_A['domain'] in running(s),
+                                                          'guestStateAfter': runtime(s, 'virsh', '--connect', LIBVIRT, 'domstate', TARGET_A['domain']).stdout.strip(),
                                                           'note': 'the BMC adapter re-reads NVRAM and libvirt state; the worker tolerates a bounded BMC outage while observing'})
-    print('redfish-bmc-interrupt: lab BMC Pod force-deleted mid-install and replaced; the guest kept running and the operation stayed unfinished')
+    print('redfish-bmc-interrupt: lab BMC Pod force-deleted mid-install and replaced; the guest stayed active and the operation stayed unfinished')
 
 
 def isolation(s):

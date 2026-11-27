@@ -1,8 +1,8 @@
 name: multiplane-acceptance
 # The multi-plane acceptance in CI mode (docs/operations/multiplane.md#ci-mode)
 # on a disposable GitHub-hosted runner: three kind clusters, Milo, Karmada, kro,
-# Flux and a privileged libvirt/QEMU site Pod. Local VM mode runs its guest
-# under KVM; Redfish mode keeps its lab targets on TCG. It runs on demand,
+# Flux and a privileged libvirt/QEMU site Pod. Both modes run their guests
+# under KVM. It runs on demand,
 # nightly, and on a pull request only when the multiplane-acceptance label is
 # applied, never on every push.
 on:
@@ -39,8 +39,7 @@ jobs:
       FLEET_MULTIPLANE_RUNTIME: ci
       FLEET_MULTIPLANE_DOCKER_CONTEXT: default
       FLEET_MULTIPLANE_ARCH: amd64
-      # The Redfish lab adapter defines TCG domains only.
-      FLEET_MULTIPLANE_ACCEL: ${{ matrix.mode == 'localvm' && 'kvm' || 'tcg' }}
+      FLEET_MULTIPLANE_ACCEL: kvm
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       with: {persist-credentials: false}
