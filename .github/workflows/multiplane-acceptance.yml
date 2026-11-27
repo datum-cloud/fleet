@@ -31,12 +31,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.mode != 'both' && inputs.mode != 'media' && format('["{0}"]', inputs.mode) || github.event_name == 'workflow_dispatch' && inputs.mode == 'media' && '[]' || '["localvm","redfish"]') }}
-        group: [flux, release]
+        # Every suite but virtual media runs as its flux and release shards.
         # The virtual media suite (run.sh --redfish --virtual-media) runs as
         # one shard: its scenarios are one ordered sequence of installs.
-        include:
-          - {mode: media, group: all}
+        include: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.mode == 'localvm' && '[{"mode":"localvm","group":"flux"},{"mode":"localvm","group":"release"}]' || github.event_name == 'workflow_dispatch' && inputs.mode == 'redfish' && '[{"mode":"redfish","group":"flux"},{"mode":"redfish","group":"release"}]' || github.event_name == 'workflow_dispatch' && inputs.mode == 'media' && '[{"mode":"media","group":"all"}]' || '[{"mode":"localvm","group":"flux"},{"mode":"localvm","group":"release"},{"mode":"redfish","group":"flux"},{"mode":"redfish","group":"release"},{"mode":"media","group":"all"}]') }}
     # A newer labeled run for the same pull request replaces an older one;
     # nightly and manual runs never cancel each other. A cancelled run never
     # counts as passed.
