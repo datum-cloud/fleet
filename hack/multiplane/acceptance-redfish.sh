@@ -26,10 +26,12 @@ ph admit-install 900 "$host" admit-install --config "$state/acceptance.json"
 step await-delivery 300
 rf arm-lost-response 120
 step partition 300
+step hold-installer 120
 step dispatch 900
 rf bmc-interrupt 600
 step interrupt-pod 1200
 step interrupt-job 600
+step release-installer 120
 rf lost-response 1200
 step resume 2400
 step worker-rbac 120
