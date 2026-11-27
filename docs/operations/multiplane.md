@@ -175,6 +175,19 @@ above, unchanged:
 | `FLEET_MULTIPLANE_ARCH` (site binary and runtime architecture) | `arm64` | `amd64` |
 | `FLEET_MULTIPLANE_ACCEL` | `tcg` | `kvm` in local VM mode, `tcg` in Redfish mode |
 
+Lab timers shorten the waits the scenarios provoke, in every runtime. Each
+scenario still proves the same outcome, and production defaults are unchanged:
+
+| Variable | Default | Production | Scenario |
+| --- | --- | --- | --- |
+| `FLEET_MULTIPLANE_INSTALLATION_DEADLINE` | `2m` | 40 minutes | The short-deadline installation ends `OutcomeUnknown` |
+| `FLEET_MULTIPLANE_SKEW_MARGIN` | `30s` | 2 minutes | The coordinator waits this long past a deadline before declaring it exceeded |
+| `FLEET_MULTIPLANE_FAIL_CLOSED_TIMEOUT` | `45s` | 3 minutes in the lab topology | The bad kro revision reports not Ready; the recovery revision restores the usual timeout |
+
+The skew margin covers clock skew between the coordinator and a site. Every
+process in a lab run reads one host clock. The deadline scenario still
+requires the wipe to be admitted after the worker stopped.
+
 In CI mode, preflight requires a GitHub-hosted runner (`GITHUB_ACTIONS=true` and
 `RUNNER_ENVIRONMENT=github-hosted`) and a context that points at
 exactly `unix:///var/run/docker.sock`. It reads free disk, inotify and a readable, writable `/dev/kvm`
@@ -198,8 +211,8 @@ after a timeout or cancellation, the job scans the evidence for secrets again
 and redacts any match. It uploads only `evidence/`, and only after a clean scan.
 A match fails the job even after its redaction.
 The evidence includes `runner/`, the runner's memory and swap sampled every
-10 seconds, per-container memory, and any kernel OOM events. The job removes
-preinstalled toolchains to free disk, and every tool and action is pinned.
+10 seconds, per-container memory, and any kernel OOM events. Every tool and action is
+pinned.
 
 KVM on a GitHub-hosted runner is nested virtualization in a cloud VM. It is a
 qualification target of its own, separate from the Colima TCG runs and from
@@ -405,7 +418,7 @@ The phases are then:
     Redfish mode the BMC audit must gain no effect.
 14. **Deadline and Machine deletion.** `deadline-admit` arms a lab-only hook
     in the boot service, which then withholds every boot while staying Ready,
-    and restarts the coordinator with a six-minute installation deadline for
+    and restarts the coordinator with a two-minute installation deadline for
     consumer B's installation only. kro still creates the worker, and the
     installer boot is requested but never served. `machine-delete` has the
     customer delete B's Machine mid-install. One release pass must leave
