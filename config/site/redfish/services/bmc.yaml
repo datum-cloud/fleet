@@ -41,6 +41,8 @@ spec:
           env:
             - {name: FLEET_BOOT_IP, value: "${FLEET_BOOT_SERVICE_IP}"}
             - {name: FLEET_LIBVIRT_URI, value: "qemu:///system?socket=/run/fleet-libvirt/libvirt-sock"}
+            # Lab targets run only while the site runtime publishes this accelerator.
+            - {name: FLEET_LAB_ACCEL, value: "${FLEET_LOCAL_VM_ACCEL}"}
             - {name: HOME, value: /tmp}
           ports:
             - {name: redfish, containerPort: 8443}

@@ -18,7 +18,9 @@ WORK = pathlib.Path(tempfile.mkdtemp())
 (WORK / 'creds').mkdir()
 (WORK / 'creds' / 'username').write_text('lab-operator\n')
 (WORK / 'creds' / 'password').write_text('synthetic-test-password\n')
-os.environ.update(FLEET_VIRSH=str(HERE / 'fake_virsh.py'), FAKE_VIRSH_STATE=str(WORK / 'virsh.json'), FLEET_BMC_STATE=str(WORK / 'state'))
+(WORK / 'accelerator').write_text('tcg\n')
+os.environ.update(FLEET_VIRSH=str(HERE / 'fake_virsh.py'), FAKE_VIRSH_STATE=str(WORK / 'virsh.json'), FLEET_BMC_STATE=str(WORK / 'state'),
+                  FLEET_LAB_ACCEL='tcg', FLEET_LAB_RUNTIME_ACCELERATOR=str(WORK / 'accelerator'))
 sys.path.insert(0, str(HERE))
 import fleet_lab_adapter as adapter  # noqa: E402
 
@@ -135,6 +137,28 @@ class AdapterTest(unittest.TestCase):
             self.assertEqual(self.app.get('/redfish/v1/Systems/System-1', headers=AUTH).status_code, 503)
         finally:
             del os.environ['FAKE_VIRSH_DOWN']
+
+    def test_7_targets_run_only_under_the_runtime_accelerator(self):
+        target = adapter.load_targets()['System-1']
+        self.assertTrue(adapter.domain_xml(target, 'hd').startswith("<domain type='qemu'>"))
+        adapter.ACCEL = 'kvm'
+        try:
+            self.assertTrue(adapter.domain_xml(target, 'hd').startswith("<domain type='kvm'>"))
+            # The runtime still publishes tcg: no definition or start, and the
+            # System reports the hardware unavailable.
+            self.app.post('/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset', headers=AUTH, json={'ResetType': 'ForceOff'})
+            starts = virsh_state()['domains']['fleet-lab-target-a']['starts']
+            self.assertEqual(self.app.get('/redfish/v1/Systems/System-1', headers=AUTH).status_code, 503)
+            self.assertEqual(self.app.post('/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset', headers=AUTH, json={'ResetType': 'On'}).status_code, 503)
+            self.assertEqual(virsh_state()['domains']['fleet-lab-target-a']['starts'], starts)
+            (WORK / 'accelerator').write_text('kvm\n')
+            self.assertEqual(self.app.post('/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset', headers=AUTH, json={'ResetType': 'On'}).status_code, 204)
+            self.assertEqual(len(virsh_state()['domains']['fleet-lab-target-a']['starts']), len(starts) + 1)
+            (WORK / 'accelerator').unlink()
+            self.assertEqual(self.app.get('/redfish/v1/Systems/System-1', headers=AUTH).status_code, 503)
+        finally:
+            adapter.ACCEL = 'tcg'
+            (WORK / 'accelerator').write_text('tcg\n')
 
 
 if __name__ == '__main__':

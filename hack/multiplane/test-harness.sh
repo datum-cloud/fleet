@@ -133,7 +133,8 @@ with tempfile.TemporaryDirectory() as tmp:
             ('ci without /dev/kvm', dict(ci, FAKE_KVM='absent'), 2),
             ('ci low disk', dict(ci, FAKE_FREE_KB='1000'), 2),
             ('ci concurrent runtime', dict(ci, FAKE='busy'), 2),
-            ('kvm with the Redfish provider', dict(ci, FLEET_SITE_PROVIDER='redfish'), 2),
+            ('ci redfish kvm pass', dict(ci, FLEET_SITE_PROVIDER='redfish'), 0),
+            ('redfish kvm without /dev/kvm', dict(ci, FLEET_SITE_PROVIDER='redfish', FAKE_KVM='absent'), 2),
             ('kvm on an arm64 runtime', {'FLEET_MULTIPLANE_ACCEL': 'kvm'}, 2),
             ('unknown accelerator', {'FLEET_MULTIPLANE_ACCEL': 'auto'}, 2),
             ('unknown runtime', {'FLEET_MULTIPLANE_RUNTIME': 'lima'}, 2)):
@@ -323,6 +324,13 @@ with tempfile.TemporaryDirectory() as tmp:
           and '{name: FLEET_LOCAL_VM_ACCEL, value: "${schema.spec.accelerator}"}' in (root / 'config/site/graph/rgd.yaml').read_text()
           and 'accelerator: "${FLEET_LOCAL_VM_ACCEL}"' in (root / 'config/site/instance/dispatcher.yaml').read_text())
     runtime_text = (root / 'hack/local-vm/site-runtime').read_text()
+    bmc_text = (root / 'config/site/redfish/services/bmc.yaml').read_text()
+    adapter_text = (root / 'hack/redfish-lab/fleet_lab_adapter.py').read_text()
+    check('lab BMC runs targets only under the runtime accelerator', '{name: FLEET_LAB_ACCEL, value: "${FLEET_LOCAL_VM_ACCEL}"}' in bmc_text
+          and adapter_text.count('require_accelerator()') == 3 and "('kvm' if ACCEL == 'kvm' else 'qemu')" in adapter_text)
+    redfish_suite = (root / 'hack/multiplane/acceptance-redfish.sh').read_text().splitlines()
+    check('Redfish interruptions land on a held installer', redfish_suite.index('step hold-installer 120') < redfish_suite.index('step dispatch 900')
+          < redfish_suite.index('step interrupt-job 600') < redfish_suite.index('step release-installer 120') < redfish_suite.index('rf lost-response 1200'))
     check('site runtime requires the KVM device and publishes its accelerator', 'kvm) [ -c /dev/kvm ]' in runtime_text and ' *) echo' in runtime_text
           and '"$sock/accelerator"' in runtime_text)
     check('interrupts land on a held installer in local VM mode', 'step hold-installer' in (root / 'hack/multiplane/acceptance.sh').read_text()

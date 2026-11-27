@@ -269,42 +269,51 @@ if kinds != ["DeviceCommissioning"]: raise SystemExit("expected the one delivere
   rm -f "$state/worker-kubeconfig.json"
   ;;
  hold-installer)
-  # Local VM mode: hold the installer guest paused as soon as its kernel
-  # prints, so the worker interruptions below always land mid-install,
-  # however fast the accelerator. A watcher in the runtime Pod suspends it;
-  # a guest that printed its receipt first is reported missed, never held.
+  # Hold the installer guest paused as soon as its kernel prints, so the
+  # worker and BMC interruptions below always land mid-install, however fast
+  # the accelerator. A watcher in the runtime Pod suspends it; a guest that
+  # printed its receipt first is reported missed, never held. In Redfish mode
+  # the guest is lab target A, whose console log is append-only, so only
+  # output after the hold is armed counts.
   runtime sh -c "[ ! -e $hold_file.pid ] && rm -f $hold_file" || { echo 'an installer hold is already armed' >&2; exit 1; }
-  runtime sh -c 'setsid sh -c "$1" sh >/dev/null 2>&1 </dev/null & echo $! > "$2.pid"' sh "$(cat <<'SH'
-uri='qemu:///system?socket=/run/fleet-libvirt/libvirt-sock' out=/tmp/fleet-installer-hold
+  if redfish; then mode=redfish; else mode=libvirt; fi
+  runtime sh -c 'setsid sh -c "$1" sh "$3" >/dev/null 2>&1 </dev/null & echo $! > "$2.pid"' sh "$(cat <<'SH'
+uri='qemu:///system?socket=/run/fleet-libvirt/libvirt-sock' out=/tmp/fleet-installer-hold mode=$1
+lab=fleet-lab-target-a console=/var/lib/fleet-lab-console/target-a.log
+offset=$(( $(wc -c < "$console" 2>/dev/null || echo 0) + 1 ))
+since() { tail -c "+$offset" "$1" 2>/dev/null; }
 end=$(($(date +%s) + 1500))
 while [ "$(date +%s)" -lt "$end" ]; do
  for d in $(virsh --connect "$uri" list --name); do
-  case "$d" in fleet-local-*) ;; *) continue ;; esac
-  for log in /var/lib/fleet-local/vm/*/"${d#fleet-local-}"/installer.log; do
-   [ -f "$log" ] && grep -q 'Linux version' "$log" || continue
-   if virsh --connect "$uri" suspend "$d" >/dev/null 2>&1 && [ "$(virsh --connect "$uri" domstate "$d")" = paused ] && ! grep -q 'FLEET-INSTALLED:' "$log"; then
-    printf 'held %s %s\n' "$d" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$out.tmp"
-   else
-    printf 'missed %s\n' "$d" > "$out.tmp"
-   fi
-   mv "$out.tmp" "$out"; exit 0
-  done
+  if [ "$mode" = redfish ]; then
+   [ "$d" = "$lab" ] && since "$console" | grep -q 'Linux version' || continue
+   receipt() { since "$console" | grep -q 'FLEET-INSTALLED:'; }
+  else
+   case "$d" in fleet-local-*) ;; *) continue ;; esac
+   log=$(ls /var/lib/fleet-local/vm/*/"${d#fleet-local-}"/installer.log 2>/dev/null | head -1)
+   [ -n "$log" ] && grep -q 'Linux version' "$log" || continue
+   receipt() { grep -q 'FLEET-INSTALLED:' "$log"; }
+  fi
+  if virsh --connect "$uri" suspend "$d" >/dev/null 2>&1 && [ "$(virsh --connect "$uri" domstate "$d")" = paused ] && ! receipt; then
+   printf 'held %s %s %s\n' "$d" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$offset" > "$out.tmp"
+  else
+   printf 'missed %s\n' "$d" > "$out.tmp"
+  fi
+  mv "$out.tmp" "$out"; exit 0
  done
  sleep 0.1
 done
 echo expired > "$out"
 SH
-)" "$hold_file"
+)" "$hold_file" "$mode"
   printf 'hold-installer: armed; the installer guest is suspended once its kernel starts and before any receipt\n'
   ;;
  interrupt-pod)
   name=$(cat "$state/install-handoff")
-  if ! redfish; then
-   held=
-   for _ in $(seq 1 900); do held=$(runtime sh -c "cat $hold_file 2>/dev/null || true"); [[ -z $held ]] || break; sleep 1; done
-   [[ $held == held\ fleet-local-* ]] || { echo "installer guest was not held mid-install: ${held:-no hold}" >&2; exit 1; }
-   printf '%s\n' "$held" > "$state/installer-hold"
-  fi
+  held=
+  for _ in $(seq 1 900); do held=$(runtime sh -c "cat $hold_file 2>/dev/null || true"); [[ -z $held ]] || break; sleep 1; done
+  [[ $held == held\ fleet-local-* || $held == held\ fleet-lab-target-a\ * ]] || { echo "installer guest was not held mid-install: ${held:-no hold}" >&2; exit 1; }
+  printf '%s\n' "$held" > "$state/installer-hold"
   "${harness[@]}" wait-stage --state "$state" --stage "$installer_step" --timeout 900 --interval 0.5 > "$state/interrupt-observed.json"
   before=$(wait_running_pod "$name" 30)
   py job "$state" "$name" > "$state/interrupt-job-before-pod.json"
@@ -322,8 +331,7 @@ SH
   py job "$state" "$name" > "$state/interrupt-job-after-pod.json"
   "${harness[@]}" journal --state "$state" > "$state/interrupt-after.json"
   py record-pod-interrupt "$state" "$before" "$after"
-  if redfish; then state_word=running; else state_word='held paused'; fi
-  printf 'interrupt-pod: worker Pod force-deleted after the installer boot was journaled with its domain %s; Job controller replaced it; no local result\n' "$state_word"
+  printf 'interrupt-pod: worker Pod force-deleted after the installer boot was journaled with its domain held paused; Job controller replaced it; no local result\n'
   ;;
  interrupt-job)
   name=$(cat "$state/install-handoff")
@@ -351,9 +359,13 @@ SH
  release-installer)
   # The guest is still paused with no receipt; resume it for the replacement
   # worker to observe, and record the hold in the interruption evidence.
-  read -r _ domain held_at < "$state/installer-hold"
+  read -r _ domain held_at offset < "$state/installer-hold"
   [[ $(runtime virsh --connect "$libvirt" domstate "$domain" | head -1) == paused ]] || { echo 'held installer guest is no longer paused' >&2; exit 1; }
-  runtime sh -c "! grep -q FLEET-INSTALLED: /var/lib/fleet-local/vm/*/${domain#fleet-local-}/installer.log" || { echo 'held installer printed a receipt while paused' >&2; exit 1; }
+  if redfish; then
+   runtime sh -c "! tail -c +$offset /var/lib/fleet-lab-console/target-a.log | grep -q FLEET-INSTALLED:" || { echo 'held installer printed a receipt while paused' >&2; exit 1; }
+  else
+   runtime sh -c "! grep -q FLEET-INSTALLED: /var/lib/fleet-local/vm/*/${domain#fleet-local-}/installer.log" || { echo 'held installer printed a receipt while paused' >&2; exit 1; }
+  fi
   runtime virsh --connect "$libvirt" resume "$domain" >/dev/null
   [[ $(runtime virsh --connect "$libvirt" domstate "$domain" | head -1) == running ]] || { echo 'held installer guest did not resume' >&2; exit 1; }
   python3 - "$state/evidence/interrupt.json" "$domain" "$held_at" <<'PY'
