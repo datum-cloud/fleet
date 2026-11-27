@@ -128,10 +128,16 @@ with tempfile.TemporaryDirectory() as tmp:
             ('redfish kvm without /dev/kvm', dict(ci, FLEET_SITE_PROVIDER='redfish', FAKE_KVM='absent'), 2),
             ('kvm on an arm64 runtime', {'FLEET_MULTIPLANE_ACCEL': 'kvm'}, 2),
             ('unknown accelerator', {'FLEET_MULTIPLANE_ACCEL': 'auto'}, 2),
-            ('unknown runtime', {'FLEET_MULTIPLANE_RUNTIME': 'lima'}, 2)):
+            ('unknown runtime', {'FLEET_MULTIPLANE_RUNTIME': 'lima'}, 2),
+            ('ci unknown scenario group', dict(ci, FLEET_MULTIPLANE_GROUP='deadline'), 2),
+            ('ci flux group pass', dict(ci, FLEET_MULTIPLANE_GROUP='flux'), 0)):
         s = state(); trace.write_text(''); pathlib.Path(str(trace) + '.context').write_text('')
         r = run(['preflight', '--state', str(s), '--root', str(good_root), '--skip-tests'], env)
         check('preflight ' + name, r.returncode == expected, 'exit %s: %s' % (r.returncode, r.stdout[-600:]))
+        if name in ('ci unknown scenario group', 'ci flux group pass'):
+            pre = json.loads((s / 'evidence/preflight.json').read_text())
+            check(name + ' recorded', pre['group'] == env['FLEET_MULTIPLANE_GROUP'] and
+                  [c['ok'] for c in pre['checks'] if c['name'] == 'scenario-group'] == [name.endswith('pass')], str(pre['checks']))
         if name == 'ci kvm pass':
             pre = json.loads((s / 'evidence/preflight.json').read_text())
             check('ci runtime recorded', pre['runtime'] == {'mode': 'ci', 'dockerContext': 'default', 'architecture': 'amd64', 'accelerator': 'kvm'}, str(pre['runtime']))
@@ -237,11 +243,14 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # Verify: a pass needs status passed, every phase passed, teardown passed
     # and no retained container, whatever the exit code said.
-    def verified(result):
+    def verified(result, *args):
         s = state(); (s / 'evidence').mkdir(); (s / 'evidence/result.json').write_text(json.dumps(result))
-        return run(['verify', '--state', str(s)]).returncode
-    good = {'status': 'passed', 'exitCode': 0, 'retainedContainers': [], 'phases': [{'name': 'build', 'status': 'passed'}, {'name': 'teardown', 'status': 'passed'}]}
+        return run(['verify', '--state', str(s), *args]).returncode
+    good = {'status': 'passed', 'exitCode': 0, 'group': 'flux', 'retainedContainers': [], 'phases': [{'name': 'build', 'status': 'passed'}, {'name': 'teardown', 'status': 'passed'}]}
     check('verify passes a completed run', verified(good) == 0)
+    check('verify passes the expected scenario group', verified(good, '--group', 'flux') == 0)
+    check('verify refuses another scenario group', verified(good, '--group', 'release') == 1)
+    check('verify refuses a run that recorded no group', verified({k: v for k, v in good.items() if k != 'group'}, '--group', 'all') == 1)
     for name, change in (('interrupted', {'status': 'interrupted', 'exitCode': 1}), ('timeout', {'status': 'timeout', 'exitCode': 4}),
                          ('a failed phase', {'phases': [{'name': 'build', 'status': 'timeout'}, {'name': 'teardown', 'status': 'passed'}]}),
                          ('no teardown', {'phases': [{'name': 'build', 'status': 'passed'}, {'name': 'stop', 'status': 'passed'}]}),
@@ -329,6 +338,15 @@ with tempfile.TemporaryDirectory() as tmp:
              'rebuild', 'wrong-location', 'boot-denials', 'flux-final', 'evidence']
     positions = [sequence.find(' ' + name + ' ') for name in order]
     check('acceptance phase order', all(p >= 0 for p in positions) and positions == sorted(positions), str(list(zip(order, positions))))
+    # Each group gates exactly its scenarios in both suites; the rest run in every group.
+    import re as _re
+    for suite in ('acceptance.sh', 'acceptance-redfish.sh'):
+        text = (root / 'hack/multiplane' / suite).read_text()
+        blocks = {g: [l.split()[1] for l in b.strip().splitlines()] for g, b in _re.findall(r'^if runs (\w+); then\n(.*?)^fi$', text, _re.M | _re.S)}
+        check(suite + ' flux group', blocks.get('flux') == ['graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention'], str(blocks.get('flux')))
+        check(suite + ' release group', blocks.get('release') == ['reflection-faults', 'release', 'release-status-a', 'reuse', 'reuse-status', 'delivery-faults', 'deadline-admit',
+                                                                  'machine-delete', 'deadline-hold', 'release-b', 'deadline-settled', 'release-status-b', 'rebuild', 'wrong-location', 'boot-denials'],
+              str(blocks.get('release')))
     for name in order:
         if name in ('custody-crd-rules', 'allocate', 'admit-install', 'install', 'install-repeat', 'release', 'reuse', 'release-b', 'reflection-faults', 'evidence',
                     'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention'):
