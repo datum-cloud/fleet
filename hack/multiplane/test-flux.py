@@ -139,6 +139,11 @@ with tempfile.TemporaryDirectory() as tmp:
     check('stage off revision', flux.stage(ns(revision=2, site='off')) == 0 and 'FLEET_SITE_DISPATCH: "false"' in render(2, 'cell'))
     flux.stage(ns(revision=4, site='dispatch', bad_kro_chart=True))
     check('bad chart revision patches only kro', flux.MISSING_DIGEST in render(4, 'cell') and flux.KRO_CHART_DIGEST not in render(4, 'cell'))
+    def kro_timeout(revision):
+        docs = [d for d in render(revision, 'cell').split('\n---\n') if 'kind: Kustomization\n' in d and re.search(r'^  name: kro$', d, re.M)]
+        return re.findall(r'^  timeout: (\S+)$', docs[0], re.M) if len(docs) == 1 else docs
+    check('bad chart revision shortens only the kro health timeout', kro_timeout(4) == [flux.FAIL_CLOSED_TIMEOUT] and kro_timeout(3) == ['3m'],
+          '%s %s' % (kro_timeout(4), kro_timeout(3)))
     flux.stage(ns(revision=6, site='dispatch', drop_site_volume=True))
     check('volume removal revision', '$patch: delete' in render(6, 'cell') and 'fleet-site-state' in render(6, 'cell'))
     sums = (s / 'gitops' / 'r3.SHA256SUMS').read_text()
