@@ -349,6 +349,22 @@ func (s *Store) PutRecord(device string, fence int64, collection, name string, v
 	})
 }
 
+// DeleteRecord removes a kind's record, such as a rendered config medium
+// once its operation ended. Removing never needs the fence: a worker a newer
+// fence stopped still deletes what it rendered.
+func (s *Store) DeleteRecord(device, collection, name string) error {
+	if !validRecordName(collection) || !validRecordName(name) {
+		return errors.New("site: invalid record name")
+	}
+	return s.locked(device, func(*deviceState) (bool, error) {
+		err := os.Remove(filepath.Join(s.deviceDir(device), collection, name+".json"))
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	})
+}
+
 // GetRecord reads a kind's record. It returns false if there is none.
 func (s *Store) GetRecord(device, collection, name string, into any) (bool, error) {
 	if !validRecordName(collection) || !validRecordName(name) {

@@ -74,6 +74,19 @@ type Config struct {
 	// DHCPInstances is the enrollment's expected DHCP instance set. Only
 	// their reports count, and withdrawal needs every one of them.
 	DHCPInstances []string
+	// MediaCA is the certificate the site trusts for the central media
+	// service, in PEM. The worker verifies the service with it, and the
+	// config medium carries it so the installed OS verifies the service
+	// when it posts its report. Empty means the site cannot use virtual
+	// media.
+	MediaCA []byte
+	// ReportFrom is where the media service sees the site's installed
+	// servers post their first-boot reports from. A window takes no report
+	// from elsewhere. A site without it cannot use virtual media.
+	ReportFrom []netip.Prefix
+	// Artifacts holds the image's pinned artifacts and their manifest. A
+	// virtual media installation derives its boot medium from them.
+	Artifacts string
 	// ContactQuiet replaces contactQuiet, the least time after an admission
 	// was published before withdrawal can be proven. Tests shorten it.
 	ContactQuiet time.Duration
@@ -121,7 +134,7 @@ func conn(work *site.Work) *site.RedfishConnection {
 	return connection
 }
 
-func (k Installation) Check(_ context.Context, work *site.Work) *custody.Refusal {
+func (k Installation) Check(ctx context.Context, work *site.Work) *custody.Refusal {
 	if conn(work) == nil {
 		return &custody.Refusal{Reason: ReasonUnsupportedTarget, Message: "this site does not reach the server over Redfish"}
 	}
@@ -132,10 +145,68 @@ func (k Installation) Check(_ context.Context, work *site.Work) *custody.Refusal
 	if spec.Bootstrap != nil {
 		return &custody.Refusal{Reason: custody.ReasonBootstrapUnsupported, Message: "bootstrap payloads need the sealed store, which is not implemented"}
 	}
-	if refusal := k.checkBootNetwork(work, spec.BootNetwork); refusal != nil {
+	method, ok := k.method(spec.Delivery.Method)
+	if !ok {
+		return &custody.Refusal{Reason: custody.ReasonDeliveryInputs, Message: "this site runs no worker for the delivery method"}
+	}
+	return method.check(ctx, work, spec)
+}
+
+// deliveryMethod is one boot delivery method behind the install contract.
+// The framework owns the fence, the journal and the result; power and
+// evidence are the same for every method. Each method checks its inputs
+// before anything is sent, then prepares its delivery under the fence,
+// verifies what booted, and proves its delivery path closed before the
+// installation can succeed.
+type deliveryMethod interface {
+	check(ctx context.Context, work *site.Work, spec ops.DeviceInstallationSpec) *custody.Refusal
+	install(ctx context.Context, work *site.Work, spec ops.DeviceInstallationSpec) ([]ops.StepEvidence, error)
+}
+
+// networkBoot is the network boot method: a boot admission for the boot
+// NIC, a network-booted installer, and, at a synchronized site, proof that
+// DHCP withdrew the reservation.
+type networkBoot struct{ Config }
+
+func (m networkBoot) check(_ context.Context, work *site.Work, spec ops.DeviceInstallationSpec) *custody.Refusal {
+	if refusal := custody.OnlyNetworkBoot(spec.Delivery); refusal != nil {
+		return refusal
+	}
+	if len(spec.Image.Downloads) > 0 {
+		return &custody.Refusal{Reason: ReasonUnsupportedTarget, Message: "this site's network boot passes no pinned downloads to the installer"}
+	}
+	if refusal := m.checkBootNetwork(work, spec.BootNetwork); refusal != nil {
 		return refusal
 	}
 	return checkTarget(work, spec.TargetDisks, installPhases)
+}
+
+func (m networkBoot) install(ctx context.Context, work *site.Work, _ ops.DeviceInstallationSpec) ([]ops.StepEvidence, error) {
+	return m.run(ctx, work, installPhases)
+}
+
+// virtualMedia is the virtual media method: a fenced media window, the BMC
+// mounting the boot and config media, the install report from the config
+// medium's token, and proof from the BMC and the media service that no
+// medium, override or window remains.
+type virtualMedia struct{ Config }
+
+func (m virtualMedia) check(ctx context.Context, work *site.Work, spec ops.DeviceInstallationSpec) *custody.Refusal {
+	return m.checkMedia(ctx, work, spec)
+}
+
+func (m virtualMedia) install(ctx context.Context, work *site.Work, spec ops.DeviceInstallationSpec) ([]ops.StepEvidence, error) {
+	return m.runMedia(ctx, work, spec)
+}
+
+func (k Installation) method(method ops.DeliveryMethod) (deliveryMethod, bool) {
+	switch method {
+	case ops.DeliveryNetworkBoot:
+		return networkBoot{k.Config}, true
+	case ops.DeliveryVirtualMedia:
+		return virtualMedia{k.Config}, true
+	}
+	return nil, false
 }
 
 func (k Wipe) Check(_ context.Context, work *site.Work) *custody.Refusal {
@@ -226,7 +297,15 @@ func contains(list []string, value string) bool {
 }
 
 func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
-	steps, err := k.run(ctx, work, installPhases)
+	var spec ops.DeviceInstallationSpec
+	if err := json.Unmarshal(work.Inputs, &spec); err != nil {
+		return nil, &custody.Refusal{Reason: ReasonInputs, Message: "the admitted inputs are not a DeviceInstallation spec"}
+	}
+	method, ok := k.method(spec.Delivery.Method)
+	if !ok {
+		return nil, &custody.Refusal{Reason: custody.ReasonDeliveryInputs, Message: "this site runs no worker for the delivery method"}
+	}
+	steps, err := method.install(ctx, work, spec)
 	if err != nil {
 		return nil, err
 	}
