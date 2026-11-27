@@ -137,8 +137,10 @@ that was interrupted, proves nothing.
 
 The full run uses three kind nodes (platform, hub, cell), a registry, Flux on
 each node, three small Milo/etcd pairs, Karmada and kro. Node caps are
-2300 MiB (platform), 2600 MiB (hub), 4400 MiB (cell) and 128 MiB (registry).
-They total about 9.2 GiB and deliberately overcommit the 8 GiB VM, because
+2300 MiB (platform), 2600 MiB (hub), 4400 MiB (cell) and 512 MiB (registry).
+The registry's cap also counts the page cache of the image layers it writes;
+at 128 MiB the kernel killed it during a fast runner's site image push. They
+total about 9.6 GiB and deliberately overcommit the 8 GiB VM, because
 actual usage is much lower. In a debug run the cgroup peaks were 1.99 GiB for
 the platform node (under reclaim pressure at the earlier 1900 MiB cap), 2.06 GiB
 for the hub and 1.6 GiB for the cell after its restart; VM usage was about 4 GiB
