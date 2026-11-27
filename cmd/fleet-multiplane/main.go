@@ -64,6 +64,7 @@ func run() error {
 	relays := fs.String("relays", "", "comma-separated prefixes of the report relays trusted to name a report's source (media-service)")
 	upstream := fs.String("upstream", "", "the media service's PROXY listener, IP:port (report-relay)")
 	clientCA := fs.String("client-ca", "", "CA that signs the site workers' client certificates (media-service)")
+	skewMargin := fs.Duration("skew-margin", 0, "replace the margin after a deadline before the coordinator declares it exceeded (coordinator)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
@@ -76,7 +77,7 @@ func run() error {
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
 		fmt.Println("coordinator: custody coordinator running")
-		return multiplane.Coordinate(ctx, config, *installationDeadline, func(err error) {
+		return multiplane.Coordinate(ctx, config, multiplane.CoordinatorOptions{InstallationDeadline: *installationDeadline, SkewMargin: *skewMargin}, func(err error) {
 			fmt.Fprintf(os.Stderr, "%s coordinator: pass incomplete: %v\n", time.Now().UTC().Format(time.RFC3339), err)
 		})
 	case "seed", "allocate", "install", "admit-install", "admit-install-b", "release", "release-b", "reuse", "recovery-mismatch", "probe-unallocatable", "tenant-isolation", "media-not-offered", "media-offered", "media-unpinned", "media-install-held", "media-install-download", "media-install-lost", "media-install":

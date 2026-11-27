@@ -52,6 +52,12 @@ KRO_CHART_LAYER_SHA256 = 'ceeb630764eb79ca4220dfdcc2907b819a27c30f68cb60d09c1ae3
 KARMADA_CHART_SHA256 = '773ab194cb92dad81d479d2199b968a2c6b0b8366306ba47961afd67616834fe'
 # A well-formed digest that no registry serves: the fail-closed revision.
 MISSING_DIGEST = 'sha256:' + hashlib.sha256(b'fleet: deliberately absent chart').hexdigest()
+# The fail-closed revision also shortens the kro layer's health timeout, so
+# kro reports not Ready within a minute rather than after its usual three.
+# The recovery revision restores the usual timeout with the chart.
+FAIL_CLOSED_TIMEOUT = os.environ.get('FLEET_MULTIPLANE_FAIL_CLOSED_TIMEOUT', '45s')
+if not re.fullmatch(r'[1-9][0-9]*[sm]', FAIL_CLOSED_TIMEOUT):
+    raise SystemExit('FLEET_MULTIPLANE_FAIL_CLOSED_TIMEOUT must be a whole number of seconds or minutes, such as 45s')
 TAG = 'local'
 CLUSTERS = ('platform', 'hub', 'cell')
 KUBECONFIG = {'platform': 'platform-admin.yaml', 'hub': 'host.yaml', 'cell': 'cell-admin.yaml'}
@@ -334,7 +340,8 @@ def stage(args):
                             FLEET_SITE_DELIVERY_METHODS=delivery_methods(s, args.delivery_methods), FLEET_LOCAL_VM_ACCEL=harness.ACCEL)
             if args.bad_kro_chart:
                 patches.append(child_patch('kro', [{'target': {'kind': 'OCIRepository', 'name': 'kro-chart'},
-                                                    'patch': '- op: replace\n  path: /spec/ref/digest\n  value: %s\n' % MISSING_DIGEST}]))
+                                                    'patch': '- op: replace\n  path: /spec/ref/digest\n  value: %s\n' % MISSING_DIGEST}],
+                                           timeout=FAIL_CLOSED_TIMEOUT))
             if args.drop_site_volume:
                 patches.append(child_patch('fleet-site-base', [{'patch': '$patch: delete\napiVersion: v1\nkind: PersistentVolumeClaim\n'
                                                                          'metadata:\n  name: fleet-site-state\n  namespace: fleet-site\n'}]))
@@ -368,10 +375,13 @@ def child_path(name, path):
     return '  - target: {kind: Kustomization, name: %s}\n    patch: |-\n      - op: replace\n        path: /spec/path\n        value: %s\n' % (name, path)
 
 
-def child_patch(name, patches):
-    """Patch a child Kustomization's spec.patches: the effect of a source commit."""
-    return '  - target: {kind: Kustomization, name: %s}\n    patch: |-\n      - op: add\n        path: /spec/patches\n        value: %s\n' % (
-        name, json.dumps(patches))
+def child_patch(name, patches, timeout=None):
+    """Patch a child Kustomization's spec.patches, and optionally its health
+    timeout: the effect of a source commit."""
+    ops = '      - op: add\n        path: /spec/patches\n        value: %s\n' % json.dumps(patches)
+    if timeout:
+        ops += '      - op: replace\n        path: /spec/timeout\n        value: %s\n' % timeout
+    return '  - target: {kind: Kustomization, name: %s}\n    patch: |-\n%s' % (name, ops)
 
 
 def revisions(state):

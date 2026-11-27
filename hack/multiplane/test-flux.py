@@ -149,6 +149,11 @@ with tempfile.TemporaryDirectory() as tmp:
     expect_exit('a declaration must be a list', lambda: flux.stage(ns(revision=10, site='off', delivery_methods='{"method":"NetworkBoot"}')), '--delivery-methods must be a JSON list of offers')
     flux.stage(ns(revision=4, site='dispatch', bad_kro_chart=True))
     check('bad chart revision patches only kro', flux.MISSING_DIGEST in render(4, 'cell') and flux.KRO_CHART_DIGEST not in render(4, 'cell'))
+    def kro_timeout(revision):
+        docs = [d for d in render(revision, 'cell').split('\n---\n') if 'kind: Kustomization\n' in d and re.search(r'^  name: kro$', d, re.M)]
+        return re.findall(r'^  timeout: (\S+)$', docs[0], re.M) if len(docs) == 1 else docs
+    check('bad chart revision shortens only the kro health timeout', kro_timeout(4) == [flux.FAIL_CLOSED_TIMEOUT] and kro_timeout(3) == ['3m'],
+          '%s %s' % (kro_timeout(4), kro_timeout(3)))
     flux.stage(ns(revision=6, site='dispatch', drop_site_volume=True))
     check('volume removal revision', '$patch: delete' in render(6, 'cell') and 'fleet-site-state' in render(6, 'cell'))
     sums = (s / 'gitops' / 'r3.SHA256SUMS').read_text()

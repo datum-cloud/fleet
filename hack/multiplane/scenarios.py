@@ -208,6 +208,9 @@ def release_waits(s):
     holds the Device for release with the installation still active, and no
     wipe exists."""
     op = deadline_op(s)
+    phase = op.get('status', {}).get('phase')
+    if phase in ('Succeeded', 'Failed', 'Cancelled', 'OutcomeUnknown'):
+        die('the installation ended %s before the release was observed; its deadline (FLEET_MULTIPLANE_INSTALLATION_DEADLINE) left too little time' % phase)
     allocation = op['spec']['authority']['allocationRef']['name']
     spec = custody(s)['spec']
     active = spec.get('activeOperation') or {}
