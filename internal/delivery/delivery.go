@@ -42,6 +42,13 @@ type Sites struct {
 	Sites map[string]Site
 	// Devices maps a Device name to the names of the sites serving it.
 	Devices map[string][]string
+	// Methods is each site's declared boot delivery methods, in its order
+	// of preference. A site with none offers none.
+	Methods map[string][]custody.OfferedMethod
+}
+
+func (s *Sites) DeliveryMethods(name string) []custody.OfferedMethod {
+	return slices.Clone(s.Methods[name])
 }
 
 var _ custody.Sites = (*Sites)(nil)

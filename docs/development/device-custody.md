@@ -274,6 +274,28 @@ An operation's creator is the identity a `SelfSubjectReview` reports.
   Fixture discovery writes Device status the way BMC discovery would. Who writes
   it depends on the mode; see [Modes](#modes).
 
+### Boot delivery methods (prototype)
+
+A prototype of [#227](https://github.com/datum-cloud/fleet/pull/227). The
+operations guide describes how it runs in the [Redfish lab](../operations/redfish-lab.md#virtual-media-suite-prototype).
+
+- **Every installation records its method.** `spec.delivery` names
+  `NetworkBoot` or `VirtualMedia`, and for virtual media the central media
+  service, the address mode and the fetch and report windows. A virtual
+  media installation's deadline is the sum of its windows.
+- **Sites declare their methods.** `custody.Sites` gains `DeliveryMethods`,
+  the site's methods in its order of preference. Admission sees the methods
+  every serving site offers. The Metal provider selects from the same
+  declaration.
+- **Admission checks the method** under the custody update: offered,
+  qualified, consistent with the other inputs, and every installer download
+  pinned by digest. The admission snapshot records the method, so a
+  recovery hold records it too. A settling installation must use the held
+  method, and a wipe cannot settle a virtual media hold.
+- **Workers dispatch on the method.** The Redfish install worker hands the
+  install to the method's own steps; network boot is unchanged. The local
+  VM and simulator workers refuse any method but network boot.
+
 ### Federation
 
 `internal/coordination` carries one site assignment per `MachineAllocationHandoff`

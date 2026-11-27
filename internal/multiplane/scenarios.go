@@ -182,7 +182,7 @@ func (r *Runner) TenantIsolation(ctx context.Context) error {
 			Spec: ops.DeviceInstallationSpec{
 				OperationEnvelope: ops.OperationEnvelope{Creator: r.Allocator.ProviderCreator, DeviceRef: ops.DeviceReference{Name: device.Name, UID: string(device.UID)},
 					Authority: ops.Authority{AllocationRef: &ops.LocalReference{Name: unheld}}},
-				RequestUID: request, Image: image, BootInterface: "primary", TargetDisks: []string{"disk-0"},
+				RequestUID: request, Image: image, BootInterface: "primary", TargetDisks: []string{"disk-0"}, Delivery: ops.DeliveryInput{Method: ops.DeliveryNetworkBoot},
 			},
 		}
 		if err := r.Provider.API.Create(ctx, operation); err != nil {

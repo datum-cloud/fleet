@@ -71,6 +71,18 @@ type fakeSites struct {
 	// place of its stopped fence, as a site whose older worker has not yet
 	// stopped would report.
 	seen map[string]int64
+	// methods, when set, replaces the site's declared delivery methods,
+	// which default to network boot then virtual media.
+	methods []OfferedMethod
+}
+
+func (s *fakeSites) DeliveryMethods(string) []OfferedMethod {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.methods != nil {
+		return s.methods
+	}
+	return []OfferedMethod{{Method: ops.DeliveryNetworkBoot}, {Method: ops.DeliveryVirtualMedia, Addresses: ops.AddressesDataNetwork, MediaService: "https://192.0.2.10:8443"}}
 }
 
 func newFakeSites() *fakeSites {
@@ -309,7 +321,7 @@ func (e *env) installation(device *inventory.Device, allocation, request string)
 	e.t.Helper()
 	operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName(allocation, request), Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
 		OperationEnvelope: envelope(device, providerUser, allocated(allocation)), RequestUID: request,
-		Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"},
+		Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"}, Delivery: ops.DeliveryInput{Method: ops.DeliveryNetworkBoot},
 	}}
 	e.create(operation)
 	return operation

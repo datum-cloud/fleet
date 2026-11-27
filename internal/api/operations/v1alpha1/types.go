@@ -13,6 +13,7 @@ package v1alpha1
 
 import (
 	"encoding/json"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -171,6 +172,16 @@ type RecoveryHold struct {
 	// operation itself ends unknown, so its retries keep the original
 	// operation's name and count on.
 	RetryName string `json:"retryName,omitempty"`
+	// Waiting, when set, says why no operation can settle the hold yet, so
+	// staff see it: the held installation's delivery method is one no site
+	// serving the Device offers any more. The coordinator sets and clears it.
+	Waiting *HoldWaiting `json:"waiting,omitempty"`
+}
+
+// HoldWaiting is why a recovery hold cannot be settled yet.
+type HoldWaiting struct {
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
 }
 
 // RejectedResults records site results the coordinator refused because their
@@ -283,8 +294,65 @@ type DeviceInstallationSpec struct {
 	TargetDisks   []string     `json:"targetDisks"`
 	// BootNetwork is the provisioning address for the network boot. It is
 	// required at a site whose DHCP is synchronized and refused elsewhere.
+	// A virtual media installation never carries one.
 	BootNetwork *BootNetworkInput `json:"bootNetwork,omitempty"`
+	// Delivery is how the image reaches the server. The requester selects
+	// it when it creates the operation, and it never changes.
+	Delivery DeliveryInput `json:"delivery"`
 }
+
+// DeliveryMethod is how an operation's boot image reaches the server.
+type DeliveryMethod string
+
+const (
+	// DeliveryNetworkBoot answers the boot NIC over DHCP and boots it over
+	// the network, only while the operation runs.
+	DeliveryNetworkBoot DeliveryMethod = "NetworkBoot"
+	// DeliveryVirtualMedia has the BMC mount boot media from the site's
+	// media service and boot from it once.
+	DeliveryVirtualMedia DeliveryMethod = "VirtualMedia"
+)
+
+// DeliveryMethods is every method, in no preference order.
+var DeliveryMethods = []DeliveryMethod{DeliveryNetworkBoot, DeliveryVirtualMedia}
+
+// AddressMode is how the installed OS gets its addresses at first boot
+// under virtual media. Network boot records none.
+type AddressMode string
+
+const (
+	// AddressesDataNetwork means the network owner's DHCP on the
+	// customer's network serves the Machine's addresses. The config medium
+	// carries none.
+	AddressesDataNetwork AddressMode = "DataNetwork"
+)
+
+// DeliveryInput is the delivery method an operation was admitted with and
+// the method's own inputs. Each is copied from the site's declaration when
+// the method is selected, so the worker never reads a mutable source after
+// admission.
+type DeliveryInput struct {
+	Method DeliveryMethod `json:"method"`
+	// Addresses is the site's address mode for virtual media.
+	Addresses AddressMode `json:"addresses,omitempty"`
+	// MediaService is the central media service for virtual media, as
+	// https://IPv4:port: BMCs fetch media from it and the installed OS
+	// posts its install report to it.
+	MediaService string `json:"mediaService,omitempty"`
+	// FetchWindow bounds how long the BMC may fetch the media, and
+	// ReportWindow how long after that the installed OS has to post its
+	// first-boot report. The operation's deadline is their sum.
+	FetchWindow  *metav1.Duration `json:"fetchWindow,omitempty"`
+	ReportWindow *metav1.Duration `json:"reportWindow,omitempty"`
+}
+
+// Default virtual media phases: 15 minutes to fetch the media, then 30
+// minutes for the install and the first-boot report. A site may set its
+// own.
+const (
+	DefaultFetchWindow  = 15 * time.Minute
+	DefaultReportWindow = 30 * time.Minute
+)
 
 // BootNetworkInput is the provisioning address the boot address source
 // assigned to one operation. The site answers DHCP for the boot NIC with
@@ -304,6 +372,17 @@ type BootNetworkInput struct {
 type ImageInput struct {
 	Name   string `json:"name"`
 	Digest string `json:"digest"`
+	// Downloads are the artifacts the installer fetches during the
+	// install, such as Talos's installer container image. Each is pinned
+	// by digest; admission refuses one that is not.
+	Downloads []DownloadInput `json:"downloads,omitempty"`
+}
+
+// DownloadInput is one artifact an installer downloads, by a reference
+// that pins its digest, such as registry.example/installer@sha256:<hex>.
+type DownloadInput struct {
+	Name      string `json:"name"`
+	Reference string `json:"reference"`
 }
 
 // SealedInput is an opaque reference into the sealed store and the digest of

@@ -138,7 +138,7 @@ func envelope() ops.OperationEnvelope {
 
 func installSpec() ops.DeviceInstallationSpec {
 	name, digest, _ := strings.Cut(image, "@")
-	return ops.DeviceInstallationSpec{OperationEnvelope: envelope(), RequestUID: "r", Image: ops.ImageInput{Name: name, Digest: digest}, BootInterface: "primary", TargetDisks: []string{"disk-0"}}
+	return ops.DeviceInstallationSpec{OperationEnvelope: envelope(), RequestUID: "r", Image: ops.ImageInput{Name: name, Digest: digest}, BootInterface: "primary", TargetDisks: []string{"disk-0"}, Delivery: ops.DeliveryInput{Method: ops.DeliveryNetworkBoot}}
 }
 
 func wipeSpec() ops.DeviceWipeSpec {

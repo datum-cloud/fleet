@@ -121,7 +121,7 @@ func startStack(t *testing.T) *stack {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sites := &delivery.Sites{Sites: map[string]delivery.Site{siteName: remote}, Devices: map[string][]string{}}
+	sites := &delivery.Sites{Sites: map[string]delivery.Site{siteName: remote}, Devices: map[string][]string{}, Methods: map[string][]custody.OfferedMethod{siteName: custody.NetworkBootOnly}}
 	coordinator := &custody.Coordinator{Client: admin, Registry: registry, Sites: sites, Config: custody.Config{Namespace: providerNamespace, Principals: custody.Principals{
 		custody.CreatorMetalProvider: {{Username: providerUser}}, custody.CreatorReleaseController: {{Username: releaseUser}},
 	}}}
@@ -133,6 +133,7 @@ func startStack(t *testing.T) *stack {
 		Custody: coordinator, Namespace: providerNamespace,
 		Cleaning:      func(string) (string, error) { return policyDigest, nil },
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
+		DeliveryMethods: custody.NetworkBootOnly,
 	}
 	s.servers = enrollment
 	s.sites = sites
