@@ -652,6 +652,54 @@ spec:
                                   macAddress: {type: string, maxLength: 17, pattern: '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'}
                                   linkStatus: {type: string, maxLength: 63}
                                   speedMbps: {type: integer, minimum: 0, maximum: 100000000}
+                      chassis:
+                        type: array
+                        maxItems: 16
+                        items:
+                          type: object
+                          required: [id]
+                          properties:
+                            id: {type: string, minLength: 1, maxLength: 253}
+                            networkAdapters:
+                              type: array
+                              maxItems: 16
+                              items:
+                                type: object
+                                required: [id]
+                                properties:
+                                  id: {type: string, minLength: 1, maxLength: 253}
+                                  manufacturer: {type: string, maxLength: 253}
+                                  model: {type: string, maxLength: 253}
+                                  serialNumber: {type: string, maxLength: 253}
+                                  partNumber: {type: string, maxLength: 253}
+                                  firmwareVersion: {type: string, maxLength: 253}
+                                  ports:
+                                    type: array
+                                    maxItems: 32
+                                    items:
+                                      type: object
+                                      required: [id]
+                                      properties:
+                                        id: {type: string, minLength: 1, maxLength: 253}
+                                        physicalPortNumber: {type: string, maxLength: 253}
+                                        macAddresses:
+                                          type: array
+                                          maxItems: 16
+                                          items: {type: string, maxLength: 17, pattern: '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'}
+                                        linkStatus: {type: string, maxLength: 63}
+                                        speedMbps: {type: integer, minimum: 0, maximum: 100000000}
+                                        serviceLabel: {type: string, maxLength: 253}
+                                        lldp:
+                                          type: object
+                                          properties:
+                                            chassisID: {type: string, maxLength: 255}
+                                            chassisIDSubtype: {type: string, maxLength: 63}
+                                            portID: {type: string, maxLength: 255}
+                                            portIDSubtype: {type: string, maxLength: 63}
+                                            systemName: {type: string, maxLength: 255}
+                                            managementAddressIPv4: {type: string, format: ipv4, maxLength: 15}
+                                            managementAddressIPv6: {type: string, format: ipv6, maxLength: 45}
+                      networkAdapterReadFailure: {type: string, maxLength: 253}
               conditions:
                 type: array
                 maxItems: 8

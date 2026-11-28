@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -56,6 +57,7 @@ const (
 	ReasonReadFailed            = "ReadFailed"
 	ReasonUnreachable           = "Unreachable"
 	ReasonInventoryRead         = "InventoryRead"
+	ReasonAdapterReadFailed     = "NetworkAdapterReadFailed"
 	ReasonNotObserved           = "NotObserved"
 	ReasonStaleObservation      = "StaleObservation"
 	ReasonAmbiguousSystem       = "AmbiguousSystem"
@@ -146,8 +148,15 @@ func contact(ctx context.Context, bmc BMC, endpoint string, cred Credential, cre
 			cond(inventory.ConditionDiscovered, metav1.ConditionUnknown, ReasonReadFailed, "the inventory read did not complete; earlier observations are retained: "+safe(err)))
 	}
 	a.inv = &inv
-	return set(reachable, cond(inventory.ConditionAuthenticated, metav1.ConditionTrue, ReasonCredentialAccepted, "the BMC accepted the credential over the pinned connection"),
-		cond(inventory.ConditionDiscovered, metav1.ConditionTrue, ReasonInventoryRead, "managers, systems and their Ethernet interfaces were read"))
+	accepted := cond(inventory.ConditionAuthenticated, metav1.ConditionTrue, ReasonCredentialAccepted, "the BMC accepted the credential over the pinned connection")
+	if inv.AdapterErr != nil {
+		// The rest of the inventory is complete; only the optional adapter
+		// read is retried with backoff.
+		a.uncertain = true
+		return set(reachable, accepted, cond(inventory.ConditionDiscovered, metav1.ConditionTrue, ReasonAdapterReadFailed,
+			"managers, systems and their Ethernet interfaces were read; the network adapter read failed and is retried: "+safe(inv.AdapterErr)))
+	}
+	return set(reachable, accepted, cond(inventory.ConditionDiscovered, metav1.ConditionTrue, ReasonInventoryRead, "managers, systems, their Ethernet interfaces and any network adapter ports were read"))
 }
 
 // safe keeps only redfish's own outcome classes, which never carry a URL,
@@ -201,7 +210,7 @@ func observedInventory(inv redfish.Inventory, at metav1.Time, endpoint string) *
 	nics := func(in []redfish.NetworkInterface) []inventory.ObservedNetworkInterface {
 		var out []inventory.ObservedNetworkInterface
 		for _, n := range in {
-			if n.ID == "" || len(out) == 32 {
+			if clip(n.ID, 253) == "" || len(out) == 32 {
 				continue
 			}
 			out = append(out, inventory.ObservedNetworkInterface{ID: clip(n.ID, 253), MACAddress: n.MACAddress, LinkStatus: clip(n.LinkStatus, 63), SpeedMbps: min(n.SpeedMbps, 100000000)})
@@ -210,25 +219,70 @@ func observedInventory(inv redfish.Inventory, at metav1.Time, endpoint string) *
 	}
 	out := &inventory.ObservedInventory{ObservedAt: at, Endpoint: endpoint}
 	for _, m := range inv.Managers {
-		if m.ID != "" && len(out.Managers) < 16 {
+		if clip(m.ID, 253) != "" && len(out.Managers) < 16 {
 			out.Managers = append(out.Managers, inventory.ObservedManager{ID: clip(m.ID, 253), Model: clip(m.Model, 253), FirmwareVersion: clip(m.FirmwareVersion, 253), NetworkInterfaces: nics(m.NetworkInterfaces)})
 		}
 	}
 	for _, s := range inv.Systems {
-		if s.ID != "" && len(out.Systems) < 16 {
+		if clip(s.ID, 253) != "" && len(out.Systems) < 16 {
 			out.Systems = append(out.Systems, inventory.ObservedSystem{ID: clip(s.ID, 253), UUID: canonicalUUIDOrEmpty(s.UUID), Manufacturer: clip(s.Manufacturer, 253),
 				Model: clip(s.Model, 253), SerialNumber: clip(s.SerialNumber, 253), SKU: clip(s.SKU, 253), PowerState: clip(s.PowerState, 63), NetworkInterfaces: nics(s.NetworkInterfaces)})
 		}
 	}
+	out.Chassis = observedChassis(inv.Chassis)
+	if inv.AdapterErr != nil {
+		out.NetworkAdapterReadFailure = safe(inv.AdapterErr)
+	}
 	return out
 }
 
-func clip(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if len(s) > n {
-		return s[:n]
+// observedChassis applies the status schema's bounds. Chassis, adapters and
+// ports whose Id is empty once trimmed are dropped.
+func observedChassis(in []redfish.Chassis) []inventory.ObservedChassis {
+	var out []inventory.ObservedChassis
+	for _, c := range in {
+		if clip(c.ID, 253) == "" || len(out) == 16 {
+			continue
+		}
+		var adapters []inventory.ObservedNetworkAdapter
+		for _, a := range c.NetworkAdapters {
+			if clip(a.ID, 253) == "" || len(adapters) == 16 {
+				continue
+			}
+			adapter := inventory.ObservedNetworkAdapter{ID: clip(a.ID, 253), Manufacturer: clip(a.Manufacturer, 253), Model: clip(a.Model, 253),
+				SerialNumber: clip(a.SerialNumber, 253), PartNumber: clip(a.PartNumber, 253), FirmwareVersion: clip(a.FirmwareVersion, 253)}
+			for _, p := range a.Ports {
+				if clip(p.ID, 253) == "" || len(adapter.Ports) == 32 {
+					continue
+				}
+				port := inventory.ObservedAdapterPort{ID: clip(p.ID, 253), PhysicalPortNumber: clip(p.PhysicalPortNumber, 253),
+					LinkStatus: clip(p.LinkStatus, 63), SpeedMbps: min(max(p.SpeedMbps, 0), 100000000), ServiceLabel: clip(p.ServiceLabel, 253)}
+				if len(p.MACAddresses) > 0 {
+					port.MACAddresses = append([]string(nil), p.MACAddresses[:min(len(p.MACAddresses), 16)]...)
+				}
+				if n := p.LLDP; n != nil {
+					port.LLDP = &inventory.ObservedLLDPNeighbor{ChassisID: clip(n.ChassisID, 255), ChassisIDSubtype: clip(n.ChassisIDSubtype, 63),
+						PortID: clip(n.PortID, 255), PortIDSubtype: clip(n.PortIDSubtype, 63), SystemName: clip(n.SystemName, 255),
+						ManagementAddressIPv4: n.ManagementAddressIPv4, ManagementAddressIPv6: n.ManagementAddressIPv6}
+				}
+				adapter.Ports = append(adapter.Ports, port)
+			}
+			adapters = append(adapters, adapter)
+		}
+		out = append(out, inventory.ObservedChassis{ID: clip(c.ID, 253), NetworkAdapters: adapters})
 	}
-	return s
+	return out
+}
+
+// clip trims s and keeps at most n characters, the unit of a CRD maxLength,
+// so a multi-byte character is never split. Invalid UTF-8 is replaced first
+// so that the result is always valid.
+func clip(s string, n int) string {
+	s = strings.ToValidUTF8(strings.TrimSpace(s), "\uFFFD")
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }
 
 func canonicalUUIDOrEmpty(s string) string {

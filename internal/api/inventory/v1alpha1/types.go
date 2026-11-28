@@ -245,6 +245,14 @@ type ObservedInventory struct {
 	Endpoint   string            `json:"endpoint"`
 	Managers   []ObservedManager `json:"managers,omitempty"`
 	Systems    []ObservedSystem  `json:"systems,omitempty"`
+	// Chassis are the Redfish Chassis that report network adapters. Each
+	// port's MACs and LLDP neighbor are evidence an operator can join to a
+	// cabled interface; discovery never records that mapping.
+	Chassis []ObservedChassis `json:"chassis,omitempty"`
+	// NetworkAdapterReadFailure is set when the optional network adapter
+	// read failed. Chassis is then empty, and the rest of the inventory is
+	// complete. It never carries a URL, header or response body.
+	NetworkAdapterReadFailure string `json:"networkAdapterReadFailure,omitempty"`
 }
 
 // ObservedManager is one Redfish Manager, the BMC itself.
@@ -274,6 +282,54 @@ type ObservedNetworkInterface struct {
 	MACAddress string `json:"macAddress,omitempty"`
 	LinkStatus string `json:"linkStatus,omitempty"`
 	SpeedMbps  int64  `json:"speedMbps,omitempty"`
+}
+
+// ObservedChassis is one Redfish Chassis and its network adapters.
+type ObservedChassis struct {
+	ID              string                   `json:"id"`
+	NetworkAdapters []ObservedNetworkAdapter `json:"networkAdapters,omitempty"`
+}
+
+// ObservedNetworkAdapter is one Redfish NetworkAdapter, the physical card or
+// LOM. FirmwareVersion is the first controller's FirmwarePackageVersion.
+type ObservedNetworkAdapter struct {
+	ID              string                `json:"id"`
+	Manufacturer    string                `json:"manufacturer,omitempty"`
+	Model           string                `json:"model,omitempty"`
+	SerialNumber    string                `json:"serialNumber,omitempty"`
+	PartNumber      string                `json:"partNumber,omitempty"`
+	FirmwareVersion string                `json:"firmwareVersion,omitempty"`
+	Ports           []ObservedAdapterPort `json:"ports,omitempty"`
+}
+
+// ObservedAdapterPort is one physical port of a NetworkAdapter, from its
+// Ports collection or the older NetworkPorts.
+type ObservedAdapterPort struct {
+	ID string `json:"id"`
+	// PhysicalPortNumber is the port's label on the adapter: Port.PortId or
+	// NetworkPort.PhysicalPortNumber.
+	PhysicalPortNumber string `json:"physicalPortNumber,omitempty"`
+	// MACAddresses are the port's associated MACs, lowercase colon form.
+	MACAddresses []string `json:"macAddresses,omitempty"`
+	LinkStatus   string   `json:"linkStatus,omitempty"`
+	SpeedMbps    int64    `json:"speedMbps,omitempty"`
+	ServiceLabel string   `json:"serviceLabel,omitempty"`
+	// LLDP is the neighbor received on the port. It is absent when the BMC
+	// reports no LLDP neighbor identity.
+	LLDP *ObservedLLDPNeighbor `json:"lldp,omitempty"`
+}
+
+// ObservedLLDPNeighbor is a port's Redfish LLDPReceive: what the link
+// partner, normally a switch, announced. IDs are kept as reported; the
+// subtypes say how to read them.
+type ObservedLLDPNeighbor struct {
+	ChassisID             string `json:"chassisID,omitempty"`
+	ChassisIDSubtype      string `json:"chassisIDSubtype,omitempty"`
+	PortID                string `json:"portID,omitempty"`
+	PortIDSubtype         string `json:"portIDSubtype,omitempty"`
+	SystemName            string `json:"systemName,omitempty"`
+	ManagementAddressIPv4 string `json:"managementAddressIPv4,omitempty"`
+	ManagementAddressIPv6 string `json:"managementAddressIPv6,omitempty"`
 }
 
 type DeviceClaimList struct {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -415,7 +416,11 @@ func discoveredDevice() Device {
 			Inventory: &ObservedInventory{ObservedAt: at, Endpoint: "https://192.0.2.100:443",
 				Managers: []ObservedManager{{ID: "BMC", Model: "Example BMC", FirmwareVersion: "1.0", NetworkInterfaces: nic}},
 				Systems: []ObservedSystem{{ID: "1", UUID: "00000000-0000-4000-8000-000000000001", Model: "Example 1U", SerialNumber: "SYNTHETIC-0001",
-					PowerState: "On", NetworkInterfaces: nic}}},
+					PowerState: "On", NetworkInterfaces: nic}},
+				Chassis: []ObservedChassis{{ID: "1", NetworkAdapters: []ObservedNetworkAdapter{{ID: "NIC.Slot.1", Model: "Example 2x25G", FirmwareVersion: "1.2.3",
+					Ports: []ObservedAdapterPort{{ID: "1", PhysicalPortNumber: "1", MACAddresses: []string{"02:00:00:00:01:01"}, LinkStatus: "LinkUp", SpeedMbps: 25000,
+						ServiceLabel: "NIC Slot 1 Port 1", LLDP: &ObservedLLDPNeighbor{ChassisID: "02:00:00:00:ff:01", ChassisIDSubtype: "MacAddr", PortID: "Ethernet1/1",
+							PortIDSubtype: "IfName", SystemName: "example-switch-01", ManagementAddressIPv4: "192.0.2.250", ManagementAddressIPv6: "2001:db8::fa"}}}}}}}},
 		},
 		Conditions: []metav1.Condition{{Type: ConditionDiscovered, Status: metav1.ConditionTrue, Reason: "InventoryRead", Message: "read", LastTransitionTime: at}},
 	}
@@ -431,6 +436,22 @@ func TestDeviceStatusSchema(t *testing.T) {
 		"uppercase uuid":   func(d *Device) { d.Status.Discovery.Inventory.Systems[0].UUID = "00000000-0000-4000-8000-00000000000A" },
 		"mac not canonical": func(d *Device) {
 			d.Status.Discovery.Inventory.Systems[0].NetworkInterfaces[0].MACAddress = "00-00-5E-00-53-01"
+		},
+		"port mac not canonical": func(d *Device) {
+			d.Status.Discovery.Inventory.Chassis[0].NetworkAdapters[0].Ports[0].MACAddresses = []string{"02:00:00:00:01:0A"}
+		},
+		"too many port macs": func(d *Device) {
+			d.Status.Discovery.Inventory.Chassis[0].NetworkAdapters[0].Ports[0].MACAddresses = slices.Repeat([]string{"02:00:00:00:01:01"}, 17)
+		},
+		"lldp management address not ipv4": func(d *Device) {
+			d.Status.Discovery.Inventory.Chassis[0].NetworkAdapters[0].Ports[0].LLDP.ManagementAddressIPv4 = "2001:db8::fa"
+		},
+		"port without id": func(d *Device) { d.Status.Discovery.Inventory.Chassis[0].NetworkAdapters[0].Ports[0].ID = "" },
+		"adapter read failure too long": func(d *Device) {
+			d.Status.Discovery.Inventory.NetworkAdapterReadFailure = strings.Repeat("x", 254)
+		},
+		"too many chassis": func(d *Device) {
+			d.Status.Discovery.Inventory.Chassis = slices.Repeat(d.Status.Discovery.Inventory.Chassis, 17)
 		},
 		"condition reason":     func(d *Device) { d.Status.Conditions[0].Reason = "" },
 		"duplicate conditions": func(d *Device) { d.Status.Conditions = append(d.Status.Conditions, d.Status.Conditions[0]) },

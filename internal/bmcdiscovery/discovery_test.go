@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -583,11 +585,17 @@ func TestEndToEndOverTLS(t *testing.T) {
 	var mu sync.Mutex
 	var log []string
 	docs := map[string]string{
-		"/redfish/v1/":             `{"RedfishVersion":"1.15.0","Systems":{"@odata.id":"/redfish/v1/Systems"},"Managers":{"@odata.id":"/redfish/v1/Managers"}}`,
-		"/redfish/v1/Managers":     `{"Members":[{"@odata.id":"/redfish/v1/Managers/BMC"}]}`,
-		"/redfish/v1/Managers/BMC": `{"Id":"BMC","Model":"Example BMC","FirmwareVersion":"1.2.3"}`,
-		"/redfish/v1/Systems":      `{"Members":[{"@odata.id":"/redfish/v1/Systems/1"}]}`,
-		"/redfish/v1/Systems/1":    `{"Id":"1","UUID":"00000000-0000-4000-8000-000000000001","Model":"Example 1U","SerialNumber":"SYNTHETIC-0001","PowerState":"Off"}`,
+		"/redfish/v1/":                                        `{"RedfishVersion":"1.15.0","Systems":{"@odata.id":"/redfish/v1/Systems"},"Managers":{"@odata.id":"/redfish/v1/Managers"},"Chassis":{"@odata.id":"/redfish/v1/Chassis"}}`,
+		"/redfish/v1/Chassis":                                 `{"Members":[{"@odata.id":"/redfish/v1/Chassis/1"}]}`,
+		"/redfish/v1/Chassis/1":                               `{"Id":"1","NetworkAdapters":{"@odata.id":"/redfish/v1/Chassis/1/NetworkAdapters"}}`,
+		"/redfish/v1/Chassis/1/NetworkAdapters":               `{"Members":[{"@odata.id":"/redfish/v1/Chassis/1/NetworkAdapters/NIC.1"}]}`,
+		"/redfish/v1/Chassis/1/NetworkAdapters/NIC.1":         `{"Id":"NIC.1","Model":"Example 2x25G","Ports":{"@odata.id":"/redfish/v1/Chassis/1/NetworkAdapters/NIC.1/Ports"}}`,
+		"/redfish/v1/Chassis/1/NetworkAdapters/NIC.1/Ports":   `{"Members":[{"@odata.id":"/redfish/v1/Chassis/1/NetworkAdapters/NIC.1/Ports/1"}]}`,
+		"/redfish/v1/Chassis/1/NetworkAdapters/NIC.1/Ports/1": `{"Id":"1","PortId":"1","LinkStatus":"LinkUp","CurrentSpeedGbps":25,"Ethernet":{"AssociatedMACAddresses":["02:00:00:00:01:01"],"LLDPReceive":{"ChassisId":"02:00:00:00:ff:01","ChassisIdSubtype":"MacAddr","PortId":"Ethernet1/1","PortIdSubtype":"IfName","SystemName":"example-switch-01"}}}`,
+		"/redfish/v1/Managers":                                `{"Members":[{"@odata.id":"/redfish/v1/Managers/BMC"}]}`,
+		"/redfish/v1/Managers/BMC":                            `{"Id":"BMC","Model":"Example BMC","FirmwareVersion":"1.2.3"}`,
+		"/redfish/v1/Systems":                                 `{"Members":[{"@odata.id":"/redfish/v1/Systems/1"}]}`,
+		"/redfish/v1/Systems/1":                               `{"Id":"1","UUID":"00000000-0000-4000-8000-000000000001","Model":"Example 1U","SerialNumber":"SYNTHETIC-0001","PowerState":"Off"}`,
 	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, authed := r.BasicAuth()
@@ -640,11 +648,107 @@ func TestEndToEndOverTLS(t *testing.T) {
 	if c := condition(t, got.Status, inventory.ConditionIdentityMatched); c.Status != metav1.ConditionTrue {
 		t.Fatalf("IdentityMatched = %+v", c)
 	}
+	wantPorts := []inventory.ObservedAdapterPort{{ID: "1", PhysicalPortNumber: "1", MACAddresses: []string{"02:00:00:00:01:01"}, LinkStatus: "LinkUp", SpeedMbps: 25000,
+		LLDP: &inventory.ObservedLLDPNeighbor{ChassisID: "02:00:00:00:ff:01", ChassisIDSubtype: "MacAddr", PortID: "Ethernet1/1", PortIDSubtype: "IfName", SystemName: "example-switch-01"}}}
+	if ch := got.Status.Discovery.Inventory.Chassis; len(ch) != 1 || len(ch[0].NetworkAdapters) != 1 || !reflect.DeepEqual(ch[0].NetworkAdapters[0].Ports, wantPorts) {
+		t.Fatalf("chassis = %+v", ch)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	for _, l := range log {
 		if !strings.HasPrefix(l, "GET ") {
 			t.Fatalf("discovery issued %s", l)
 		}
+	}
+}
+
+func TestObservedChassisAppliesTheStatusBounds(t *testing.T) {
+	long := strings.Repeat("x", 300)
+	var ports []redfish.AdapterPort
+	for i := range 40 {
+		ports = append(ports, redfish.AdapterPort{ID: fmt.Sprint(i), SpeedMbps: 1 << 40})
+	}
+	ports[0] = redfish.AdapterPort{ID: " 0 ", PhysicalPortNumber: long, SpeedMbps: -1,
+		LLDP: &redfish.LLDPNeighbor{ChassisID: long, PortID: "Ethernet1/1", SystemName: long, ChassisIDSubtype: long}}
+	ports[1].ID = ""
+	in := []redfish.Chassis{
+		{ID: "", NetworkAdapters: []redfish.NetworkAdapter{{ID: "dropped"}}},
+		{ID: "1", NetworkAdapters: []redfish.NetworkAdapter{{ID: ""}, {ID: "NIC.1", Model: long, Ports: ports}}},
+	}
+	got := observedChassis(in)
+	if len(got) != 1 || got[0].ID != "1" || len(got[0].NetworkAdapters) != 1 {
+		t.Fatalf("chassis = %+v", got)
+	}
+	a := got[0].NetworkAdapters[0]
+	if len(a.Model) != 253 || len(a.Ports) != 32 || a.Ports[1].ID != "2" {
+		t.Fatalf("adapter model %d, %d ports, second %q", len(a.Model), len(a.Ports), a.Ports[1].ID)
+	}
+	p := a.Ports[0]
+	if p.ID != "0" || len(p.PhysicalPortNumber) != 253 || p.SpeedMbps != 0 || a.Ports[2].SpeedMbps != 100000000 {
+		t.Fatalf("port = %+v, next speed %d", p, a.Ports[2].SpeedMbps)
+	}
+	if l := p.LLDP; l == nil || len(l.ChassisID) != 255 || len(l.SystemName) != 255 || len(l.ChassisIDSubtype) != 63 || l.PortID != "Ethernet1/1" {
+		t.Fatalf("lldp = %+v", p.LLDP)
+	}
+}
+
+func TestAdapterReadFailureKeepsTheRestOfTheInventory(t *testing.T) {
+	bmc := newFakeBMC()
+	bmc.inv.AdapterErr = redfish.Status{Code: http.StatusInternalServerError}
+	a := contact(context.Background(), bmc, "https://192.0.2.10:443", Credential{Username: "operator", Password: "synthetic-secret", Pin: pinA}, nil, t0)
+	if !a.uncertain {
+		t.Fatal("a failed adapter read must be retried with backoff")
+	}
+	var status inventory.DeviceStatus
+	apply(&status, a, 1)
+	inv := status.Discovery.Inventory
+	if inv == nil || len(inv.Managers) != 1 || len(inv.Systems) != 1 || inv.Chassis != nil || inv.NetworkAdapterReadFailure != "redfish: HTTP 500" {
+		t.Fatalf("inventory = %+v", inv)
+	}
+	if d := condition(t, status, inventory.ConditionDiscovered); d.Status != metav1.ConditionTrue || d.Reason != ReasonAdapterReadFailed {
+		t.Fatalf("Discovered = %+v", d)
+	}
+	if c := condition(t, status, inventory.ConditionAuthenticated); c.Status != metav1.ConditionTrue {
+		t.Fatalf("Authenticated = %+v", c)
+	}
+}
+
+func TestClipNeverSplitsACharacter(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in   string
+		n    int
+		want string
+	}{
+		"ascii":              {in: "  abcdef ", n: 3, want: "abc"},
+		"multi-byte at cut":  {in: "ab" + strings.Repeat("é", 3), n: 3, want: "abé"},
+		"four-byte":          {in: "😀😀😀", n: 2, want: "😀😀"},
+		"fits in characters": {in: strings.Repeat("é", 4), n: 4, want: strings.Repeat("é", 4)},
+		"invalid utf-8":      {in: "a\xffb", n: 8, want: "a�b"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := clip(tc.in, tc.n)
+			if got != tc.want || !utf8.ValidString(got) || utf8.RuneCountInString(got) > tc.n {
+				t.Fatalf("clip(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBlankIDsAreDropped keeps a whitespace-only Id out of status: every id
+// field has minLength 1, so one would fail the whole status write.
+func TestBlankIDsAreDropped(t *testing.T) {
+	inv := redfish.Inventory{
+		Managers: []redfish.Manager{{ID: " ", NetworkInterfaces: []redfish.NetworkInterface{{ID: "1"}}}, {ID: "BMC", NetworkInterfaces: []redfish.NetworkInterface{{ID: "\t"}}}},
+		Systems:  []redfish.InventorySystem{{ID: " "}, {ID: "1"}},
+		Chassis: []redfish.Chassis{{ID: " ", NetworkAdapters: []redfish.NetworkAdapter{{ID: "NIC.0"}}}, {ID: "1", NetworkAdapters: []redfish.NetworkAdapter{
+			{ID: " "}, {ID: "NIC.1", Ports: []redfish.AdapterPort{{ID: " "}, {ID: "1"}}}}}},
+	}
+	got := observedInventory(inv, metav1.NewTime(t0), "https://192.0.2.10:443")
+	if len(got.Managers) != 1 || got.Managers[0].ID != "BMC" || got.Managers[0].NetworkInterfaces != nil || len(got.Systems) != 1 || got.Systems[0].ID != "1" {
+		t.Fatalf("managers %+v, systems %+v", got.Managers, got.Systems)
+	}
+	if len(got.Chassis) != 1 || len(got.Chassis[0].NetworkAdapters) != 1 || got.Chassis[0].NetworkAdapters[0].ID != "NIC.1" ||
+		len(got.Chassis[0].NetworkAdapters[0].Ports) != 1 || got.Chassis[0].NetworkAdapters[0].Ports[0].ID != "1" {
+		t.Fatalf("chassis = %+v", got.Chassis)
 	}
 }

@@ -18,7 +18,10 @@ type inventoryBMC struct {
 	mu       sync.Mutex
 	requests []string
 	authed   []bool
-	docs     map[string]any
+	// docs maps a path to its JSON document, or to an int HTTP status.
+	docs map[string]any
+	// onGet, when set, runs before each response with the request path.
+	onGet func(path string)
 }
 
 func newInventoryBMC() *inventoryBMC {
@@ -51,12 +54,19 @@ func (b *inventoryBMC) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b.authed = append(b.authed, authed)
 	doc, ok := b.docs[r.URL.Path]
 	b.mu.Unlock()
+	if b.onGet != nil {
+		b.onGet(r.URL.Path)
+	}
 	if user, pass, _ := r.BasicAuth(); r.URL.Path != "/redfish/v1/" && (user != "operator" || pass != "synthetic-secret") {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 	if !ok || r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if code, ok := doc.(int); ok {
+		w.WriteHeader(code)
 		return
 	}
 	json.NewEncoder(w).Encode(doc)
