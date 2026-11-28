@@ -125,13 +125,20 @@ with tempfile.TemporaryDirectory() as tmp:
             ('ci without /dev/kvm', dict(ci, FAKE_KVM='absent'), 2),
             ('ci low disk', dict(ci, FAKE_FREE_KB='1000'), 2),
             ('ci concurrent runtime', dict(ci, FAKE='busy'), 2),
-            ('kvm with the Redfish provider', dict(ci, FLEET_SITE_PROVIDER='redfish'), 2),
+            ('ci redfish kvm pass', dict(ci, FLEET_SITE_PROVIDER='redfish'), 0),
+            ('redfish kvm without /dev/kvm', dict(ci, FLEET_SITE_PROVIDER='redfish', FAKE_KVM='absent'), 2),
             ('kvm on an arm64 runtime', {'FLEET_MULTIPLANE_ACCEL': 'kvm'}, 2),
             ('unknown accelerator', {'FLEET_MULTIPLANE_ACCEL': 'auto'}, 2),
-            ('unknown runtime', {'FLEET_MULTIPLANE_RUNTIME': 'lima'}, 2)):
+            ('unknown runtime', {'FLEET_MULTIPLANE_RUNTIME': 'lima'}, 2),
+            ('ci unknown scenario group', dict(ci, FLEET_MULTIPLANE_GROUP='deadline'), 2),
+            ('ci flux group pass', dict(ci, FLEET_MULTIPLANE_GROUP='flux'), 0)):
         s = state(); trace.write_text(''); pathlib.Path(str(trace) + '.context').write_text('')
         r = run(['preflight', '--state', str(s), '--root', str(good_root), '--skip-tests'], env)
         check('preflight ' + name, r.returncode == expected, 'exit %s: %s' % (r.returncode, r.stdout[-600:]))
+        if name in ('ci unknown scenario group', 'ci flux group pass'):
+            pre = json.loads((s / 'evidence/preflight.json').read_text())
+            check(name + ' recorded', pre['group'] == env['FLEET_MULTIPLANE_GROUP'] and
+                  [c['ok'] for c in pre['checks'] if c['name'] == 'scenario-group'] == [name.endswith('pass')], str(pre['checks']))
         if name == 'ci kvm pass':
             pre = json.loads((s / 'evidence/preflight.json').read_text())
             check('ci runtime recorded', pre['runtime'] == {'mode': 'ci', 'dockerContext': 'default', 'architecture': 'amd64', 'accelerator': 'kvm'}, str(pre['runtime']))
@@ -237,11 +244,14 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # Verify: a pass needs status passed, every phase passed, teardown passed
     # and no retained container, whatever the exit code said.
-    def verified(result):
+    def verified(result, *args):
         s = state(); (s / 'evidence').mkdir(); (s / 'evidence/result.json').write_text(json.dumps(result))
-        return run(['verify', '--state', str(s)]).returncode
-    good = {'status': 'passed', 'exitCode': 0, 'retainedContainers': [], 'phases': [{'name': 'build', 'status': 'passed'}, {'name': 'teardown', 'status': 'passed'}]}
+        return run(['verify', '--state', str(s), *args]).returncode
+    good = {'status': 'passed', 'exitCode': 0, 'group': 'flux', 'retainedContainers': [], 'phases': [{'name': 'build', 'status': 'passed'}, {'name': 'teardown', 'status': 'passed'}]}
     check('verify passes a completed run', verified(good) == 0)
+    check('verify passes the expected scenario group', verified(good, '--group', 'flux') == 0)
+    check('verify refuses another scenario group', verified(good, '--group', 'release') == 1)
+    check('verify refuses a run that recorded no group', verified({k: v for k, v in good.items() if k != 'group'}, '--group', 'all') == 1)
     for name, change in (('interrupted', {'status': 'interrupted', 'exitCode': 1}), ('timeout', {'status': 'timeout', 'exitCode': 4}),
                          ('a failed phase', {'phases': [{'name': 'build', 'status': 'timeout'}, {'name': 'teardown', 'status': 'passed'}]}),
                          ('no teardown', {'phases': [{'name': 'build', 'status': 'passed'}, {'name': 'stop', 'status': 'passed'}]}),
@@ -295,6 +305,13 @@ with tempfile.TemporaryDirectory() as tmp:
           and '{name: FLEET_LOCAL_VM_ACCEL, value: "${schema.spec.accelerator}"}' in (root / 'config/site/graph/rgd.yaml').read_text()
           and 'accelerator: "${FLEET_LOCAL_VM_ACCEL}"' in (root / 'config/site/instance/dispatcher.yaml').read_text())
     runtime_text = (root / 'hack/local-vm/site-runtime').read_text()
+    bmc_text = (root / 'config/site/redfish/services/bmc.yaml').read_text()
+    adapter_text = (root / 'hack/redfish-lab/fleet_lab_adapter.py').read_text()
+    check('lab BMC runs targets only under the runtime accelerator', '{name: FLEET_LAB_ACCEL, value: "${FLEET_LOCAL_VM_ACCEL}"}' in bmc_text
+          and adapter_text.count('require_accelerator()') == 3 and "('kvm' if ACCEL == 'kvm' else 'qemu')" in adapter_text)
+    redfish_suite = (root / 'hack/multiplane/acceptance-redfish.sh').read_text().splitlines()
+    check('Redfish interruptions land on a held installer', redfish_suite.index('step hold-installer 120') < redfish_suite.index('step dispatch 900')
+          < redfish_suite.index('step interrupt-job 600') < redfish_suite.index('step release-installer 120') < redfish_suite.index('rf lost-response 1200'))
     check('site runtime requires the KVM device and publishes its accelerator', 'kvm) [ -c /dev/kvm ]' in runtime_text and ' *) echo' in runtime_text
           and '"$sock/accelerator"' in runtime_text)
     check('interrupts land on a held installer in local VM mode', 'step hold-installer' in (root / 'hack/multiplane/acceptance.sh').read_text()
@@ -322,6 +339,22 @@ with tempfile.TemporaryDirectory() as tmp:
              'rebuild', 'wrong-location', 'boot-denials', 'flux-final', 'evidence']
     positions = [sequence.find(' ' + name + ' ') for name in order]
     check('acceptance phase order', all(p >= 0 for p in positions) and positions == sorted(positions), str(list(zip(order, positions))))
+    # Pull request runs split each suite; nightly and manual runs default to
+    # the all group, so release follows the Flux disruptions somewhere in CI.
+    workflow = (root / '.github/workflows/multiplane-acceptance.yml').read_text()
+    check('pull requests split, nightly and manual runs combine',
+          "group: ${{ fromJSON((github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.groups == 'split')) && '[\"flux\",\"release\"]' || '[\"all\"]') }}" in workflow
+          and 'options: [all, split]\n        default: all' in workflow and "if: always() && matrix.group != 'flux'" in workflow
+          and '--group "$FLEET_MULTIPLANE_GROUP"' in workflow and '[ "$RESULT" = success ]' in workflow)
+    # Each group gates exactly its scenarios in both suites; the rest run in every group.
+    import re as _re
+    for suite in ('acceptance.sh', 'acceptance-redfish.sh'):
+        text = (root / 'hack/multiplane' / suite).read_text()
+        blocks = {g: [l.split()[1] for l in b.strip().splitlines()] for g, b in _re.findall(r'^if runs (\w+); then\n(.*?)^fi$', text, _re.M | _re.S)}
+        check(suite + ' flux group', blocks.get('flux') == ['graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention'], str(blocks.get('flux')))
+        check(suite + ' release group', blocks.get('release') == ['reflection-faults', 'release', 'release-status-a', 'reuse', 'reuse-status', 'delivery-faults', 'deadline-admit',
+                                                                  'machine-delete', 'deadline-hold', 'release-b', 'deadline-settled', 'release-status-b', 'rebuild', 'wrong-location', 'boot-denials'],
+              str(blocks.get('release')))
     for name in order:
         if name in ('custody-crd-rules', 'allocate', 'admit-install', 'install', 'install-repeat', 'release', 'reuse', 'release-b', 'reflection-faults', 'evidence',
                     'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention'):

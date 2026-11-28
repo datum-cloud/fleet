@@ -36,10 +36,13 @@ Prerequisites, exit codes, the state and evidence layout, `--keep`,
 to GitHub release archives, Docker Hub and PyPI to build the lab BMC image.
 
 Redfish mode also runs in [CI mode](multiplane.md#ci-mode), as the `redfish`
-job of the `multiplane-acceptance` workflow. The lab adapter defines the targets
-as TCG domains, so CI runs them under TCG on an amd64 runner, and preflight
-rejects KVM in Redfish mode. TCG on a cloud runner is its own qualification
-target, separate from the Colima runs below and from physical hardware.
+job of the `multiplane-acceptance` workflow, with the lab targets under KVM.
+Status: implemented, not yet verified under KVM.
+The lab adapter defines and starts a target only while the site runtime
+publishes the accelerator the adapter was given, and evidence requires every
+QEMU command line of target A to show it. KVM on a cloud runner is its own
+qualification target, separate from the Colima runs below and from physical
+hardware.
 
 ## Upstream emulator and provenance
 
@@ -102,7 +105,7 @@ upstream emulator and a fake `virsh`, in the `bmc-self-test` phase.
 ```text
              cell Flux layers (Redfish overlays of config/site)
  fleet-site-runtime (privileged)     fleet-site-bmc (unprivileged, all caps dropped)
-   libvirtd + QEMU TCG  ◀── libvirt socket ── DMTF emulator 1.2.2 + lab adapter
+   libvirtd + QEMU      ◀── libvirt socket ── DMTF emulator 1.2.2 + lab adapter
    lab-target-a  lab-target-b                 ▲  Redfish over TLS (pinned key), Basic auth
    (persistent disks, serial capture)         │  Service 10.96.0.81:8443
         │ firmware DHCP/iPXE (static)         │
@@ -362,9 +365,9 @@ fixture discovery for the lab Devices. Real BMC discovery is not part of this ru
 | `interrupt-pod`, `interrupt-job` | As in libvirt mode, now on the Redfish worker, still inside the installer phase |
 | `redfish-arm-lost-response`, `redfish-lost-response` | Armed before dispatch: the second effective `On` for System-1 (the first install's disk boot) is answered only after 45 seconds. The worker times out and exits 75 (Unknown). Its replacement observes the running or completed target and the consumed override. Exactly one `On` per phase was sent: `powerOnRequests` is one installer and one disk request. |
 | `resume` | The recreated Job completes the exact operation with one succeeded Pod |
-| `deadline-admit`, `machine-delete`, `deadline-hold` | After the wipe and reuse, consumer B's installation runs under a six-minute deadline with the lab boot hook armed. Its `On` is sent and its installer is never served. The Machine is deleted mid-install, the installation ends `OutcomeUnknown` at its deadline, and a mismatched staff recovery is refused with no BMC effect. The release wipe powers the target off and settles the hold. |
+| `deadline-admit`, `machine-delete`, `deadline-hold` | After the wipe and reuse, consumer B's installation runs under the lab installation deadline with the lab boot hook armed. Its `On` is sent and its installer is never served. The Machine is deleted mid-install, the installation ends `OutcomeUnknown` at its deadline, and a mismatched staff recovery is refused with no BMC effect. The release wipe powers the target off and settles the hold. |
 | `boot-denials` | Closed per-MAC scripts and capabilities of all four operations, target B's MAC and unknown identities are denied over the live boot Service |
-| `redfish-isolation` | Target B: unchanged disk digest, no QEMU start, no console line, no mutating Redfish request. Target A: disk hashes as all zeroes. No domain running. Exports the BMC audit. |
+| `redfish-isolation` | Target B: unchanged disk digest, no QEMU start, no console line, no mutating Redfish request. Target A: disk hashes as all zeroes, and no domain is running, except in the `flux` scenario group, which runs no release; there target B must not be running. Exports the BMC audit. |
 
 The final `evidence` phase adds these independent checks in Redfish mode:
 

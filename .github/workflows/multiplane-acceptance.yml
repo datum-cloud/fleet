@@ -1,8 +1,8 @@
 name: multiplane-acceptance
 # The multi-plane acceptance in CI mode (docs/operations/multiplane.md#ci-mode)
 # on a disposable GitHub-hosted runner: three kind clusters, Milo, Karmada, kro,
-# Flux and a privileged libvirt/QEMU site Pod. Local VM mode runs its guest
-# under KVM; Redfish mode keeps its lab targets on TCG. It runs on demand,
+# Flux and a privileged libvirt/QEMU site Pod. Both modes run their guests
+# under KVM. It runs on demand,
 # nightly, and on a pull request only when the multiplane-acceptance label is
 # applied, never on every push.
 on:
@@ -13,6 +13,11 @@ on:
         type: choice
         options: [both, localvm, redfish]
         default: both
+      groups:
+        description: Scenario groups
+        type: choice
+        options: [all, split]
+        default: all
   schedule:
     - cron: '23 5 * * *'
   pull_request:
@@ -22,16 +27,26 @@ permissions:
 jobs:
   acceptance:
     if: github.event_name != 'pull_request' || github.event.label.name == 'multiplane-acceptance'
-    name: acceptance (${{ matrix.mode }})
+    name: acceptance (${{ matrix.mode }}, ${{ matrix.group }})
+    # A labeled pull request run splits each suite into two shards on
+    # separate runners, after the same setup and core install scenarios: flux
+    # runs the Flux scenarios, release the reflection, release, reuse,
+    # deadline and rebuild scenarios. The nightly run, and a manual run unless
+    # it asks for split, runs the all group: every scenario in one topology,
+    # so the release scenarios run after the Flux disruptions
+    # (docs/operations/multiplane.md#ci-mode). The acceptance job below passes
+    # only if every shard passed. A new suite is one more mode here and in the
+    # task selection below.
     strategy:
       fail-fast: false
       matrix:
         mode: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.mode != 'both' && format('["{0}"]', inputs.mode) || '["localvm","redfish"]') }}
+        group: ${{ fromJSON((github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.groups == 'split')) && '["flux","release"]' || '["all"]') }}
     # A newer labeled run for the same pull request replaces an older one;
     # nightly and manual runs never cancel each other. A cancelled run never
     # counts as passed.
     concurrency:
-      group: multiplane-acceptance-${{ github.event.pull_request.number || github.run_id }}-${{ matrix.mode }}
+      group: multiplane-acceptance-${{ github.event.pull_request.number || github.run_id }}-${{ matrix.mode }}-${{ matrix.group }}
       cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -39,8 +54,8 @@ jobs:
       FLEET_MULTIPLANE_RUNTIME: ci
       FLEET_MULTIPLANE_DOCKER_CONTEXT: default
       FLEET_MULTIPLANE_ARCH: amd64
-      # The Redfish lab adapter defines TCG domains only.
-      FLEET_MULTIPLANE_ACCEL: ${{ matrix.mode == 'localvm' && 'kvm' || 'tcg' }}
+      FLEET_MULTIPLANE_ACCEL: kvm
+      FLEET_MULTIPLANE_GROUP: ${{ matrix.group }}
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       with: {persist-credentials: false}
@@ -50,7 +65,22 @@ jobs:
         HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       run: printf 'Tested commit %s for head %s\n' "$(git rev-parse HEAD)" "$HEAD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
     - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-      with: {go-version-file: go.mod, cache: true}
+      with: {go-version-file: go.mod, cache: false}
+    # This job's own Go build cache: the readiness tests build with the race
+    # detector and the site binary without cgo, so a cache saved by another
+    # workflow holds neither. Keyed by commit, restoring the newest for the
+    # same go.sum.
+    # Saved after the build phase even when the run later fails, so a failing
+    # run still warms the next one.
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: multiplane-go-${{ matrix.mode }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+        restore-keys: |
+          multiplane-go-${{ matrix.mode }}-${{ hashFiles('go.mod', 'go.sum') }}-
+          multiplane-go-${{ matrix.mode }}-
     - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
       with: {python-version: '3.12.12'}
     - uses: imranismail/setup-kustomize@2ba527d4d055ab63514ba50a99456fc35684947f # v2
@@ -70,15 +100,14 @@ jobs:
         mkdir -p "$HOME/.local/bin"
         mv kubectl "$HOME/.local/bin/kubectl"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-    - name: Free runner disk and record capacity
+    # The runner's disk has far more free space than the 12 GiB the harness
+    # requires in the Docker data root, and preflight checks it.
+    - name: Record runner capacity
       run: |
-        # Preinstalled toolchains this job does not use. The harness needs
-        # 12 GiB free in the Docker data root.
         {
           echo "FLEET_MULTIPLANE_STATE_ROOT=$RUNNER_TEMP/fleet-multiplane"
           echo "METRICS=$RUNNER_TEMP/runner-metrics"
         } >> "$GITHUB_ENV"
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
         nproc
         free -m
         df -h / /var/lib/docker
@@ -92,12 +121,13 @@ jobs:
     - name: Sample runner memory
       run: |
         mkdir -m 0700 "$METRICS"
-        # Every 10 s: memory, swap and the run's container memory. Container
+        # Every 10 s: memory, swap, the run's container memory and free disk. Container
         # names and byte counts only. The script expands in its own shell.
         # shellcheck disable=SC2016
         nohup sh -c 'while :; do
           printf "%s %s\n" "$(date -u +%FT%TZ)" "$(awk "/^(MemTotal|MemAvailable|SwapTotal|SwapFree):/ {printf \"%s=%s \", \$1, \$2}" /proc/meminfo)" >> "$1/meminfo.log"
           docker stats --no-stream --format "{{.Name}} {{.MemUsage}}" 2>/dev/null | sed "s/^/$(date -u +%FT%TZ) /" >> "$1/containers.log"
+          printf "%s %s\n" "$(date -u +%FT%TZ)" "$(df -k --output=avail /var/lib/docker | tail -1)" >> "$1/disk.log"
           sleep 10
         done' sh "$METRICS" >/dev/null 2>&1 &
         echo $! > "$METRICS/sampler.pid"
@@ -126,6 +156,9 @@ jobs:
             low = min(int(r['MemAvailable:']) for r in rows) / 2**20
             swap = max(int(r['SwapTotal:']) - int(r['SwapFree:']) for r in rows) / 2**20
             print('Runner memory: %.1f GiB total, %.1f GiB peak used, %.1f GiB minimum available, %.2f GiB peak swap, %d samples' % (total, total - low, low, swap, len(rows)))
+        disk = [int(l.split()[1]) for l in (m / 'disk.log').read_text().splitlines()] if (m / 'disk.log').exists() else []
+        if disk:
+            print('Runner disk: %.1f GiB minimum available in the Docker data root' % (min(disk) / 2**20))
         oom = (m / 'oom.log').read_text().strip().splitlines() if (m / 'oom.log').exists() else []
         print('Kernel OOM events: %d' % len(oom))
         PY
@@ -133,7 +166,7 @@ jobs:
         for state in "$FLEET_MULTIPLANE_STATE_ROOT"/fleet-multiplane.*; do
           [ -d "$state/evidence" ] || continue
           mkdir -p "$state/evidence/runner"
-          cp "$METRICS"/meminfo.log "$METRICS"/containers.log "$METRICS"/summary.txt "$METRICS"/oom.log "$state/evidence/runner/" 2>/dev/null || true
+          cp "$METRICS"/meminfo.log "$METRICS"/containers.log "$METRICS"/summary.txt "$METRICS"/oom.log "$METRICS"/disk.log "$state/evidence/runner/" 2>/dev/null || true
           if ! python3 hack/multiplane/harness.py scan --state "$state"; then
             redacted=true
             python3 hack/multiplane/harness.py scan --state "$state"
@@ -142,12 +175,22 @@ jobs:
         done
         echo "found=$found" >> "$GITHUB_OUTPUT"
         echo "redacted=${redacted:-false}" >> "$GITHUB_OUTPUT"
+    # Both shards of a split run build the same binaries, so only the release
+    # shard saves, as does an all run; a second save of a key is skipped.
+    - name: Save the Go build cache
+      if: always() && matrix.group != 'flux'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: multiplane-go-${{ matrix.mode }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
     # Only evidence/ is uploaded, never the private state directory.
     - name: Upload sanitized evidence
       if: always() && steps.scan.outcome == 'success' && steps.scan.outputs.found == 'true'
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
       with:
-        name: multiplane-evidence-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+        name: multiplane-evidence-${{ matrix.mode }}-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
         path: ${{ runner.temp }}/fleet-multiplane/fleet-multiplane.*/evidence/
         if-no-files-found: error
         retention-days: 14
@@ -158,10 +201,30 @@ jobs:
       run: |
         states=("$FLEET_MULTIPLANE_STATE_ROOT"/fleet-multiplane.*)
         [ "${#states[@]}" -eq 1 ] && [ -d "${states[0]}" ] || { echo "expected exactly one run, found ${#states[@]}"; exit 1; }
-        python3 hack/multiplane/harness.py verify --state "${states[0]}"
+        python3 hack/multiplane/harness.py verify --state "${states[0]}" --group "$FLEET_MULTIPLANE_GROUP"
     # A secret that reached evidence fails the job, even after its redaction.
     - name: Fail on redacted evidence
       if: always() && steps.scan.outputs.redacted == 'true'
       run: |
         echo 'evidence matched a retained secret and was redacted; see the scan step'
         exit 1
+  # The one result for a run: it fails unless every shard of every suite
+  # passed, including when a shard was skipped or cancelled.
+  acceptance-result:
+    name: acceptance
+    if: always() && (github.event_name != 'pull_request' || github.event.label.name == 'multiplane-acceptance')
+    needs: acceptance
+    # A newer labeled run replaces this one too, so a replaced run leaves no
+    # stale result beside the new one.
+    concurrency:
+      group: multiplane-acceptance-${{ github.event.pull_request.number || github.run_id }}-result
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - name: Require every shard to pass
+      env:
+        RESULT: ${{ needs.acceptance.result }}
+      run: |
+        [ "$RESULT" = success ] || { echo "a multi-plane acceptance shard did not pass: $RESULT"; exit 1; }
+        echo 'every multi-plane acceptance shard passed'

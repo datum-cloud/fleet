@@ -162,8 +162,9 @@ it again with fresh ports, at most three times. Any other failure stops the run.
 ### CI mode
 
 The `multiplane-acceptance` workflow runs the same acceptance on a disposable
-GitHub-hosted `ubuntu-24.04` runner, one job per mode. Status: **verified**.
-Both modes passed on a hosted runner, local VM mode under KVM.
+GitHub-hosted `ubuntu-24.04` runner: two shards per mode for a labeled pull
+request, one combined run per mode nightly. Status: **verified** in both modes
+under KVM, split and combined.
 
 To run it, apply the `multiplane-acceptance` label to a pull request whose
 branch contains the workflow. Each application starts one run of both modes,
@@ -171,7 +172,8 @@ and a newer run for the same pull request cancels the older one. Pushing to a
 labeled pull request does not start a run, so its result goes stale: remove and
 reapply the label to test the new head. The workflow
 also runs nightly on `main`, and on demand from `main` with a `mode` input
-(`both`, `localvm` or `redfish`). It never runs on every push.
+(`both`, `localvm` or `redfish`) and a `groups` input (`all` by default, or
+`split`). It never runs on every push.
 
 Explicit run parameters select the runtime. Their defaults are the Colima run
 above, unchanged:
@@ -181,15 +183,33 @@ above, unchanged:
 | `FLEET_MULTIPLANE_RUNTIME` | `colima` | `ci` |
 | `FLEET_MULTIPLANE_DOCKER_CONTEXT` | `colima-fleet-acceptance-tcg` | `default` |
 | `FLEET_MULTIPLANE_ARCH` (site binary and runtime architecture) | `arm64` | `amd64` |
-| `FLEET_MULTIPLANE_ACCEL` | `tcg` | `kvm` in local VM mode, `tcg` in Redfish mode |
+| `FLEET_MULTIPLANE_ACCEL` | `tcg` | `kvm` |
+| `FLEET_MULTIPLANE_GROUP` (scenario group) | `all` | `flux` or `release` per shard on a pull request; `all` nightly |
+
+Lab timers shorten the waits the scenarios provoke, in every runtime. Each
+scenario still proves the same outcome, and production defaults are unchanged:
+
+| Variable | Default | Production | Scenario |
+| --- | --- | --- | --- |
+| `FLEET_MULTIPLANE_INSTALLATION_DEADLINE` | `2m` | 40 minutes | The short-deadline installation ends `OutcomeUnknown` |
+| `FLEET_MULTIPLANE_SKEW_MARGIN` | `30s` in CI mode, `2m` otherwise | 2 minutes | The coordinator waits this long past a deadline before declaring it exceeded |
+| `FLEET_MULTIPLANE_FAIL_CLOSED_TIMEOUT` | `45s` | 3 minutes in the lab topology | The bad kro revision reports not Ready; the recovery revision restores the usual timeout |
+
+The skew margin covers clock skew between the coordinator and a site. In CI
+mode every process reads one Linux kernel clock. A Colima VM's clock can drift
+from the workstation's, so that run keeps the production margin. The deadline
+scenario still requires the wipe to be admitted after the worker stopped. On a
+host too slow to journal the installer boot and delete the Machine within the
+deadline, the scenario fails saying so; raise
+`FLEET_MULTIPLANE_INSTALLATION_DEADLINE` there.
 
 In CI mode, preflight requires a GitHub-hosted runner (`GITHUB_ACTIONS=true` and
 `RUNNER_ENVIRONMENT=github-hosted`) and a context that points at
 exactly `unix:///var/run/docker.sock`. It reads free disk, inotify and a readable, writable `/dev/kvm`
 on the runner itself, and memory and CPUs from the runner's daemon. It never
 calls Colima. Every other check still applies. Preflight fails closed on an
-accelerator it cannot honor: KVM without an amd64 runtime, without `/dev/kvm`,
-or with Redfish mode, and any unknown value. `preflight.json` records the
+accelerator it cannot honor: KVM without an amd64 runtime or without
+`/dev/kvm`, and any unknown value. `preflight.json` records the
 parameters.
 
 Every component must agree on the accelerator. The site runtime refuses KVM
@@ -200,14 +220,40 @@ worker never resumes an installation under another. Evidence then requires both
 domain definitions and every QEMU command line to show the selected accelerator,
 and `summary.json` records it.
 
-The job passes only if exactly one run recorded `passed` with every phase
-passed, teardown passed and no retained container. After the run, including
+On a labeled pull request the workflow runs each suite as two shards on
+separate runners, so the result arrives in about half the time. Both shards
+build the same topology and run the same scenarios up to the Pod and Job
+lifecycle checks. The `flux` shard then runs the Flux scenarios: graph
+lifecycle, drift, restart, fail-closed and retention. The `release` shard runs
+the reflection faults, release, reuse, deadline, rebuild, wrong-location and
+closed-boot scenarios. Each shard checks the evidence its scenarios produce:
+the `flux` shard leaves the Device allocated, so the release, wipe and final
+custody checks run in the `release` shard. A local run defaults to `all` and
+runs every scenario in one topology.
+
+The split leaves one gap: in a pull request run, the release, reuse, deadline
+and rebuild scenarios never follow the Flux restart, fail-closed recovery and
+retention scenarios on the same topology, so a recovery that leaves kro or the
+dispatcher subtly wrong would pass there. The nightly run and a manual run
+without `split` run the `all` group per mode, every scenario in order on one
+topology, which covers it:
+
+| Run | Groups per mode | Release scenarios after the Flux disruptions |
+| --- | --- | --- |
+| Labeled pull request | `flux`, `release` | No |
+| Nightly | `all` | Yes |
+| Manual | `all`, or `flux` and `release` with `split` | Yes unless `split` |
+
+A shard, or a combined run, passes only if exactly one run recorded `passed` with every phase
+passed, teardown passed, the expected scenario group and no retained
+container. The workflow's `acceptance` result passes only if every shard of
+every suite passed. After the run, including
 after a timeout or cancellation, the job scans the evidence for secrets again
 and redacts any match. It uploads only `evidence/`, and only after a clean scan.
 A match fails the job even after its redaction.
-The evidence includes `runner/`, the runner's memory and swap sampled every
-10 seconds, per-container memory, and any kernel OOM events. The job removes
-preinstalled toolchains to free disk, and every tool and action is pinned.
+The evidence includes `runner/`, the runner's memory, swap and free disk in
+the Docker data root sampled every 10 seconds, per-container memory, and any
+kernel OOM events. Every tool and action is pinned.
 
 KVM on a GitHub-hosted runner is nested virtualization in a cloud VM. It is a
 qualification target of its own, separate from the Colima TCG runs and from
@@ -335,8 +381,9 @@ The phases are then:
    the replacement exists, still mid-install. kro must recreate the Job under
    a new UID for the same operation. `release-installer` then resumes the
    guest, which still has printed no receipt, and records the hold in
-   `interrupt.json`. Evidence fails without it. Redfish mode holds no guest; its
-   TCG installer is slow enough for these interruptions.
+   `interrupt.json`. Evidence fails without it. Redfish mode holds lab target A
+   the same way, from its append-only console, through the BMC interruption
+   as well.
 7. **Exact resume.** `resume` requires the recreated Job to be `Complete` with
    one succeeded Pod, and the observer to publish the stored `Succeeded` result.
    The Device's journal must show the installer boot requested exactly once. Evidence later proves exactly one
@@ -413,7 +460,7 @@ The phases are then:
     Redfish mode the BMC audit must gain no effect.
 14. **Deadline and Machine deletion.** `deadline-admit` arms a lab-only hook
     in the boot service, which then withholds every boot while staying Ready,
-    and restarts the coordinator with a six-minute installation deadline for
+    and restarts the coordinator with the lab installation deadline for
     consumer B's installation only. kro still creates the worker, and the
     installer boot is requested but never served. `machine-delete` has the
     customer delete B's Machine mid-install. One release pass must leave

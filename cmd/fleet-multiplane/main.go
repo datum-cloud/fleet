@@ -51,6 +51,7 @@ func run() error {
 	clientID := fs.String("client-id", "", "identity the probe's requests carry as their User-Agent, so the lab BMC audit can tell them apart (redfish-probe)")
 	syncToken := fs.String("sync-token-file", "", "file holding the DHCP synchronizer bearer token (dhcp-feed)")
 	installationDeadline := fs.Duration("installation-deadline", 0, "replace the installation deadline for operations this coordinator admits (coordinator)")
+	skewMargin := fs.Duration("skew-margin", 0, "replace the margin after a deadline before the coordinator declares it exceeded (coordinator)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
@@ -63,7 +64,7 @@ func run() error {
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
 		fmt.Println("coordinator: custody coordinator running")
-		return multiplane.Coordinate(ctx, config, *installationDeadline, func(err error) {
+		return multiplane.Coordinate(ctx, config, multiplane.CoordinatorOptions{InstallationDeadline: *installationDeadline, SkewMargin: *skewMargin}, func(err error) {
 			fmt.Fprintf(os.Stderr, "%s coordinator: pass incomplete: %v\n", time.Now().UTC().Format(time.RFC3339), err)
 		})
 	case "seed", "allocate", "install", "admit-install", "admit-install-b", "release", "release-b", "reuse", "recovery-mismatch", "probe-unallocatable", "tenant-isolation":
