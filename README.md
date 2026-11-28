@@ -47,5 +47,9 @@ today. Then choose a topic:
 The [Bare Metal CLI enhancement](docs/enhancements/metal-cli/README.md) proposes
 `datumctl metal` discovery, machine management, and safe recovery workflows.
 
+The [secure customer BMC access enhancement](docs/enhancements/secure-bmc-access.md)
+proposes allocation-scoped Redfish sessions, installation coordination, and safe
+management access without exposing BMC credentials.
+
 Contributors should also read the [repository guidance](AGENTS.md) and
 [implementation roadmap](docs/development/roadmap.md).
