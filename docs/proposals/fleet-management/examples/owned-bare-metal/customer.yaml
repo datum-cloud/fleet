@@ -1,6 +1,6 @@
 # CUSTOMER: desired resources in the example project's scope.
 # Project context: acme. The local MachineClass is registered by Fleet (catalog.yaml).
-# Its capacity remains in the distinct datum-metal provider project.
+# Its capacity remains in the distinct example-metal provider project.
 # These objects can be submitted together or in any creation order.
 # The allocator waits for all named initial resources and validated network inputs.
 apiVersion: metal.datumapis.com/v1alpha1
@@ -11,7 +11,7 @@ metadata:
 spec:
   machineClassRef: {name: metal-standard}
   machineProfileRef: {name: standard-metal}
-  locationRef: {name: us-east-1}
+  locationRef: {name: region-1}
   powerState: "On"
   networkAttachmentRefs:
     - {name: db-01-primary}

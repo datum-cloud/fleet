@@ -289,13 +289,13 @@ describe('DeviceConnections', () => {
     const hostB = 'netbox-41cb7bf1ff39acebb496b8a7';
     // Imported records: one with its generated name copied into displayName, the rest with none.
     const imported = (name: string) => device(name, [C('eth0', 'NetworkPort')], { displayName: name, identity: { manufacturer: 'Example Networks', model: 'EX-1' } });
-    const pdu = device('pdu-a.rk105.yul3', [C('out-1', 'PowerOutlet', 'Outlet 1')], { displayName: undefined });
+    const pdu = device('pdu-a.rack-01.ex1', [C('out-1', 'PowerOutlet', 'Outlet 1')], { displayName: undefined });
     const SUBJECT = 'netbox-0f1e2d3c4b5a69788796a5b4';
     const subject = device(SUBJECT, [C('eth0', 'NetworkPort'), C('eth1', 'NetworkPort'), C('psu-1', 'PowerInlet', 'PSU1-A')], { displayName: undefined, identity: { model: 'EX-9' } });
     const records = [
       cable('netbox-ca213d185ea9153b853f295e', 'Copper', D(SUBJECT, 'eth0'), D(hostA, 'eth0'), 'netbox-ca213d185ea9153b853f295e'),
       cable('netbox-77aa13d185ea9153b853a1c0', 'Copper', D(SUBJECT, 'eth1'), D(hostB, 'eth0'), ''),
-      cable('netbox-99bb13d185ea9153b853b2d1', 'Power', D(SUBJECT, 'psu-1'), D('pdu-a.rk105.yul3', 'out-1'), ''),
+      cable('netbox-99bb13d185ea9153b853b2d1', 'Power', D(SUBJECT, 'psu-1'), D('pdu-a.rack-01.ex1', 'out-1'), ''),
     ];
     const view = show(subject, data(undefined, [subject, imported(hostA), imported(hostB), pdu], records));
     expect(view.container.textContent).not.toMatch(/netbox-/);
@@ -303,7 +303,7 @@ describe('DeviceConnections', () => {
     expect(tiles().map(item => item.getAttribute('aria-label'))).toEqual([
       'eth0: Cable recorded, to Unnamed device #7a96 · eth0, via Copper cable #295e',
       'eth1: Cable recorded, to Unnamed device #b8a7 · eth0, via Copper cable #a1c0',
-      'PSU1-A: Cable recorded, to pdu-a.rk105.yul3 · Outlet 1, via Power cable',
+      'PSU1-A: Cable recorded, to pdu-a.rack-01.ex1 · Outlet 1, via Power cable',
     ]);
     // The card leads with the answer, the Cable on its own line; resource names appear nowhere.
     fireEvent.click(tiles()[0]);

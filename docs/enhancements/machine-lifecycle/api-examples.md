@@ -170,7 +170,7 @@ kind: MachineCapacity
 metadata:
   generation: 1
   name: lab-server-01
-  namespace: infra-ops
+  namespace: fleet-ops
   labels:
     fleet.datumapis.com/capacity-pool: general-metal
 spec:

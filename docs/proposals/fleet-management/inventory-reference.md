@@ -198,27 +198,27 @@ the geographic reference; neither Site nor Facility is a provider identifier.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Facility
 metadata:
-  name: iad1
-  namespace: infra-ops
+  name: ex1
+  namespace: fleet-ops
 spec:
   displayName: Ashburn Facility 1
   locationRef:
-    name: us-east-1
+    name: region-1
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Rack
 metadata:
-  name: iad1-r12
-  namespace: infra-ops
+  name: ex1-r12
+  namespace: fleet-ops
 spec:
-  facilityRef: {name: iad1}
+  facilityRef: {name: ex1}
   heightUnits: 42
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: DeviceClaim
 metadata:
-  name: iad1-r12-u20-server
-  namespace: infra-ops
+  name: ex1-r12-u20-server
+  namespace: fleet-ops
 spec:
   role: Server
   expectedIdentity:
@@ -227,7 +227,7 @@ spec:
     serialNumber: EXAMPLE-SERVER-001
     assetTag: {issuer: datum-infra, value: EXAMPLE-ASSET-001}
   placement:
-    rackRef: {name: iad1-r12}
+    rackRef: {name: ex1-r12}
     position: 20
     heightUnits: 1
     face: Front
@@ -240,14 +240,14 @@ spec:
     - {id: psu1, type: PowerInlet, physicalLabel: PSU1}
     - {id: psu2, type: PowerInlet, physicalLabel: PSU2}
   cableRefs:
-    - {name: iad1-r12-srv01-management}
-    - {name: iad1-r12-srv01-data}
-    - {name: iad1-r12-srv01-power-a}
-    - {name: iad1-r12-srv01-power-b}
+    - {name: ex1-r12-srv01-management}
+    - {name: ex1-r12-srv01-data}
+    - {name: ex1-r12-srv01-power-a}
+    - {name: ex1-r12-srv01-power-b}
 ```
 
-The example assumes an existing management switch `iad1-oob01`, data switch
-`iad1-r12-leaf-a`, and PDUs `iad1-r12-pdu-a`/`iad1-r12-pdu-b`, each registered
+The example assumes an existing management switch `ex1-oob01`, data switch
+`ex1-r12-leaf-a`, and PDUs `ex1-r12-pdu-a`/`ex1-r12-pdu-b`, each registered
 through its own claim. Their referenced components and upstream power paths
 must exist and be verified. These four Cable plans describe the server's
 required connections before the server Device exists:
@@ -256,42 +256,42 @@ required connections before the server Device exists:
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
-  name: iad1-r12-srv01-management
-  namespace: infra-ops
+  name: ex1-r12-srv01-management
+  namespace: fleet-ops
 spec:
   medium: CopperEthernet
-  a: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: bmc}]
-  b: [{deviceRef: {name: iad1-oob01}, componentID: port12}]
+  a: [{deviceClaimRef: {name: ex1-r12-u20-server}, portID: bmc}]
+  b: [{deviceRef: {name: ex1-oob01}, componentID: port12}]
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
-  name: iad1-r12-srv01-data
-  namespace: infra-ops
+  name: ex1-r12-srv01-data
+  namespace: fleet-ops
 spec:
   medium: DirectAttachCopper
-  a: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: nic1-p1}]
-  b: [{deviceRef: {name: iad1-r12-leaf-a}, componentID: ethernet20}]
+  a: [{deviceClaimRef: {name: ex1-r12-u20-server}, portID: nic1-p1}]
+  b: [{deviceRef: {name: ex1-r12-leaf-a}, componentID: ethernet20}]
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
-  name: iad1-r12-srv01-power-a
-  namespace: infra-ops
+  name: ex1-r12-srv01-power-a
+  namespace: fleet-ops
 spec:
   medium: Power
-  a: [{deviceRef: {name: iad1-r12-pdu-a}, componentID: outlet20}]
-  b: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: psu1}]
+  a: [{deviceRef: {name: ex1-r12-pdu-a}, componentID: outlet20}]
+  b: [{deviceClaimRef: {name: ex1-r12-u20-server}, portID: psu1}]
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
-  name: iad1-r12-srv01-power-b
-  namespace: infra-ops
+  name: ex1-r12-srv01-power-b
+  namespace: fleet-ops
 spec:
   medium: Power
-  a: [{deviceRef: {name: iad1-r12-pdu-b}, componentID: outlet20}]
-  b: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: psu2}]
+  a: [{deviceRef: {name: ex1-r12-pdu-b}, componentID: outlet20}]
+  b: [{deviceClaimRef: {name: ex1-r12-u20-server}, portID: psu2}]
 ```
 
 `cableRefs` identifies prerequisites; it does not repeat expected peers. Cable
@@ -310,7 +310,7 @@ requirements explicitly; for example:
 # Excerpt for an identified physical server with facility-level visibility.
 spec:
   placement:
-    facilityRef: {name: iad1}
+    facilityRef: {name: ex1}
   verification:
     requiredChecks: [Identity, FacilityPlacement]
 ```
@@ -331,7 +331,7 @@ not facility-only placement and not a fictitious 1U footprint:
 # Proposed excerpt for identified rented hardware; all identifiers are synthetic.
 spec:
   placement:
-    rackRef: {name: iad1-provider-rack-7}
+    rackRef: {name: ex1-provider-rack-7}
     scope: RackMembership
   verification:
     requiredChecks: [Identity, RackMembership]
@@ -417,11 +417,11 @@ apiVersion: fleet.datumapis.com/v1alpha1
 kind: Device
 metadata:
   name: server-example-001
-  namespace: infra-ops
+  namespace: fleet-ops
 spec:
   # Registry-owned. A raw reference edit cannot move the asset.
   claimRef:
-    name: iad1-r12-u20-server
+    name: ex1-r12-u20-server
   identity:
     manufacturer: Dell
     model: PowerEdge-R650
@@ -429,7 +429,7 @@ spec:
 status:
   observedPlacement:
     rackRef:
-      name: iad1-r12
+      name: ex1-r12
     position: 20
     face: Front
     evidenceRef: installation-scan-001
@@ -520,8 +520,8 @@ the applicable result; an old `Ready=True` is not blanket authorization.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: DeviceClaim
 metadata:
-  name: iad1-r12-u20-server
-  namespace: infra-ops
+  name: ex1-r12-u20-server
+  namespace: fleet-ops
 status:
   observedGeneration: 1
   evaluatedPlanDigest: "sha256:<claim and resolved dependency inputs>"
@@ -608,10 +608,10 @@ technician attestations verify it without overwriting the plan.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: PowerFeed
 metadata:
-  name: iad1-r12-feed-a
-  namespace: infra-ops
+  name: ex1-r12-feed-a
+  namespace: fleet-ops
 spec:
-  facilityRef: {name: iad1}
+  facilityRef: {name: ex1}
   label: EXAMPLE-PANEL-A-12
   supply: {type: AC, nominalVoltageV: 208, phases: 1, ratedCurrentA: 30}
   budget: {usableCurrentA: 24, policyRevision: example-derating-v1}
@@ -623,12 +623,12 @@ spec:
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
-  name: iad1-r12-pdu-a-supply
-  namespace: infra-ops
+  name: ex1-r12-pdu-a-supply
+  namespace: fleet-ops
 spec:
   medium: Power
-  a: [{powerFeedRef: {name: iad1-r12-feed-a}, terminationID: output-1}]
-  b: [{deviceRef: {name: iad1-r12-pdu-a}, componentID: inlet-1}]
+  a: [{powerFeedRef: {name: ex1-r12-feed-a}, terminationID: output-1}]
+  b: [{deviceRef: {name: ex1-r12-pdu-a}, componentID: inlet-1}]
 ```
 
 This example assumes a compatible, separately registered PDU inlet. It proves
@@ -686,8 +686,8 @@ externalCircuitRef:
   type: Circuit
   id: EXAMPLE-OOB-0042
 demarcation: A
-facilityRef: {name: iad1}
-termination: {deviceRef: {name: iad1-demarc-panel}, componentID: rear-07, position: 1}
+facilityRef: {name: ex1}
+termination: {deviceRef: {name: ex1-demarc-panel}, componentID: rear-07, position: 1}
 documentRefs:
   - {system: example-drive, id: EXAMPLE-LOA-42, revision: "3", category: LOA}
 ```

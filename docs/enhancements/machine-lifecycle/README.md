@@ -425,7 +425,7 @@ kind: MachineCapacity
 # gets a new resource lifetime; labels only group capacity for selection.
 metadata:
   name: lab-server-01
-  namespace: infra-ops
+  namespace: fleet-ops
   labels:
     fleet.datumapis.com/capacity-pool: general-metal
 spec:

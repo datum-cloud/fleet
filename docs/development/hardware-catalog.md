@@ -244,10 +244,7 @@ Unavailable model/device collections produce unknown counts, not zero; unreadabl
 dependencies lose their labels and links immediately. Resolved subsets remain
 visible with missing-reference guidance. Initial loading stays in the page shell.
 
-Local validation on 2026-11-22: provider full suite (42 files / 692 tests),
-typecheck and production build pass, as do documentation-link and whitespace
-checks. Validation used Node 22.22.0 and pnpm 11.28.9; the documented Node 26
-runtime was not exercised. Focused tests cover reference scope, unrelated and
+Focused tests cover reference scope, unrelated and
 dangling records, duplicate rows/counts/labels, fallback labels, catalog picker
 choices, denied/partial collections, actual destination URLs, reported-only
 location, loading and history/filter retention. Existing session, write-precondition
@@ -300,8 +297,8 @@ are not proof of real Milo authorization or live NetBox parity.
 
 Validation of the PR106 integration passed the full Go suite, race suite and vet,
 with local Kubernetes 1.37.0 envtest assets including catalog concurrency and
-strict rejection of retired fields. Provider validation covers 459 tests;
-consumer validation covers 44 tests. Both typechecks and production builds pass.
+strict rejection of retired fields. The provider and consumer suites, both
+typechecks and both production builds pass.
 The five CI manifest roots, synthetic-staging render, overlay isolation and its
 regression tests, standalone render, Milo acceptance packaging, documentation
 links and whitespace checks also pass. These are local synthetic checks, not

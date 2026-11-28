@@ -420,7 +420,7 @@ restart the old manager, modify private records, rotate credentials, or remove
 provider state. Continue with the allocation, restart recovery, and release
 checks described above.
 
-On November 12, 2026, the staging server accepted this ownership-only dry run:
-the complete Deployment spec remained identical at zero replicas, and only
-`kustomize-controller` retained sidecar ownership. Execution and successful
-post-handoff reconciliation must be verified separately.
+A server-side dry run of this ownership-only change must leave the complete
+Deployment spec identical at zero replicas, with only `kustomize-controller`
+retaining sidecar ownership. Execution and successful post-handoff
+reconciliation must be verified separately.

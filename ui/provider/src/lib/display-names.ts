@@ -16,7 +16,7 @@ export const isGeneratedName = (name: string) => GENERATED_NAME.test(name);
 
 /**
  * The display name, or the resource name when it reads as a human name
- * (`pdu-a.rk105.yul3`). Never a generated name: undefined when there is none.
+ * (`pdu-a.rack-01.ex1`). Never a generated name: undefined when there is none.
  */
 export function humanName(record: Named): string | undefined {
   for (const candidate of [record.spec.displayName?.trim(), record.metadata.name]) if (candidate && !isGeneratedName(candidate)) return candidate;

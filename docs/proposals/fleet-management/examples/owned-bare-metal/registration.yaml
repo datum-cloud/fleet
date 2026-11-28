@@ -8,19 +8,19 @@ apiVersion: fleet.datumapis.com/v1alpha1
 kind: Device
 metadata:
   name: server-example-001
-  namespace: infra-ops
+  namespace: fleet-ops
 spec:
   # Registry-owned active placement relationship. A move requires an explicit
   # successor DeviceClaim/maintenance transition; a raw ref edit cannot move it.
   claimRef:
-    name: iad1-r12-u20-server
+    name: ex1-r12-u20-server
   identity:
     manufacturer: Dell
     model: PowerEdge-R650
     serialNumber: EXAMPLE-SERVER-001
 status:
   observedPlacement:
-    rackRef: {name: iad1-r12}
+    rackRef: {name: ex1-r12}
     position: 20
     face: Front
     evidenceRef: installation-scan-001
@@ -35,8 +35,8 @@ status:
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: DeviceClaim
 metadata:
-  name: iad1-r12-u20-server
-  namespace: infra-ops
+  name: ex1-r12-u20-server
+  namespace: fleet-ops
 status:
   observedGeneration: 1
   evaluatedPlanDigest: "sha256:<claim and required cable inputs>"
@@ -63,8 +63,8 @@ status:
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
-  name: iad1-r12-srv01-data
-  namespace: infra-ops
+  name: ex1-r12-srv01-data
+  namespace: fleet-ops
 status:
   resolvedEndpoints:
     a:
@@ -73,7 +73,7 @@ status:
         componentID: nic-slot2-port1
     b:
       - deviceRef:
-          name: iad1-r12-leaf-a
+          name: ex1-r12-leaf-a
         componentID: ethernet20
   evidence:
     - {type: EndpointAdjacency, source: TrustedSwitchCollector, ref: link-observation-001}

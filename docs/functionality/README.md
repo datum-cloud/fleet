@@ -35,7 +35,7 @@ the customer service, inventory, and intended coordination contracts.
   [owned bare-metal journey](../proposals/fleet-management/examples/owned-bare-metal/README.md)
   from planning and physical verification through customer release.
 - **Managed platform operator:** Read the
-  [rented-capacity adoption example](../proposals/fleet-management/examples/us-east-1-alice.md)
+  [rented-capacity adoption example](../proposals/fleet-management/examples/rented-capacity-adoption.md)
   alongside the cluster lifecycle contract. Adoption starts with observation,
   not reprovisioning or exposing occupied machines as available.
 

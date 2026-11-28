@@ -7,7 +7,7 @@
 # inputs. No consumer Machine, Installation, or competing operation may exist.
 # The bound physical DeviceClaim remains required throughout preparation.
 method: POST
-path: /apis/metal.datumapis.com/v1alpha1/namespaces/infra-ops/machinecapacities/iad1-r12-srv01/prepare
+path: /apis/metal.datumapis.com/v1alpha1/namespaces/fleet-ops/machinecapacities/ex1-r12-srv01/prepare
 body:
   idempotencyKey: srv01-initial-preparation-01
   expectedDeviceRef: {name: server-example-001}

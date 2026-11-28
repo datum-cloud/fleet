@@ -1,5 +1,5 @@
 <!-- omit from toc -->
-# Example: us-east-1 and us-east-1-alice
+# Example: region-1 and region-1-cluster-a
 
 This example applies the [Fleet subsystem model](../README.md) to the rented
 infrastructure and managed clusters in the original proposal. For a complete
@@ -7,14 +7,14 @@ owned-server installation and customer claim, see the
 [rack-to-customer journey](owned-bare-metal/README.md).
 
 For this internal adoption example, provider inventory and managed consumption
-share the `datum-cloud` project; namespaced resources use `infra-ops`. Site and
+share the `example-provider` project; namespaced resources use `fleet-ops`. Site and
 Facility references resolve within that same authorized project. The owned-server
 journey separately demonstrates a provider and consumer in distinct projects.
 MachineClass remains project-scoped and platform-published in both cases.
 
 The operational values are a snapshot from the original enhancement, not a fresh
 assertion about production. Object names, schemas, and evidence handles are
-proposed. The [adoption input ledger](us-east-1-adoption-inputs.yaml) preserves all
+proposed. The [adoption input ledger](rented-capacity-adoption-inputs.yaml) preserves all
 eight original machine records' UUIDs, disk identifiers, uplink addresses, vendor
 peers, credential references, and retirement requests. It is migration input,
 not an apply bundle or proof that those facts are correct today.
@@ -24,25 +24,25 @@ not an apply bundle or proof that those facts are correct today.
 One geographic location serves two managed clusters and rented capacity from
 multiple providers:
 
-| Property | us-east-1-alice | us-east-1-staging-lab |
+| Property | region-1-cluster-a | region-1-lab |
 |---|---|---|
-| Location / zone | us-east-1 / us-east-1a | Same |
-| Provider facility codes | IAD3, WAS4, retiring WAS1 | IAD3, WAS4 |
+| Location / zone | region-1 / region-1a | Same |
+| Provider facility codes | FAC-B1, FAC-A4, retiring FAC-A1 | FAC-B1, FAC-A4 |
 | Channel / environment | stable / production | staging / staging |
-| Service public identity | 67.14.172.29, 2607:ed40:40::1d | 67.14.174.3, 2607:ed40:60::3 |
-| Fabric site code | 1007 | 1010 |
-| Edge-service prefixes | 67.14.164.0/24, 2607:ed40:10::/44 | 67.14.174.0/24, 2607:ed40:60::/44 |
+| Service public identity | 203.0.113.29, 2001:db8:40::1d | 203.0.113.131, 2001:db8:60::3 |
+| Fabric site code | 9001 | 9002 |
+| Edge-service prefixes | 203.0.113.0/25, 2001:db8:10::/44 | 203.0.113.128/25, 2001:db8:60::/44 |
 | Talos / Kubernetes | v1.13.7 / v1.35.5 | Same |
-| ASN | 33438 | Same |
+| ASN | 64500 | Same |
 
-A servers.com box with hardware UUID ending `c3c04f474834` has moved from the
+A Provider A box with hardware UUID ending `000000000001` has moved from the
 lab's workload to production. That changes its compute allocation, not the
 physical asset identity. Service addresses and Galactic's fabric policy remain
 with their respective owners.
 
 ## Geography, inventory, and Site policy
 
-Location `us-east-1` is an existing geographic identity. Fleet inventory records
+Location `region-1` is an existing geographic identity. Fleet inventory records
 actual premises as provider-neutral Facilities. The names below are provisional
 operator aliases for the original provider codes; an operator must verify the
 canonical premises and merge aliases if multiple providers use the same facility.
@@ -57,53 +57,53 @@ label or selector changes.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Facility
 metadata:
-  name: iad3
-  namespace: infra-ops
+  name: fac-b1
+  namespace: fleet-ops
   labels:
-    fleet.datumapis.com/allocation-group: us-east-1
+    fleet.datumapis.com/allocation-group: region-1
 spec:
   locationRef:
-    name: us-east-1
+    name: region-1
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Facility
 metadata:
-  name: was4
-  namespace: infra-ops
+  name: fac-a4
+  namespace: fleet-ops
   labels:
-    fleet.datumapis.com/allocation-group: us-east-1
+    fleet.datumapis.com/allocation-group: region-1
 spec:
   locationRef:
-    name: us-east-1
+    name: region-1
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Facility
 metadata:
-  name: was1
-  namespace: infra-ops
+  name: fac-a1
+  namespace: fleet-ops
   labels:
-    fleet.datumapis.com/allocation-group: us-east-1
+    fleet.datumapis.com/allocation-group: region-1
 spec:
   locationRef:
-    name: us-east-1
+    name: region-1
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Site
 metadata:
-  name: us-east-1
-  namespace: infra-ops
+  name: region-1
+  namespace: fleet-ops
 spec:
   locationRef:
-    name: us-east-1
+    name: region-1
   allocation:
     facilitySelector:
       matchLabels:
-        fleet.datumapis.com/allocation-group: us-east-1
+        fleet.datumapis.com/allocation-group: region-1
 ```
-Vendor mappings live with the provider adapter. For example, NetActuate region
-`245` maps to Facility `iad3`; legacy ISO identifier `5892` is an adoption input,
+Vendor mappings live with the provider adapter. For example, Provider B region
+`100` maps to Facility `fac-b1`; legacy ISO identifier `9000` is an adoption input,
 not the desired image for every future allocation. New installations resolve an
-approved image per request. The legacy `HOSTING-AS7979` and `HOSTING-AS36236`
+approved image per request. The legacy `HOSTING-AS64501` and `HOSTING-AS64502`
 settings in the input ledger move to the routing/networking authority.
 
 ## Shared catalog
@@ -111,9 +111,9 @@ settings in the input ledger move to the routing/networking authority.
 Classes stay brief in this example; they describe capabilities or reusable
 requirements, not particular installations:
 
-- **MachineClass netactuate-controlplane / netactuate-worker:** Published provider
+- **MachineClass provider-b-controlplane / provider-b-worker:** Published provider
   capacity for the corresponding managed pools.
-- **MachineClass serverscom-compute-2u / serverscom-edge:** Published rented-server
+- **MachineClass provider-a-compute-2u / provider-a-edge:** Published rented-server
   capabilities.
 - **Typed vendor machine classes:** Provider plan and qualified acquisition/preparation
   requirements.
@@ -126,8 +126,8 @@ requirements, not particular installations:
 
 Operator MachineClass definitions reference the private vendor classes; Fleet
 registers local source references for managed consumers. This example places both
-in `datum-cloud`: the consumer alias `serverscom-compute-2u` references the distinct
-definition `datum-serverscom-compute-2u`, so it is not a self-reference. That
+in `example-provider`: the consumer alias `provider-a-compute-2u` references the distinct
+definition `datum-provider-a-compute-2u`, so it is not a self-reference. That
 definition supplies the `amd64`, `compute.unikraft`, and `compute.kata` contract.
 The [publication contract](../capacity-publication.md) also applies to these
 internal consumers. These entries, the Omni provider connection, admitted
@@ -139,11 +139,11 @@ credentials. Two representative local catalog entries are:
 apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineClass
 metadata:
-  name: serverscom-compute-2u
+  name: provider-a-compute-2u
 spec:
   source:
-    project: datum-cloud
-    name: datum-serverscom-compute-2u
+    project: example-provider
+    name: datum-provider-a-compute-2u
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachineImage
@@ -161,7 +161,7 @@ spec:
 
 The production and staging clusters share a Site policy. Each has its own
 channel, environment, version, provider configuration, and pools. The example
-uses namespace `infra-ops` in the shared `datum-cloud` project. MachineClass,
+uses namespace `fleet-ops` in the shared `example-provider` project. MachineClass,
 Site, Facility, and inventory references use their declared scopes within that
 project. The publisher and binder enforce the same publication and allocation
 contracts used for cross-project consumption. The same namespace name in
@@ -171,13 +171,13 @@ another project is a different scope.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cluster
 metadata:
-  name: us-east-1-alice
+  name: region-1-cluster-a
   labels:
     fleet.datumapis.com/wave: stable
-  namespace: infra-ops
+  namespace: fleet-ops
 spec:
   siteRef:
-    name: us-east-1
+    name: region-1
   clusterProviderRef:
     apiGroup: omni.fleet.datumapis.com
     kind: OmniInstance
@@ -186,7 +186,7 @@ spec:
   environment: production
   version: v1.35.5
   zones:
-    - us-east-1a
+    - region-1a
   clusterProviderConfigRef:
     apiGroup: omni.fleet.datumapis.com
     kind: OmniClusterProfile
@@ -197,13 +197,13 @@ spec:
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cluster
 metadata:
-  name: us-east-1-staging-lab
+  name: region-1-lab
   labels:
     fleet.datumapis.com/wave: lab
-  namespace: infra-ops
+  namespace: fleet-ops
 spec:
   siteRef:
-    name: us-east-1
+    name: region-1
   clusterProviderRef:
     apiGroup: omni.fleet.datumapis.com
     kind: OmniInstance
@@ -212,7 +212,7 @@ spec:
   environment: staging
   version: v1.35.5
   zones:
-    - us-east-1a
+    - region-1a
   clusterProviderConfigRef:
     apiGroup: omni.fleet.datumapis.com
     kind: OmniClusterProfile
@@ -232,14 +232,14 @@ capacity requirement. A representative pool is:
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachinePool
 metadata:
-  name: us-east-1-alice-compute
-  namespace: infra-ops
+  name: region-1-cluster-a-compute
+  namespace: fleet-ops
 spec:
   clusterRef:
-    name: us-east-1-alice
+    name: region-1-cluster-a
   role: compute
   machineClassRef:
-    name: serverscom-compute-2u
+    name: provider-a-compute-2u
   machineProfileRef:
     name: compute-2u
   imageRef:
@@ -280,15 +280,15 @@ evidence required for the offered placement and connectivity guarantees.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: DeviceClaim
 metadata:
-  name: was4-c3c04f474834-adoption
-  namespace: infra-ops
+  name: fac-a4-000000000001-adoption
+  namespace: fleet-ops
 spec:
   role: Server
   expectedIdentity:
-    hardwareUUID: 4c4c4544-0031-4610-8042-c3c04f474834
+    hardwareUUID: 00000000-0000-4000-8000-000000000001
   placement:
     facilityRef:
-      name: was4
+      name: fac-a4
   verification:
     requiredChecks:
       - Identity
@@ -309,44 +309,44 @@ historical record. Observation/adoption must preserve the active workload.
 apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 metadata:
-  name: was4-c3c04f474834
-  namespace: infra-ops
+  name: fac-a4-000000000001
+  namespace: fleet-ops
 spec:
   deviceRef:
-    name: server-c3c04f474834
+    name: server-000000000001
   providerRef:
-    apiGroup: serverscom.fleet.datumapis.com
-    kind: ServersComMachine
-    name: was4-c3c04f474834
+    apiGroup: provider-a.fleet.datumapis.com
+    kind: ProviderAMachine
+    name: fac-a4-000000000001
   allocationPolicy: Disabled
   cleaningPolicyRef:
     name: rented-server-reuse-v1
   reclaimPolicy: Retain
 ---
-apiVersion: serverscom.fleet.datumapis.com/v1alpha1
-kind: ServersComMachine
+apiVersion: provider-a.fleet.datumapis.com/v1alpha1
+kind: ProviderAMachine
 metadata:
-  name: was4-c3c04f474834
-  namespace: infra-ops
+  name: fac-a4-000000000001
+  namespace: fleet-ops
 spec:
-  providerID: <verified servers.com host id>
+  providerID: <verified Provider A host id>
   managementMode: ObserveOnly
   bmc:
     endpoint: <verified BMC endpoint>
     credentialsSecretRef:
-      name: was4-c3c04f474834-bmc
+      name: fac-a4-000000000001-bmc
 ```
 The inventory subsystem owns the registered UUID and observed disk/NIC identities.
 The provider resolves exact disk targets for admitted work. Networking owns bonds,
 uplink addressing, and routing; the original `enP1s1f1`/`enP1s4f1` names are
 migration observations, not durable physical connector identities. The
-`170.23.227.193/31` and `2600:9c07:0:43::2/64` inputs must be reconciled with their
+`192.0.2.1/31` and `2001:db8:0:43::2/64` inputs must be reconciled with their
 network/IPAM authorities before they are admitted.
 
 Reconcile the existing consumer's allocation before enabling any future allocation.
 A running machine must never briefly appear free during migration. Adoption does
 not execute an initial installation or cleaning plan. A provider-created
-NetActuate VM follows the same allocation contract, with provider-observed
+Provider B VM follows the same allocation contract, with provider-observed
 placement and no invented physical Device or rack record.
 
 ## Managed node, Machine, and installation
@@ -361,18 +361,18 @@ are retained immutable inputs; their storage contract is specified by the
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: NodeClaim
 metadata:
-  name: us-east-1-alice-compute-0
-  namespace: infra-ops
+  name: region-1-cluster-a-compute-0
+  namespace: fleet-ops
 spec:
   poolRef:
-    name: us-east-1-alice-compute
+    name: region-1-cluster-a-compute
   role: compute
   desiredState: Running
   identityScopeRef:
-    name: alice-compute-0-addresses
+    name: cluster-a-compute-0-addresses
   configurationAdmission:
     recipeRef:
-      name: alice-compute-0-config-01
+      name: cluster-a-compute-0-config-01
       digest: sha256:<retained approved recipe digest>
     epoch: 1
 ---
@@ -380,29 +380,29 @@ apiVersion: metal.datumapis.com/v1alpha1
 kind: Machine
 metadata:
   name: mc-4k2p9
-  namespace: infra-ops
+  namespace: fleet-ops
 spec:
   siteRef:
-    name: us-east-1
+    name: region-1
   machineClassRef:
-    name: serverscom-compute-2u
+    name: provider-a-compute-2u
   machineProfileRef:
     name: compute-2u
   powerState: 'On'
   networkAttachmentRefs:
-    - name: alice-compute-0-uplink
+    - name: cluster-a-compute-0-uplink
   initialInstallationRef:
-    name: alice-compute-0-os-01
+    name: cluster-a-compute-0-os-01
 ---
 apiVersion: metal.datumapis.com/v1alpha1
 kind: Installation
 metadata:
-  name: alice-compute-0-os-01
-  namespace: infra-ops
+  name: cluster-a-compute-0-os-01
+  namespace: fleet-ops
   labels:
     fleet.datumapis.com/role: compute
-    fleet.datumapis.com/cluster: us-east-1-alice
-    fleet.datumapis.com/site: us-east-1
+    fleet.datumapis.com/cluster: region-1-cluster-a
+    fleet.datumapis.com/site: region-1
     fleet.datumapis.com/profile: cell
     fleet.datumapis.com/environment: production
 spec:
@@ -413,7 +413,7 @@ spec:
   imageRef:
     name: talos-1.13.7
   bootstrapConfigRef:
-    name: alice-compute-0-bootstrap-01
+    name: cluster-a-compute-0-bootstrap-01
 ```
 The controller creates the initial resources before binding. Networking checks
 placement feasibility, then resolves the exact physical attachment after exclusive
@@ -432,23 +432,23 @@ After successful activation, an abbreviated controller observation is:
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: NodeClaim
 metadata:
-  name: us-east-1-alice-compute-0
-  namespace: infra-ops
+  name: region-1-cluster-a-compute-0
+  namespace: fleet-ops
 status:
   machineRef:
     name: mc-4k2p9
   installationRef:
-    name: alice-compute-0-os-01
+    name: cluster-a-compute-0-os-01
   node:
-    name: us-east-1-alice-compute-0
+    name: region-1-cluster-a-compute-0
     ready: true
   interfaces:
     - name: fabric0
       addresses:
-        - 2607:ed40:10d::1/128
+        - 2001:db8:10d::1/128
     - name: srv6
       addresses:
-        - 2607:ed40:8004:1::/64
+        - 2001:db8:8004:1::/64
 ```
 The private, immutable MachineAllocation retains exact local object-incarnation
 evidence and admitted input digests. Status examples omit timestamps and that
@@ -470,7 +470,7 @@ metadata:
   name: routing-base
   labels:
     contributor: fleet
-  namespace: infra-ops
+  namespace: fleet-ops
 spec:
   selector:
     matchLabels:
@@ -488,7 +488,7 @@ metadata:
   name: galactic-fabric
   labels:
     contributor: galactic
-  namespace: infra-ops
+  namespace: fleet-ops
 spec:
   selector:
     matchExpressions:
@@ -520,7 +520,7 @@ metadata:
   name: compute-runtime
   labels:
     contributor: compute
-  namespace: infra-ops
+  namespace: fleet-ops
 spec:
   selector:
     matchLabels:
@@ -558,7 +558,7 @@ unadmitted reinstall or silently change an in-progress deployment.
   target.
 - **Bond members, uplink addresses and routed prefixes:** Network configuration/IPAM,
   informed by verified physical endpoints.
-- **Vendor BGP peers and `HOSTING-AS7979` policy:** Provider observations supplied to
+- **Vendor BGP peers and `HOSTING-AS64501` policy:** Provider observations supplied to
   networking/routing authority; not hardware-class routing policy.
 - **Host assignment to production versus lab:** Exclusive MachineAllocation; Device
   identity remains stable.
@@ -571,10 +571,10 @@ unadmitted reinstall or silently change an in-progress deployment.
   outputs.
 - **Existing inventory Site/Cluster/Node views:** Optional derived read models; not a
   second physical-inventory writer.
-- **Retiring WAS1 machines:** Disable new allocation, coordinate active workload
+- **Retiring FAC-A1 machines:** Disable new allocation, coordinate active workload
   replacement, then explicitly authorize provider release.
 
-The WAS1 retirement flags in the ledger are requests to assess and coordinate,
+The FAC-A1 retirement flags in the ledger are requests to assess and coordinate,
 not permission to cancel a rented host during adoption. Removing a Facility from
 a selector or deleting a record must not terminate existing workloads.
 
@@ -590,7 +590,7 @@ a selector or deleting a record must not terminate existing workloads.
   from future operator policy.
 - Prove equivalent rendered managed configuration before transferring its writer;
   retain current image/configuration and bootstrap authority during adoption.
-- Coordinate WAS1 retirement and any replacement through the managed node and
+- Coordinate FAC-A1 retirement and any replacement through the managed node and
   shared release protocols. Neither adoption nor a selector edit authorizes it.
 - Qualify the owned provider separately with the
   [owned-server journey](owned-bare-metal/README.md), including customer OOB access,

@@ -55,7 +55,7 @@ experience designs can evolve through their own enhancements.
 This enhancement area covers the service as a whole. Its current foundation
 defines responsibilities, domain concepts, lifecycle and execution contracts,
 architecture, and rollout. It does not select a provisioning engine. The
-[us-east-1 example](examples/us-east-1-alice.md) covers adoption of rented capacity
+[region-1 example](examples/rented-capacity-adoption.md) covers adoption of rented capacity
 and managed clusters. The [owned bare-metal journey](examples/owned-bare-metal/README.md)
 covers planning, registration, cabling verification, preparation, customer
 allocation, installation, networking, and OOB access.
@@ -200,7 +200,7 @@ inventory remains the source of physical endpoints and wiring.
    machine unavailable.
 
 The [owned-server journey](examples/owned-bare-metal/README.md) follows these steps
-with YAML examples. The [us-east-1 journey](examples/us-east-1-alice.md) applies the
+with YAML examples. The [region-1 journey](examples/rented-capacity-adoption.md) applies the
 same responsibilities to rented infrastructure and managed clusters.
 
 ### Service architecture

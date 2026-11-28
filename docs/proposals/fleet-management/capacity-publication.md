@@ -103,7 +103,7 @@ kind for the initial version.
 
 ## Publication example
 
-All Fleet shapes below are proposed. The provider project is `datum-metal`; the
+All Fleet shapes below are proposed. The provider project is `example-metal`; the
 consumer project is `acme`. Project identity comes from authenticated project API
 context, never from a namespace, label, or project name supplied in a Machine.
 API-server-local identity used to reject object recreation is retained privately;
@@ -112,11 +112,11 @@ projects can have separate API servers.
 The operator defines the source class in the provider project:
 
 ```yaml
-# Project context: datum-metal (provider). Project-scoped definition.
+# Project context: example-metal (provider). Project-scoped definition.
 apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineClass
 metadata:
-  name: datum-metal-standard
+  name: example-metal-standard
 spec:
   arch: amd64
   capabilities: [baremetal]
@@ -130,7 +130,7 @@ spec:
     powerControl: true
   capacity:
     machineCapacities:
-      namespace: infra-ops
+      namespace: fleet-ops
       selector:
         matchLabels:
           fleet.datumapis.com/capacity-pool: general-metal
@@ -160,8 +160,8 @@ metadata:
   name: metal-standard
 spec:
   source:
-    project: datum-metal
-    name: datum-metal-standard
+    project: example-metal
+    name: example-metal-standard
 status:
   resolvedClass:
     arch: amd64
@@ -203,7 +203,7 @@ metadata:
 spec:
   machineClassRef: {name: metal-standard}
   machineProfileRef: {name: standard-metal}
-  locationRef: {name: us-east-1}
+  locationRef: {name: region-1}
   powerState: "Off"
 ```
 
