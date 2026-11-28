@@ -125,8 +125,10 @@ metadata:
   name: server-example-001
   namespace: default
   finalizers: [fleet.datumapis.com/custody]
+  labels:
+    fleet.datumapis.com/device-uid: 6f1c0b52-1d7e-4a35-9e0b-2c41f7a0d9e3
 spec:
-  deviceRef: {name: server-example-001, uid: 6f1c0b52-1d7e-4a35-9e0b-2c41f7a0d9e3}
+  deviceRef: {name: server-example-001}
   state: Verified              # Verified | Unverified
   holder:
     type: Release              # None | Allocation | Release | Service | Retired
@@ -149,6 +151,11 @@ spec:
 Custody keeps its fields in `spec` because it is a coordination record, like a
 Kubernetes `Lease`, not desired state. The coordinator removes the finalizer
 only after the holder is `Retired`.
+
+No spec in this design holds an object UID. A record pins an object incarnation
+with a deterministic name, a label, or status. The one exception is the
+authenticated creator of an operation, which records the caller's username and
+UID, as a Kubernetes CertificateSigningRequest does.
 
 | Holder | Meaning |
 | --- | --- |
@@ -249,8 +256,8 @@ only if all of these hold:
 2. The creator, authority, and holder match a row of the operations table.
 3. An `allocationRef` names the holder's allocation.
 4. No operation is active.
-5. The Device UID matches `deviceRef.uid`, and its identity matches current
-   discovery.
+5. The Device UID matches custody's `device-uid` label, and the Device's
+   identity matches current discovery.
 6. No other Device that is not retired records the same BMC key digest.
 7. Every check that the operation's kind defines for its own inputs passes.
 
@@ -400,8 +407,8 @@ The coordinator marks custody `Verified` only after every site that serves the
 Device reports its fence. Custody stays `Unverified` until an operator resolves
 the conflict if two sources set different holders, if two live
 MachineAllocations name the Device, or if the Device UID differs from
-`deviceRef.uid`. If a site is lost, an operator removes it from the Device's
-sites in inventory, and the rebuild continues without it.
+custody's `device-uid` label. If a site is lost, an operator removes it from the
+Device's sites in inventory, and the rebuild continues without it.
 
 ### Customer data
 
