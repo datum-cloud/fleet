@@ -367,6 +367,13 @@ with tempfile.TemporaryDirectory() as tmp:
              'rebuild', 'wrong-location', 'boot-denials', 'flux-final', 'evidence']
     positions = [sequence.find(' ' + name + ' ') for name in order]
     check('acceptance phase order', all(p >= 0 for p in positions) and positions == sorted(positions), str(list(zip(order, positions))))
+    # Pull request runs split each suite; nightly and manual runs default to
+    # the all group, so release follows the Flux disruptions somewhere in CI.
+    workflow = (root / '.github/workflows/multiplane-acceptance.yml').read_text()
+    check('pull requests split, nightly and manual runs combine',
+          "group: ${{ fromJSON((github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.groups == 'split')) && '[\"flux\",\"release\"]' || '[\"all\"]') }}" in workflow
+          and 'options: [all, split]\n        default: all' in workflow and "if: always() && matrix.group != 'flux'" in workflow
+          and '--group "$FLEET_MULTIPLANE_GROUP"' in workflow and '[ "$RESULT" = success ]' in workflow)
     # Each group gates exactly its scenarios in both suites; the rest run in every group.
     import re as _re
     for suite in ('acceptance.sh', 'acceptance-redfish.sh'):

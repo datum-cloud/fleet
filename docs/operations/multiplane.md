@@ -162,10 +162,9 @@ it again with fresh ports, at most three times. Any other failure stops the run.
 ### CI mode
 
 The `multiplane-acceptance` workflow runs the same acceptance on a disposable
-GitHub-hosted `ubuntu-24.04` runner, two shards per mode. Status:
-**verified** for local VM mode under KVM; **implemented, not yet verified**
-for Redfish mode under KVM and for the shards. Both modes passed unsharded on
-a hosted runner, with Redfish mode under TCG.
+GitHub-hosted `ubuntu-24.04` runner: two shards per mode for a labeled pull
+request, one combined run per mode nightly. Status: **verified** in both modes
+under KVM, split and combined.
 
 To run it, apply the `multiplane-acceptance` label to a pull request whose
 branch contains the workflow. Each application starts one run of both modes,
@@ -173,7 +172,8 @@ and a newer run for the same pull request cancels the older one. Pushing to a
 labeled pull request does not start a run, so its result goes stale: remove and
 reapply the label to test the new head. The workflow
 also runs nightly on `main`, and on demand from `main` with a `mode` input
-(`both`, `localvm` or `redfish`). It never runs on every push.
+(`both`, `localvm` or `redfish`) and a `groups` input (`all` by default, or
+`split`). It never runs on every push.
 
 Explicit run parameters select the runtime. Their defaults are the Colima run
 above, unchanged:
@@ -184,7 +184,7 @@ above, unchanged:
 | `FLEET_MULTIPLANE_DOCKER_CONTEXT` | `colima-fleet-acceptance-tcg` | `default` |
 | `FLEET_MULTIPLANE_ARCH` (site binary and runtime architecture) | `arm64` | `amd64` |
 | `FLEET_MULTIPLANE_ACCEL` | `tcg` | `kvm` |
-| `FLEET_MULTIPLANE_GROUP` (scenario group) | `all` | `flux` or `release`, one per shard |
+| `FLEET_MULTIPLANE_GROUP` (scenario group) | `all` | `flux` or `release` per shard on a pull request; `all` nightly |
 
 Lab timers shorten the waits the scenarios provoke, in every runtime. Each
 scenario still proves the same outcome, and production defaults are unchanged:
@@ -220,7 +220,8 @@ worker never resumes an installation under another. Evidence then requires both
 domain definitions and every QEMU command line to show the selected accelerator,
 and `summary.json` records it.
 
-The workflow runs each suite as two shards on separate runners. Both shards
+On a labeled pull request the workflow runs each suite as two shards on
+separate runners, so the result arrives in about half the time. Both shards
 build the same topology and run the same scenarios up to the Pod and Job
 lifecycle checks. The `flux` shard then runs the Flux scenarios: graph
 lifecycle, drift, restart, fail-closed and retention. The `release` shard runs
@@ -230,7 +231,20 @@ the `flux` shard leaves the Device allocated, so the release, wipe and final
 custody checks run in the `release` shard. A local run defaults to `all` and
 runs every scenario in one topology.
 
-A shard passes only if exactly one run recorded `passed` with every phase
+The split leaves one gap: in a pull request run, the release, reuse, deadline
+and rebuild scenarios never follow the Flux restart, fail-closed recovery and
+retention scenarios on the same topology, so a recovery that leaves kro or the
+dispatcher subtly wrong would pass there. The nightly run and a manual run
+without `split` run the `all` group per mode, every scenario in order on one
+topology, which covers it:
+
+| Run | Groups per mode | Release scenarios after the Flux disruptions |
+| --- | --- | --- |
+| Labeled pull request | `flux`, `release` | No |
+| Nightly | `all` | Yes |
+| Manual | `all`, or `flux` and `release` with `split` | Yes unless `split` |
+
+A shard, or a combined run, passes only if exactly one run recorded `passed` with every phase
 passed, teardown passed, the expected scenario group and no retained
 container. The workflow's `acceptance` result passes only if every shard of
 every suite passed. After the run, including
