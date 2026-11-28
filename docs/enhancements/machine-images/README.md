@@ -99,9 +99,12 @@ it as for any [Device operation](../device-operations/README.md#admission).
 This enhancement changes two parts of [Device
 custody](../device-operations/README.md):
 
-- **[Customer data](../device-operations/README.md#customer-data):** the
-  site's boot service can also read a payload, only while that operation's
-  boot is open. The site controller that creates every worker can also get a
+- **[Customer data](../device-operations/README.md#customer-data):** two
+  more identities can read a payload. The boot service, which runs centrally
+  with a separate identity for each site, can read one only while that
+  operation's boot is open. The first-boot service can read one only in the
+  virtual media fallback mode of [#227][boot-delivery-pr]. See [Sealed
+  bootstrap store](#sealed-bootstrap-store) for how each is scoped. The site controller that creates every worker can also get a
   site payload by name, with no list, watch, or write; it grants no new
   access, because that controller can already run a worker as any operation's
   identity. See [Site delivery](#site-delivery).
@@ -277,18 +280,19 @@ Installation.
 The Fleet provider admits an Installation in this order. Each step must pass
 before the next one runs:
 
-1. The Machine has an active allocation, and the predecessor check passes.
-2. The image is entitled and the caller may use it. Fleet takes the digest from
+1. If a DeviceInstallation already exists for this Installation, Fleet stops
+   here: the install is admitted, and no later step judges it again.
+2. The Machine has an active allocation, and the predecessor check passes.
+3. The image is entitled and the caller may use it. Fleet takes the digest from
    the publication record.
-3. The image matches the allocation's hardware:
+4. The image matches the allocation's hardware:
    - its architecture equals the CPU architecture;
    - it lists the server's firmware mode; and
    - if the Installation has bootstrap data, it lists a bootstrap format.
-4. If a DeviceInstallation already exists for this Installation, Fleet stops
-   here: the install is admitted.
 5. The caller can read the bootstrap Secret, and its contents are valid.
 6. The sealed copy is written. See [Retention and crash recovery](#retention-and-crash-recovery).
-7. The DeviceInstallation is created.
+7. The DeviceInstallation is created, within 10 minutes of the sealed write.
+   Past that, Fleet writes a new sealed copy first.
 
 The allocation's hardware snapshot would gain the server's firmware mode. This
 field is proposed, and its source is an [open
@@ -372,7 +376,12 @@ operation name and the digest.
 | --- | --- |
 | Fleet provider for Metal | `create` only |
 | Fleet coordinator, which includes the federation courier | `get`, `list`, `watch`, `delete` |
+| Boot service, under one site's identity | `get` by name, only for an operation of that site whose boot admission is open |
+| First-boot service | `get` by name, only for a virtual media operation in fallback mode, only while its first-boot phase is open, and only after a fetch presents that operation's single-use token from the Machine's IPAM address |
 | Every staff role | Nothing |
+
+Neither service can list, watch, or write payloads. The first-boot service
+reads the payload once, to answer that one fetch, and keeps no copy.
 
 The provider never reads a payload back. Production must encrypt this kind at
 rest, and the audit policy must omit request and response bodies for it.
@@ -390,10 +399,14 @@ when one of these holds:
 - its operation has ended as `Succeeded`, `Failed`, `Cancelled`, or
   `OutcomeUnknown`;
 - its operation exists and references another payload; or
-- no operation has its name, and its allocation is no longer `Active`.
+- no operation has its name, and its allocation is no longer `Active`; or
+- no operation has its name 10 minutes after the payload was written.
 
-An allocation that is not `Active` cannot admit an install, so the last rule
-never removes a payload that admission still needs. Fleet does not retry an
+An allocation that is not `Active` cannot admit an install, and Fleet never
+creates an operation more than 10 minutes after its sealed write, so neither
+rule removes a payload that admission still needs. If a payload is gone
+anyway, the coordinator refuses the operation with `BootstrapUnavailable`, and
+nothing is sent. Fleet does not retry an
 install: a [held installation](../device-operations/README.md#unknown-outcomes)
 is settled by a later DeviceInstallation from a new Installation, which reads
 the Secret again.
@@ -419,10 +432,13 @@ boot once:
 - it closes when the installer finishes, when its 10-minute window ends, or
   when a higher fence stops the worker.
 
-While the admission is open, the boot service serves the rendered payload to
-requests that carry the token, so a firmware retry within the window works.
-Production serves it over HTTPS with a site-issued certificate that the
-installer trusts. The installer writes it where the image's bootstrap format
+The boot service runs centrally, beside the central DHCP service, and no boot
+service runs at the site. It serves each site under a separate identity, with
+a certificate issued for that site and authorization for that site's
+operations only. While the admission is open, the boot service serves the
+rendered payload to requests that carry the token, so a firmware retry within
+the window works. Production serves it over HTTPS with the site's certificate,
+which the installer trusts. The installer writes it where the image's bootstrap format
 reads it on first boot. The payload also carries the salt and the admitted
 data, so the installer reads them back from the target disk, recomputes the
 salted digest, and reports it. The worker reports success only when that
@@ -478,6 +494,16 @@ These tests are required and not implemented:
 - The provider crashes between the sealed write and the operation, then
   retries. One operation exists, and the unused payload
   is deleted.
+- The provider crashes after creating the DeviceInstallation, and the image is
+  withdrawn before it restarts. Re-evaluation stops at the first step, and the
+  running install is never refused.
+- A payload is written, and its Installation is deleted before the operation
+  is created. The payload is deleted 10 minutes after it was written, while
+  the allocation is still `Active`.
+- A boot service identity for one site cannot read a payload or serve a boot
+  admission for another site's operation.
+- The first-boot service cannot read a payload without a matching fetch
+  token from the Machine's IPAM address, or after the first-boot phase ends.
 - No staff role can get, list, or watch a SealedPayload, and no site identity
   other than the operation's worker and the site controller that creates
   workers can read its delivered payload.
@@ -531,8 +557,8 @@ one SealedPayload write and one delete.
 
 ## Infrastructure needed
 
-Testing needs one provider project, two consumer projects, one site with a
-boot service, and an artifact registry. The local VM and Redfish lab modes can
+Testing needs one provider project, two consumer projects, one site, a
+central boot service, and an artifact registry. The local VM and Redfish lab modes can
 prove the install path without hardware.
 
 [pxe-pr]: https://github.com/datum-cloud/fleet/pull/59
