@@ -75,6 +75,7 @@ Each topic folder has a `README.md` entry point:
 | [Device operations](enhancements/device-operations/README.md) | Proposed custody and operations for every physical action on a server |
 | [OS images and bootstrap data](enhancements/machine-images/README.md) | Proposed image catalog and sealed bootstrap data for installs |
 | [Boot delivery](enhancements/boot-delivery/README.md) | Proposed network boot and virtual media behind one install contract |
+| [Capacity supply](enhancements/capacity-supply/README.md) | Proposed provider view of available machines, and offer, withdraw and quarantine actions |
 | [Proposals](proposals/fleet-management/README.md) | Broader service proposals, examples, diagrams, and provenance |
 
 ## Read implementation and design separately
