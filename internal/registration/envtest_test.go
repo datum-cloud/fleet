@@ -321,7 +321,7 @@ func TestRegistrationAgainstLiveDevices(t *testing.T) {
 			t.Fatalf("Device backs %d capacities", bound)
 		}
 	})
-	t.Run("without the component Device DELETE is allowed and its capacity stays Disabled", func(t *testing.T) {
+	t.Run("without the component Device DELETE is allowed, and its Disabled capacity can then be removed", func(t *testing.T) {
 		registered := api.registration(server)
 		if err := api.admin.Get(ctx, client.ObjectKeyFromObject(registered), registered); err != nil {
 			t.Fatal(err)
@@ -340,11 +340,15 @@ func TestRegistrationAgainstLiveDevices(t *testing.T) {
 		if err := operator.Update(ctx, registered); !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "cannot leave Disabled: its Device does not exist") {
 			t.Fatalf("orphaned capacity was enabled: %v", err)
 		}
-		if err := operator.Delete(ctx, registered); !apierrors.IsForbidden(err) {
-			t.Fatalf("orphaned capacity was deleted: %v", err)
-		}
 		replacement := api.device("server", "default", "replacement-serial", "66666666-6666-6666-6666-666666666666")
 		requireDenied(t, operator.Create(ctx, api.registration(replacement)), "already backs capacity")
+		// The orphaned capacity is removed, and the replacement registers.
+		if err := operator.Delete(ctx, registered); err != nil {
+			t.Fatalf("orphaned capacity could not be removed: %v", err)
+		}
+		if err := operator.Create(ctx, api.registration(replacement)); err != nil {
+			t.Fatalf("the replacement could not register after the orphan was removed: %v", err)
+		}
 	})
 
 	t.Run("only an Active Device can be registered", func(t *testing.T) {
@@ -373,7 +377,7 @@ func TestRegistrationAgainstLiveDevices(t *testing.T) {
 			current.Spec.CleaningPolicyRef.Name = "invented-policy"
 			return operator.Update(ctx, current)
 		}
-		requireDenied(t, enable(), "mutation and deletion are disabled")
+		requireDenied(t, enable(), "without a fleet.datumapis.com/capacity-pool label")
 		api.setLifecycle(device, inventory.DeviceDecommissioning)
 		requireDenied(t, enable(), "its Device is Decommissioning")
 		api.setLifecycle(device, inventory.DeviceRetired)

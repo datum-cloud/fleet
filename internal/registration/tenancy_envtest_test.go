@@ -37,7 +37,7 @@ func TestWebhookJudgesOnlyTheConfiguredProject(t *testing.T) {
 			return Project{Identity: controller.ProjectIdentity{AuthorityID: "milo", RouteName: "elsewhere", UID: "project-elsewhere"}, Client: misrouted}, nil
 		}
 		return Project{Identity: controller.ProjectIdentity{AuthorityID: "milo", RouteName: "datum-cloud", UID: "project-1"}, Client: api.admin}, nil
-	}, Authorize: func(ctx context.Context, project Project, actor authenticationv1.UserInfo, group, resource, name string) error {
+	}, Authorize: func(ctx context.Context, project Project, actor authenticationv1.UserInfo, verb, group, resource, name string) error {
 		if values := actor.Extra[iam.ParentNameExtraKey]; len(values) != 1 || values[0] != "datum-cloud" {
 			t.Errorf("SubjectAccessReview for %s was attempted for project %v", resource, values)
 			return context.Canceled
@@ -46,7 +46,7 @@ func TestWebhookJudgesOnlyTheConfiguredProject(t *testing.T) {
 			t.Errorf("SubjectAccessReview for %s was attempted after a mismatched route", resource)
 			return context.Canceled
 		}
-		return Authorize(ctx, project, actor, group, resource, name)
+		return Authorize(ctx, project, actor, verb, group, resource, name)
 	}})
 	operator := api.actor("operator", "system:masters")
 	registered := api.registration(registeredDevice)

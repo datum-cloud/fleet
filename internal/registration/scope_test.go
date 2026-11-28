@@ -34,7 +34,7 @@ func TestUnmarkedCapacityIsNotGoverned(t *testing.T) {
 	handler := &Handler{Projects: []string{"provider"}, Resolve: func(context.Context, string) (Project, error) {
 		t.Error("unmarked capacity resolved the provider project")
 		return Project{}, errors.New("unavailable")
-	}, Authorize: func(context.Context, Project, authenticationv1.UserInfo, string, string, string) error {
+	}, Authorize: func(context.Context, Project, authenticationv1.UserInfo, string, string, string, string) error {
 		t.Error("unmarked capacity was authorized against Devices")
 		return errors.New("unavailable")
 	}}
@@ -72,6 +72,8 @@ func TestMarkerTransitionsAreDenied(t *testing.T) {
 	adopted.Annotations = map[string]string{DeviceUIDAnnotation: string(device.UID)}
 	enabledAdoption := clone(adopted)
 	enabledAdoption.Spec.AllocationPolicy = "Enabled"
+	relabeled := clone(&registered)
+	relabeled.Labels = map[string]string{"edited": "true"}
 	stripped := clone(&registered)
 	stripped.Annotations = nil
 	changed := clone(&registered)
@@ -85,15 +87,15 @@ func TestMarkerTransitionsAreDenied(t *testing.T) {
 		subresource string
 		object, old *metal.MachineCapacity
 	}{
-		"marker added":                {operation: admissionv1.Update, object: adopted, old: unmarked},
-		"marker added while enabling": {operation: admissionv1.Update, object: enabledAdoption, old: unmarked},
-		"marker removed":              {operation: admissionv1.Update, object: stripped, old: &registered},
-		"marker changed":              {operation: admissionv1.Update, object: changed, old: &registered},
-		"one marker removed":          {operation: admissionv1.Update, object: partial, old: &registered},
-		"marked update":               {operation: admissionv1.Update, object: &registered, old: &registered},
-		"marked delete":               {operation: admissionv1.Delete, old: &registered},
-		"marked status when routed":   {operation: admissionv1.Update, subresource: "status", object: &registered, old: &registered},
-		"derived name without marker": {operation: admissionv1.Create, object: squatted},
+		"marker added":                   {operation: admissionv1.Update, object: adopted, old: unmarked},
+		"marker added while enabling":    {operation: admissionv1.Update, object: enabledAdoption, old: unmarked},
+		"marker removed":                 {operation: admissionv1.Update, object: stripped, old: &registered},
+		"marker changed":                 {operation: admissionv1.Update, object: changed, old: &registered},
+		"one marker removed":             {operation: admissionv1.Update, object: partial, old: &registered},
+		"marked update of another field": {operation: admissionv1.Update, object: relabeled, old: &registered},
+		"marked delete":                  {operation: admissionv1.Delete, old: &registered},
+		"marked status when routed":      {operation: admissionv1.Update, subresource: "status", object: &registered, old: &registered},
+		"derived name without marker":    {operation: admissionv1.Create, object: squatted},
 	}
 	for name, test := range cases {
 		t.Run(name, func(t *testing.T) {
