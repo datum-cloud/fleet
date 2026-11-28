@@ -881,10 +881,15 @@ reservation, deletion safety, adoption or new hardware-effect path is establishe
 Run the implemented checks from the repository root:
 
 ```sh
-go test ./...
 go test -race ./...
 go vet ./...
 ```
+
+CI runs every Go test once, with the race detector, split across parallel
+jobs by package and, for the custody package, by test. A skipped test fails
+its job, because each skip here means a missing tool or envtest assets.
+Render, kustomize and script checks run in their own jobs. The documentation
+link check needs ripgrep and fails without it.
 
 The manager's multi-project envtest test needs envtest binaries. CI installs
 them; locally, run:
