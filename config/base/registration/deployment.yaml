@@ -50,6 +50,11 @@ spec:
           args:
             - --config=/etc/fleet/manager/config.yaml
             - --provider-projects=datum-cloud
+            # Environment-owned: the subjects of the API-server webhook
+            # client certificates, and the capacity projector's username.
+            # The placeholders accept no real caller.
+            - --client-identities=replace-with-api-server-webhook-client
+            - --capacity-projectors=replace-with-capacity-projector
           ports:
             - name: https
               containerPort: 9443

@@ -37,7 +37,7 @@ func TestWebhookRequiresTrustedAPIServerClient(t *testing.T) {
 	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca}), 0600); err != nil {
 		t.Fatal(err)
 	}
-	config, err := webhookTLS(path)
+	config, err := webhookTLS(path, []string{"synthetic-api-server"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,23 @@ func TestWebhookRequiresTrustedAPIServerClient(t *testing.T) {
 		response.Body.Close()
 		t.Fatal("untrusted client certificate was accepted")
 	}
-	if _, err := webhookTLS(filepath.Join(t.TempDir(), "absent")); err == nil {
+	if _, err := webhookTLS(filepath.Join(t.TempDir(), "absent"), []string{"synthetic-api-server"}); err == nil {
 		t.Fatal("missing CA accepted")
+	}
+	if _, err := webhookTLS(path, nil); err == nil {
+		t.Fatal("a webhook with no configured client identity started")
+	}
+	// A certificate from the same CA with another subject is refused during
+	// the handshake.
+	other := &x509.Certificate{SerialNumber: big.NewInt(3), Subject: pkix.Name{CommonName: "synthetic-other-client"}, NotBefore: issuer.NotBefore, NotAfter: issuer.NotAfter, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, KeyUsage: x509.KeyUsageDigitalSignature}
+	otherCertificate, err := x509.CreateCertificate(rand.Reader, other, issuer, publicKey, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTransport := server.Client().Transport.(*http.Transport).Clone()
+	otherTransport.TLSClientConfig.Certificates = []tls.Certificate{{Certificate: [][]byte{otherCertificate}, PrivateKey: privateKey}}
+	if response, err := (&http.Client{Transport: otherTransport}).Get(server.URL); err == nil {
+		response.Body.Close()
+		t.Fatal("a client certificate with an unlisted subject was accepted")
 	}
 }

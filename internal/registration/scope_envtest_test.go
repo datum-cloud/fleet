@@ -70,22 +70,22 @@ func TestWebhookGovernsOnlyInventoryBackedCapacity(t *testing.T) {
 	t.Run("marked capacity cannot be updated or deleted", func(t *testing.T) {
 		capacity := current()
 		capacity.Labels = map[string]string{"edited": "true"}
-		requireDenied(t, operator.Update(ctx, capacity), "mutation and deletion are disabled")
-		requireDenied(t, operator.Delete(ctx, current()), "mutation and deletion are disabled")
-		requireDenied(t, api.admin.Delete(ctx, current()), "mutation and deletion are disabled")
+		requireDenied(t, operator.Update(ctx, capacity), "registration annotations cannot be added")
+		requireDenied(t, operator.Delete(ctx, current()), "removed only after its Device is deleted or Retired")
+		requireDenied(t, api.admin.Delete(ctx, current()), "project context is required")
 	})
 	t.Run("the marker cannot be removed or changed", func(t *testing.T) {
 		stripped := current()
 		stripped.Annotations = nil
-		requireDenied(t, operator.Update(ctx, stripped), "mutation and deletion are disabled")
+		requireDenied(t, operator.Update(ctx, stripped), "registration annotations cannot be added")
 		partial := current()
 		delete(partial.Annotations, DeviceUIDAnnotation)
-		requireDenied(t, operator.Update(ctx, partial), "mutation and deletion are disabled")
+		requireDenied(t, operator.Update(ctx, partial), "registration annotations cannot be added")
 		changed := current()
 		changed.Annotations[DeviceUIDAnnotation] = "another-device"
-		requireDenied(t, operator.Update(ctx, changed), "mutation and deletion are disabled")
+		requireDenied(t, operator.Update(ctx, changed), "registration annotations cannot be added")
 		patch := client.RawPatch("application/merge-patch+json", []byte(`{"metadata":{"annotations":{"`+DeviceUIDAnnotation+`":null,"`+DeviceVersionAnnotation+`":null,"`+OperationAnnotation+`":null}}}`))
-		requireDenied(t, operator.Patch(ctx, current(), patch), "mutation and deletion are disabled")
+		requireDenied(t, operator.Patch(ctx, current(), patch), "registration annotations cannot be added")
 		if annotations := current().Annotations; annotations[DeviceUIDAnnotation] != string(device.UID) || len(annotations) != 3 {
 			t.Fatalf("marker changed: %v", annotations)
 		}
@@ -96,9 +96,9 @@ func TestWebhookGovernsOnlyInventoryBackedCapacity(t *testing.T) {
 			t.Fatal(err)
 		}
 		adopted.Annotations = map[string]string{DeviceUIDAnnotation: string(device.UID)}
-		requireDenied(t, operator.Update(ctx, adopted), "mutation and deletion are disabled")
+		requireDenied(t, operator.Update(ctx, adopted), "registration annotations cannot be added")
 		patch := client.RawPatch("application/merge-patch+json", []byte(`{"metadata":{"annotations":{"`+OperationAnnotation+`":"adopt"}}}`))
-		requireDenied(t, operator.Patch(ctx, handMade, patch), "mutation and deletion are disabled")
+		requireDenied(t, operator.Patch(ctx, handMade, patch), "registration annotations cannot be added")
 	})
 	t.Run("an unmarked create under the derived name is gated", func(t *testing.T) {
 		squatter := &metal.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: CapacityName("77777777-0000-0000-0000-000000000000"), Namespace: "default"}, Spec: metal.MachineCapacitySpec{DeviceRef: metal.LocalReference{Name: "squatted"}, AllocationPolicy: "Disabled", ReclaimPolicy: "Retain"}}
@@ -143,20 +143,16 @@ func TestWebhookGovernsOnlyInventoryBackedCapacity(t *testing.T) {
 			}
 		}
 	})
-	t.Run("marked capacity status writes are not routed", func(t *testing.T) {
-		// Status is governed by RBAC alone. The status subresource cannot
-		// change metadata, so it cannot strip the marker or touch spec.
+	t.Run("marked capacity status writes fail closed", func(t *testing.T) {
+		// Status writes to registered capacity are routed, so only the
+		// capacity projector can make them, and an outage blocks them.
 		capacity := current()
-		capacity.Annotations = nil
-		capacity.Spec.AllocationPolicy = "Enabled"
-		capacity.Spec.CleaningPolicyRef.Name = "invented-policy"
-		capacity.Status.Conditions = []metav1.Condition{{Type: "Observed", Status: metav1.ConditionUnknown, Reason: "Synthetic", LastTransitionTime: metav1.Now()}}
-		if err := api.admin.Status().Update(ctx, capacity); err != nil {
-			t.Fatalf("status write on marked capacity: %v", err)
+		capacity.Status.Conditions = []metav1.Condition{{Type: "Available", Status: metav1.ConditionTrue, Reason: "Edited", LastTransitionTime: metav1.Now()}}
+		if err := api.admin.Status().Update(ctx, capacity); err == nil {
+			t.Fatal("a status write on registered capacity was admitted without the webhook")
 		}
-		after := current()
-		if len(after.Annotations) != 3 || after.Annotations[DeviceUIDAnnotation] != string(device.UID) || after.Spec.AllocationPolicy != "Disabled" || after.Spec.CleaningPolicyRef.Name != "" || len(after.Status.Conditions) != 1 {
-			t.Fatalf("status write changed more than status: %+v %+v", after.Annotations, after.Spec)
+		if after := current(); len(after.Status.Conditions) != 0 {
+			t.Fatalf("status changed during the outage: %+v", after.Status.Conditions)
 		}
 	})
 	t.Run("marked capacity writes fail closed without the backend", func(t *testing.T) {
