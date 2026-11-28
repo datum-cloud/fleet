@@ -42,6 +42,12 @@ finish() {
  code=$1
  trap - EXIT
  if [[ $code -ne 0 && -f $state/prefix ]]; then
+  # While the run's APIs still answer: why it stopped, for evidence/. The
+  # secret scan below runs before anything is uploaded. A signalled run is
+  # being cancelled and gets only a few seconds, so stop.sh still runs.
+  if [[ $code -ge 128 ]]; then snapshot_seconds=8; else snapshot_seconds=60; fi
+  FLEET_MULTIPLANE_SNAPSHOT_SECONDS=$snapshot_seconds python3 hack/multiplane/snapshot.py "$state" "$(cat "$state/current-phase" 2>/dev/null || true)" ||
+   echo 'snapshot: failure state not recorded' >&2
   if [[ $leave == 1 ]]; then
    echo "Leaving this run's containers running for diagnosis. Stop only them with: hack/multiplane/stop.sh $state"
   else
