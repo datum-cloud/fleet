@@ -8,6 +8,7 @@ import (
 	"context"
 	"strings"
 
+	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/site"
 )
@@ -20,6 +21,11 @@ type Target struct {
 	BootMACAddress     string   `json:"bootMACAddress"`
 	BMCPublicKeySHA256 string   `json:"bmcPublicKeySHA256"`
 	Disks              []string `json:"disks"`
+	// Hardware is what a simulated commissioning inspects. A target without
+	// it cannot be commissioned.
+	Hardware *ops.InspectedHardware `json:"hardware,omitempty"`
+	// Firmware is the firmware a simulated commissioning reads.
+	Firmware []ops.FirmwareBaseline `json:"firmware,omitempty"`
 }
 
 // Enrollment maps "<namespace>/<name>" to each Device the site serves.

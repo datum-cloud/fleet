@@ -168,7 +168,7 @@ func siteRunner(_ context.Context, config *rest.Config, cell string, store *site
 			return nil, err
 		}
 		runner.Access = fixture.Access{Enrollment: enrollment}
-		runner.Kinds = map[string]site.Kind{"DeviceInstallation": vmwork.Installation{Config: vm}, "DeviceWipe": vmwork.Wipe{Config: vm}}
+		runner.Kinds = map[string]site.Kind{"DeviceInstallation": vmwork.Installation{Config: vm}, "DeviceWipe": vmwork.Wipe{Config: vm}, "DeviceCommissioning": vmwork.Commissioning{Config: vm}}
 		return runner, nil
 	}
 	work, enrollment, err := redfishConfig()
@@ -192,7 +192,14 @@ func siteRunner(_ context.Context, config *rest.Config, cell string, store *site
 		targets[target.Device] = target
 	}
 	runner.Access = site.RedfishAccess{Credentials: site.SecretCredentials{Reader: reader, Namespace: namespace, Project: project}, Targets: targets}
-	runner.Kinds = map[string]site.Kind{"DeviceInstallation": redfishwork.Installation{Config: work}, "DeviceWipe": redfishwork.Wipe{Config: work}}
+	// The site serves one boot image, which also burns in.
+	image, err := siteImage()
+	if err != nil {
+		return nil, err
+	}
+	_, burnIn, _ := strings.Cut(image, "@")
+	runner.Kinds = map[string]site.Kind{"DeviceInstallation": redfishwork.Installation{Config: work}, "DeviceWipe": redfishwork.Wipe{Config: work},
+		"DeviceCommissioning": redfishwork.Commissioning{Config: work, BurnInDigest: burnIn}}
 	return runner, nil
 }
 

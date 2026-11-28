@@ -73,7 +73,7 @@ func main() {
 	defer stop()
 	results := site.NewResults(store)
 	runner := &site.Runner{Site: siteName, Store: store, Results: results, Access: fixture.Access{Enrollment: enrollment},
-		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}}}
+		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}, "DeviceCommissioning": simwork.Commissioning{}}}
 	dispatcher := &siteapi.Dispatcher{Runner: runner, Context: ctx, Logger: logger}
 	server := newServer(address, siteapi.Handler(dispatcher, store, results, func() (string, error) { return readToken(tokenPath) }), logger)
 	if discover {
