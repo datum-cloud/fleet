@@ -13,6 +13,11 @@ on:
         type: choice
         options: [both, localvm, redfish]
         default: both
+      groups:
+        description: Scenario groups
+        type: choice
+        options: [all, split]
+        default: all
   schedule:
     - cron: '23 5 * * *'
   pull_request:
@@ -23,16 +28,20 @@ jobs:
   acceptance:
     if: github.event_name != 'pull_request' || github.event.label.name == 'multiplane-acceptance'
     name: acceptance (${{ matrix.mode }}, ${{ matrix.group }})
-    # Each suite runs as two shards on separate runners, after the same setup
-    # and core install scenarios: flux runs the Flux scenarios, release the
-    # reflection, release, reuse, deadline and rebuild scenarios. The
-    # acceptance job below passes only if every shard passed. A new suite is
-    # one more mode here and in the task selection below.
+    # A labeled pull request run splits each suite into two shards on
+    # separate runners, after the same setup and core install scenarios: flux
+    # runs the Flux scenarios, release the reflection, release, reuse,
+    # deadline and rebuild scenarios. The nightly run, and a manual run unless
+    # it asks for split, runs the all group: every scenario in one topology,
+    # so the release scenarios run after the Flux disruptions
+    # (docs/operations/multiplane.md#ci-mode). The acceptance job below passes
+    # only if every shard passed. A new suite is one more mode here and in the
+    # task selection below.
     strategy:
       fail-fast: false
       matrix:
         mode: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.mode != 'both' && format('["{0}"]', inputs.mode) || '["localvm","redfish"]') }}
-        group: [flux, release]
+        group: ${{ fromJSON((github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.groups == 'split')) && '["flux","release"]' || '["all"]') }}
     # A newer labeled run for the same pull request replaces an older one;
     # nightly and manual runs never cancel each other. A cancelled run never
     # counts as passed.
@@ -166,10 +175,10 @@ jobs:
         done
         echo "found=$found" >> "$GITHUB_OUTPUT"
         echo "redacted=${redacted:-false}" >> "$GITHUB_OUTPUT"
-    # Both shards of a mode build the same binaries; one save per commit is
-    # enough, and a second save of the same key is skipped.
+    # Both shards of a split run build the same binaries, so only the release
+    # shard saves, as does an all run; a second save of a key is skipped.
     - name: Save the Go build cache
-      if: always() && matrix.group == 'release'
+      if: always() && matrix.group != 'flux'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
