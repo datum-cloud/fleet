@@ -85,6 +85,32 @@ func TestRegistrationAllowsLiveEligibleDeviceWithoutEffects(t *testing.T) {
 	}
 }
 
+// A caller is identified by username, as Kubernetes RBAC identifies it. Some
+// credentials, such as client certificates, carry no UID.
+func TestRegistrationIdentifiesTheCallerByUsername(t *testing.T) {
+	handler, device := fixture(t)
+	var reviewed []authenticationv1.UserInfo
+	handler.Authorize = func(_ context.Context, _ Project, actor authenticationv1.UserInfo, _, _, _ string) error {
+		reviewed = append(reviewed, actor)
+		return nil
+	}
+	request := registrationRequest(t, device)
+	request.UserInfo.UID = ""
+	dryRun := true
+	request.DryRun = &dryRun
+	if response := handler.Handle(context.Background(), request); !response.Allowed {
+		t.Fatalf("a caller without a UID was denied: %s", response.Result.Message)
+	}
+	if len(reviewed) == 0 {
+		t.Fatal("the caller's permission was not reviewed")
+	}
+	for _, actor := range reviewed {
+		if actor.Username != "operator" || actor.UID != "" {
+			t.Fatalf("reviewed %+v, want the caller's username and no UID", actor)
+		}
+	}
+}
+
 func TestRegistrationNegatives(t *testing.T) {
 	tests := map[string]func(*Handler, *inventory.Device, *admission.Request){
 		"stale UID": func(_ *Handler, _ *inventory.Device, request *admission.Request) {
@@ -126,7 +152,7 @@ func TestRegistrationNegatives(t *testing.T) {
 			request.Resource.Resource = "devices"
 		},
 		"missing project": func(_ *Handler, _ *inventory.Device, request *admission.Request) { request.UserInfo.Extra = nil },
-		"missing actor":   func(_ *Handler, _ *inventory.Device, request *admission.Request) { request.UserInfo.UID = "" },
+		"missing actor":   func(_ *Handler, _ *inventory.Device, request *admission.Request) { request.UserInfo.Username = "" },
 		"organization context": func(_ *Handler, _ *inventory.Device, request *admission.Request) {
 			request.UserInfo.Extra[iam.ParentKindExtraKey] = authenticationv1.ExtraValue{"Organization"}
 		},

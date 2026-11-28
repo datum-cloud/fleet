@@ -85,12 +85,14 @@ stage-1 preparation endpoint.
 inventory-backed capacity it:
 
 1. requires Milo's authenticated `iam.miloapis.com/parent-*` extras naming a
-   single Project in the configured provider scope, and an actor UID;
+   single Project in the configured provider scope, and an actor username. As
+   in Kubernetes RBAC, the username identifies the actor. Its UID is optional,
+   because some credentials, such as client certificates, carry none;
 2. requires the `default` namespace, the exact shape above, and a name equal
    to `device-<annotated Device UID>`;
 3. resolves the current Project lifetime through the root Milo client;
-4. runs SubjectAccessReviews with the caller's username, UID, groups and
-   extras for `machinecapacities.create` and named `devices.get` in
+4. runs SubjectAccessReviews with the caller's username, UID when present,
+   groups and extras for `machinecapacities.create` and named `devices.get` in
    `default`. Denials, errors and incomplete evaluations fail closed. This
    happens before the Device is read, so an unauthorized caller cannot learn
    whether a Device exists;

@@ -112,7 +112,7 @@ func projectName(actor authenticationv1.UserInfo) (string, error) {
 		}
 	}
 	values := actor.Extra[iam.ParentNameExtraKey]
-	if len(values) != 1 || values[0] == "" || actor.Username == "" || actor.UID == "" {
+	if len(values) != 1 || values[0] == "" || actor.Username == "" {
 		return "", errors.New("authenticated actor and project identity are required")
 	}
 	return values[0], nil
