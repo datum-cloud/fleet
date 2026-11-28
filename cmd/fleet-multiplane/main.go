@@ -48,6 +48,7 @@ func run() error {
 	system := fs.String("system", "", "enrolled Redfish System Id (redfish-probe)")
 	uuid := fs.String("uuid", "", "enrolled Redfish System UUID (redfish-probe)")
 	pin := fs.String("pin", "", "the BMC's approved key digest; the probe connects only to that key (redfish-probe)")
+	clientID := fs.String("client-id", "", "identity the probe's requests carry as their User-Agent, so the lab BMC audit can tell them apart (redfish-probe)")
 	syncToken := fs.String("sync-token-file", "", "file holding the DHCP synchronizer bearer token (dhcp-feed)")
 	installationDeadline := fs.Duration("installation-deadline", 0, "replace the installation deadline for operations this coordinator admits (coordinator)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
@@ -68,7 +69,7 @@ func run() error {
 	case "seed", "allocate", "install", "admit-install", "admit-install-b", "release", "release-b", "reuse", "recovery-mismatch", "probe-unallocatable", "tenant-isolation":
 		return phase(os.Args[1], *configPath, *once)
 	case "redfish-probe":
-		return probe(*endpoint, *credentials, *system, *uuid, *pin)
+		return probe(*endpoint, *credentials, *system, *uuid, *pin, *clientID)
 	case "image":
 		image, err := siteImage()
 		if err != nil {
@@ -189,7 +190,7 @@ func redfishMode() bool { return os.Getenv("FLEET_SITE_PROVIDER") == "redfish" }
 // prints only an outcome class. Exit codes: 0 discovered, 10 credential
 // rejected, 11 capability unsupported, 12 identity mismatch, 13 TLS key
 // other than the pin.
-func probe(endpoint, credentials, system, uuid, pin string) error {
+func probe(endpoint, credentials, system, uuid, pin, clientID string) error {
 	user, err1 := os.ReadFile(credentials + "/username")
 	password, err2 := os.ReadFile(credentials + "/password")
 	if credentials == "" || err1 != nil || err2 != nil {
@@ -198,6 +199,11 @@ func probe(endpoint, credentials, system, uuid, pin string) error {
 	c, err := redfish.NewPinnedClient(endpoint, strings.TrimSpace(string(user)), strings.TrimSpace(string(password)), pin, 20*time.Second)
 	if err != nil {
 		return err
+	}
+	if clientID != "" {
+		if err := c.SetUserAgent("fleet-redfish-probe/" + clientID); err != nil {
+			return err
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

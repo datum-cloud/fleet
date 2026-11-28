@@ -84,7 +84,7 @@ does not fork or patch upstream files.
 | `Boot` source override (`Pxe` or `Hdd`, `Once`), persisted in NVRAM state on the site volume and consumed at power-on | Adapter |
 | `ResetType` and boot `AllowableValues` narrowed to what the adapter implements; System `UUID` set from the lab target | Adapter |
 | Definition of the lab domains and the provisioning network, re-created with the same identity if the runtime loses them | Adapter |
-| Append-only request audit: method, path, status, principal class, ResetType, boot override, effect and fault. It never records bodies or credentials. | Adapter |
+| Append-only request audit: method, path, status, principal class, client User-Agent, ResetType, boot override, effect and fault. It never records bodies or credentials. | Adapter |
 | `DELETE /redfish/v1/reset` and non-Redfish paths | Refused by the adapter |
 | Bounded, one-shot lab faults (`reject-auth`, `hide-reset`, `drop-response`) from a fault file | Adapter, lab only |
 
@@ -351,7 +351,7 @@ fixture discovery for the lab Devices. Real BMC discovery is not part of this ru
 | Phase | What it proves |
 | --- | --- |
 | `redfish-baseline` | Both target disks exist and neither target was ever started; records target B's disk digest |
-| `redfish-discovery-faults` | Uses the real emulator through `fleet-multiplane redfish-probe` and the production discovery code. Each enrolled System is discovered exactly. A wrong credential exits 10. Target A's Id with target B's UUID, or an unknown UUID, exits 12. An injected unadvertised `On` exits 11. A TLS key other than the pin exits 13 and reaches no request. The BMC audit shows only GETs in the window. |
+| `redfish-discovery-faults` | Uses the real emulator through `fleet-multiplane redfish-probe` and the production discovery code. Each enrolled System is discovered exactly. A wrong credential exits 10. Target A's Id with target B's UUID, or an unknown UUID, exits 12. An injected unadvertised `On` exits 11. A TLS key other than the pin exits 13 and reaches no request. Every probe carries one run-scoped User-Agent, and the checks read only audit entries with it, so discovery or a worker reading the same BMC with the same credential cannot change the result. Those entries are GETs only. |
 | `redfish-bmc-interrupt` | As soon as the installer is running, the BMC Pod is force-deleted and replaced. The guest keeps running; the worker tolerates a bounded BMC outage. |
 | `interrupt-pod`, `interrupt-job` | As in libvirt mode, now on the Redfish worker, still inside the installer phase |
 | `redfish-arm-lost-response`, `redfish-lost-response` | Armed before dispatch: the second effective `On` for System-1 (the first install's disk boot) is answered only after 45 seconds. The worker times out and exits 75 (Unknown). Its replacement observes the running or completed target and the consumed override. Exactly one `On` per phase was sent: `powerOnRequests` is one installer and one disk request. |

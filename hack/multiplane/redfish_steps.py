@@ -77,6 +77,12 @@ def audit(s):
     return [json.loads(l) for l in r.stdout.splitlines() if l.strip()] if r.returncode == 0 else []
 
 
+def own(entries, client):
+    """Audit entries one client sent. Discovery and workers read the same BMC
+    with the same credential, so only the client identity separates them."""
+    return [e for e in entries if e.get('client') == client]
+
+
 def mutating(entries, system=None):
     return [e for e in entries if e['method'] not in ('GET', 'HEAD') and (system is None or e['path'].rstrip('/').startswith('/redfish/v1/Systems/' + system))]
 
@@ -221,6 +227,10 @@ def discovery_faults(s):
         (p / 'username').write_text((d / 'bmc-username').read_text())
         (p / 'password').write_text(password)
     pf, port = port_forward(s)
+    # Every probe of this step carries one run-scoped identity, and the checks
+    # below read only the audit entries that carry it.
+    client_id = secrets.token_hex(8)
+    agent = 'fleet-redfish-probe/' + client_id
     before = len(audit(s))
     cases = []
     try:
@@ -228,7 +238,7 @@ def discovery_faults(s):
 
         def probe(name, creds, system, uuid, want, pin=pin):
             r = subprocess.run([str(s / 'fleet-multiplane-host'), 'redfish-probe', '--endpoint', 'https://127.0.0.1:%d' % port, '--credentials', str(creds),
-                                '--system', system, '--uuid', uuid, '--pin', pin], text=True, capture_output=True, timeout=120)
+                                '--system', system, '--uuid', uuid, '--pin', pin, '--client-id', client_id], text=True, capture_output=True, timeout=120)
             line = (r.stdout.strip().splitlines() or [''])[-1]
             cases.append({'case': name, 'system': system, 'exitCode': r.returncode, 'outcome': line})
             if r.returncode != want:
@@ -246,9 +256,9 @@ def discovery_faults(s):
         # Another key's digest: the TLS handshake fails before any request,
         # so the BMC audit gains nothing.
         other = pin[:-1] + ('0' if pin[-1] != '0' else '1')
-        seen = len(audit(s))
+        seen = len(own(audit(s), agent))
         probe('a TLS key other than the pin', good, TARGET_A['system'], TARGET_A['uuid'], 13, pin=other)
-        if len(audit(s)) != seen:
+        if len(own(audit(s), agent)) != seen:
             die('a probe with the wrong pin reached the BMC')
         probe('target A after the fault is cleared', good, TARGET_A['system'], TARGET_A['uuid'], 0)
     finally:
@@ -257,11 +267,11 @@ def discovery_faults(s):
             for f in p.iterdir():
                 f.unlink()
             p.rmdir()
-    window = audit(s)[before:]
-    if mutating(window) or not any(e['principal'] == 'rejected' for e in window):
+    window = own(audit(s)[before:], agent)
+    if not window or mutating(window) or not any(e['principal'] == 'rejected' for e in window):
         die('discovery probes issued an effect or the wrong credential was not rejected: %s' % mutating(window))
     write(s / 'evidence' / 'redfish-discovery-faults.json', {'observedAt': now(), 'emulator': 'DMTF Redfish-Interface-Emulator 1.2.2 + lab adapter (live, in the cell)',
-                                                               'client': 'internal/redfish discovery through fleet-multiplane redfish-probe', 'cases': cases,
+                                                               'client': 'internal/redfish discovery through fleet-multiplane redfish-probe', 'userAgent': agent, 'cases': cases,
                                                                'auditRequests': len(window), 'mutatingRequests': 0,
                                                                'rejectedRequests': sum(1 for e in window if e['principal'] == 'rejected')})
     print('redfish-discovery-faults: real emulator discovery selected each enrolled System exactly; wrong credential, swapped or unknown identity and an unadvertised ResetType were refused with GETs only; a TLS key other than the pin reached no request')
