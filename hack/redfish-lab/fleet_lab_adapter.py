@@ -12,6 +12,9 @@ authentication. This module, loaded into the same Flask process, adds only:
     persistent libvirt domain per System, and PowerState read from libvirt;
   * Boot source override (Pxe or Hdd, Once) persisted like BMC NVRAM and
     consumed when the domain is started;
+  * a firmware inventory (UpdateService and FirmwareInventory) from
+    firmware.json, which upstream does not serve, so a commissioning plan's
+    firmware baseline can be checked against the lab;
   * an append-only request audit log (no bodies, no credentials), each
     entry naming the client's User-Agent so a check can tell readers apart;
   * bounded, one-shot lab fault injection driven by a state file.
@@ -218,6 +221,13 @@ def create_app(targets, state, credentials, boot_ip):
     def publish(sid, power=None):
         m = cs.members[sid]
         m['UUID'] = targets[sid]['uuid']
+        # The serial the target's synthetic Device records, so commissioning
+        # can match the chassis to the Device.
+        m['SerialNumber'] = targets[sid]['serial']
+        # The target's one disk is the populated SimpleStorage device. The
+        # upstream Storage collection links sample drives the target does not
+        # have, so the System does not link it.
+        m.pop('Storage', None)
         m['Name'] = targets[sid]['name']
         m['Manufacturer'] = 'DMTF Redfish Interface Emulator (Fleet lab adapter)'
         m['Model'] = 'libvirt/QEMU lab target'
@@ -264,6 +274,18 @@ def create_app(targets, state, credentials, boot_ip):
             return None
         return faults.update(fn)
 
+    firmware = load_firmware()
+    inventory = '/redfish/v1/UpdateService/FirmwareInventory'
+    firmware_docs = {
+        '/redfish/v1/UpdateService': {'@odata.id': '/redfish/v1/UpdateService', '@odata.type': '#UpdateService.v1_11_0.UpdateService',
+                                      'Id': 'UpdateService', 'Name': 'Update Service', 'FirmwareInventory': {'@odata.id': inventory}},
+        inventory: {'@odata.id': inventory, '@odata.type': '#SoftwareInventoryCollection.SoftwareInventoryCollection', 'Name': 'Firmware Inventory',
+                    'Members@odata.count': len(firmware), 'Members': [{'@odata.id': inventory + '/' + f['Id']} for f in firmware]},
+    }
+    for f in firmware:
+        firmware_docs[inventory + '/' + f['Id']] = dict(f, **{'@odata.id': inventory + '/' + f['Id'], '@odata.type': '#SoftwareInventory.v1_10_0.SoftwareInventory',
+                                                              'Status': {'State': 'Enabled', 'Health': 'OK'}, 'Updateable': False})
+
     @g.app.before_request
     def guard():
         request_context.principal, request_context.detail = 'anonymous', {}
@@ -279,6 +301,8 @@ def create_app(targets, state, credentials, boot_ip):
             request_context.principal, request_context.detail = 'rejected', {'fault': 'reject-auth'}
             return challenge()
         request_context.principal = 'authenticated'
+        if path in firmware_docs:
+            return (firmware_docs[path], 200) if request.method == 'GET' else error(405, 'the lab firmware inventory is read-only')
         m = re.fullmatch(r'/redfish/v1/Systems/([^/]+)(/Actions/ComputerSystem\.Reset|/ResetActionInfo)?', path)
         if not m:
             return None
@@ -345,6 +369,16 @@ def create_app(targets, state, credentials, boot_ip):
         return '', 204
 
     @g.app.after_request
+    def link_update_service(response):
+        # Upstream's service root names no UpdateService; link the adapter's.
+        if request.method == 'GET' and (request.path.rstrip('/') or '/') == '/redfish/v1' and response.status_code == 200:
+            root = response.get_json(silent=True)
+            if isinstance(root, dict):
+                root['UpdateService'] = {'@odata.id': '/redfish/v1/UpdateService'}
+                response.set_data(json.dumps(root))
+        return response
+
+    @g.app.after_request
     def audit(response):
         entry = {'at': now(), 'method': request.method, 'path': request.path, 'status': response.status_code,
                  'principal': getattr(request_context, 'principal', 'anonymous'), 'client': client(request.headers.get('User-Agent', ''))}
@@ -356,6 +390,11 @@ def create_app(targets, state, credentials, boot_ip):
         return response
 
     return g.app
+
+
+def load_firmware():
+    with open(os.path.join(CONFIG_DIR, 'firmware.json')) as f:
+        return json.load(f)
 
 
 def load_targets():

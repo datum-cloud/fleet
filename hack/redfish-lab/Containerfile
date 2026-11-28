@@ -9,7 +9,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 COPY requirements.lock /tmp/requirements.lock
 RUN pip install --no-cache-dir --no-deps --require-hashes -r /tmp/requirements.lock && rm /tmp/requirements.lock
 COPY --from=upstream . /opt/redfish-emulator
-COPY emulator-config.json populate-config.json targets.json /etc/fleet-bmc/
+COPY emulator-config.json populate-config.json targets.json firmware.json /etc/fleet-bmc/
 COPY fleet_lab_adapter.py test_adapter.py fake_virsh.py /opt/fleet-lab/
 RUN chmod 755 /opt/fleet-lab/*.py
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
