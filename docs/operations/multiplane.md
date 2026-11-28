@@ -153,6 +153,12 @@ in the runtime Pod, any kind node, or the site, kro, Flux, Karmada or Milo conta
 mostly bootstrap, image pulls and builds. Every phase has an explicit bound.
 Do not run another full acceptance topology concurrently on an 8 GiB VM.
 
+Host ports are loopback only. Docker assigns the registry's port as it binds
+it. kind chooses each cluster's ports before it starts the node, so another
+process can take one in between. When Docker then reports the port already
+allocated, the run deletes that cluster, which has run nothing yet, and creates
+it again with fresh ports, at most three times. Any other failure stops the run.
+
 ### CI mode
 
 The `multiplane-acceptance` workflow runs the same acceptance on a disposable
