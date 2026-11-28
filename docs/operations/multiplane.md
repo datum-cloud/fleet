@@ -10,8 +10,8 @@ artifact built from the checkout; see [Flux-reconciled local environment](gitops
 production overlay. Production authority and deployment equivalence remain
 **unqualified**.
 
-Status: the run on Device custody is **implemented**. Verification of the local VM
-run and of the [Redfish run](redfish-lab.md) on custody is pending. The run
+Status: the run on Device custody is **implemented and verified**: the local VM
+run and the [Redfish run](redfish-lab.md) both pass every phase on custody. The run
 records under [Verification and remaining gaps](#verification-and-remaining-gaps)
 were observed on the path before the cutover, with the Secret-backed coordinator,
 and are not evidence for the custody path.
@@ -121,12 +121,19 @@ Exit codes and `evidence/result.json` status:
 
 | Exit | Status | Meaning | Resources |
 | --- | --- | --- | --- |
-| 0 | `passed` | Every phase and evidence assertion passed | Owned containers, clusters and image tag deleted; private credentials removed |
+| 0 | `passed` | Every phase and evidence assertion passed, and the run reached its last line | Owned containers, clusters and image tag deleted; private credentials removed |
+| 0 | `preflight-passed` | `--preflight-only`: every prerequisite is present; no acceptance ran | None created |
 | 1 | `failed` | A phase or assertion failed | Owned containers stopped, state retained, custody Unknown |
 | 2 | `preflight-failed` | A local prerequisite is missing | None created |
 | 3 | `blocked` | Implementation readiness gate failed | None created |
 | 4 | `timeout` | A bounded phase expired; its process group was terminated | Stopped and retained as for 1 |
 | 64 | `usage` | Invalid option | None created |
+| 129, 130, 143 | `interrupted` | The run received HUP, INT or TERM. It stops every phase it started, records the phase it was in as `interrupted`, and names it as the failed phase | Stopped and retained as for 1 |
+| 1 | `interrupted` | The run exited 0 before its last line, so nothing proves it finished | Stopped and retained as for 1 |
+
+Only a run that reaches its last line writes the completion marker the result
+requires for `passed`. A result recorded as `passed` before this rule, by a run
+that was interrupted, proves nothing.
 
 The full run uses three kind nodes (platform, hub, cell), a registry, Flux on
 each node, three small Milo/etcd pairs, Karmada and kro. Node caps are
@@ -155,12 +162,13 @@ mode-0700 `/tmp/fleet-multiplane.*` state directory (override the parent with
 | `result.json` | Final status, exit code, failed phase, every phase record, retained containers, custody statement |
 | `phases.jsonl` | One record per bounded phase: name, status, exit code, bound, duration |
 | `preflight.json` | Each prerequisite and readiness check |
-| `summary.json` | Pass only: allowlisted scenario evidence, operations, digests, receipt hashes, qualification flags |
+| `summary.json` | Written when the evidence checks pass, with `acceptance: evidence-verified`: allowlisted scenario evidence, operations, digests, receipt hashes, qualification flags. It does not say the run passed; `result.json` does |
 | `flux-verify.json`, `flux-initial.json`, `flux-rbac-restore.json`, `flux-drift.json`, `flux-graph-lifecycle.json`, `flux-restart.json`, `flux-fail-closed.json`, `flux-retention.json`, `flux-final.json`, `flux-ownership-final.json`, `flux-reconciles.json`, `flux-partition.json`, `flux-reflection-suspension.json`, `gitops-r<N>.SHA256SUMS` | Flux source revisions and digests, Ready/generation/revision of every Kustomization and HelmRelease, inventories and single-writer ownership, and each GitOps scenario ([details](gitops.md#acceptance-coverage)) |
 | `kro-rbac.json` | kro's allowed and denied verbs and each admission probe's outcome |
 | `custody-crd-rules.json` | Each forbidden custody or operation write and whether the provider project API refused it, and that the CRDs were removed |
 | `kubernetes-execution.json` | kro version, image and RGD/instance state; Flux-owned site Deployments; retained volume identity; every worker Job's UID, conditions, Pods, exit codes and policies; per-operation RBAC |
 | `interrupt.json`, `lifecycle.json`, `delivery-faults.json`, `wrong-location.json` | Scenario-specific observations, no secrets |
+| `import-inert.json`, `staff-access.json`, `contention.json`, `release-waits.json`, `deadline-hold.json`, `deadline-settled.json`, `rebuild.json` | The #174 failure scenarios ([coverage](../../test/acceptance/coverage.md#device-custody-and-operations)) |
 | `source-SHA256SUMS`, `binary-SHA256SUMS`, `image-id`, `sysctl.json`, `teardown.json` | Tested inputs and teardown record |
 
 Before reporting, the harness scans `evidence/` for every retained static token,
@@ -219,9 +227,22 @@ The phases are then:
    another Device. It then removes the objects and the CRDs. Milo ignores
    admission policies stored in a project, so this proves the rules hold
    there. It sends nothing to any server.
+   `import-inert` then requires that importing the Devices admitted,
+   delivered and sent nothing: no operation, allocation, assignment, worker
+   Job or journal entry, and custody with no operation, result or hold. In
+   Redfish mode the BMC audit must hold no effect. `staff-access` requires
+   the staff identity to read custody and list recoveries, and to be
+   forbidden Secrets, every other operation, allocations and custody writes.
+   Staff hold no consumer-project or hub credential.
 2. **Contention.** Two consumers request one provider capacity. Custody grants one
    allocation; `verify-contention` independently reads Bound for A and
-   Pending/InsufficientCapacity for B.
+   Pending/InsufficientCapacity for B, and requires custody to name the one
+   MachineAllocation, A's. `tenant-isolation` then requires that B, which
+   holds nothing, cannot reach the server: its project serves no Device API,
+   and an installation the Metal provider names for its unheld allocation is
+   refused by custody admission for `HolderMismatch`. The fence, the site
+   store and, in Redfish mode, the BMC audit stay unchanged, and nothing is
+   delivered.
 3. **Admission before effects.** The coordinator admits the `DeviceInstallation`
    and raises the Device's fence, then writes one immutable hub handoff carrying
    that exact assignment, before any effect. `await-delivery` requires the
@@ -316,24 +337,48 @@ The phases are then:
 
     Each of the last two creates a kro Job that must fail once with exit 65 by
     `podFailurePolicy`. The site store must be unchanged, no status may appear,
-    consumer B must stay Bound, and kro must prune them once deleted. After B
-    installs and is released, `release-status-b` repeats the released checks for
-    B.
-14. **Wrong location.** With capacity free, the consumer A customer recreates its
+    consumer B must stay Bound, and kro must prune them once deleted. In
+    Redfish mode the BMC audit must gain no effect.
+14. **Deadline and Machine deletion.** `deadline-admit` arms a lab-only hook
+    in the boot service, which then withholds every boot while staying Ready,
+    and restarts the coordinator with a six-minute installation deadline for
+    consumer B's installation only. kro still creates the worker, and the
+    installer boot is requested but never served. `machine-delete` has the
+    customer delete B's Machine mid-install. One release pass must leave
+    custody holding the Device for release with the installation still active
+    and no wipe. `deadline-hold` requires the hook to have denied at least
+    one boot request, and the installation to end
+    `OutcomeUnknown` with `DeadlineExceeded`, custody to hold it at its fence,
+    and its worker to have stopped. A staff `DeviceRecovery` naming the
+    held operation at the wrong fence must be refused for `HoldMismatch`, with custody, the site
+    store and, in Redfish mode, the BMC audit unchanged. The hook is then
+    cleared. The release's wipe must be admitted above the held fence
+    after the worker stopped, succeed, and clear the hold. `release-status-b`
+    requires the deleted Machine to be gone.
+15. **Custody rebuild.** `rebuild` stops the site observer, so the cell cannot
+    report its fence, and deletes the free Device's custody as the provider
+    bootstrap admin. The coordinator must rebuild it `Unverified`, and a new
+    consumer A Machine must find no eligible capacity and record no
+    allocation. Once Flux restores the observer, custody must become
+    `Verified` with a fence above every fence the site stored.
+16. **Wrong location.** With capacity free, the consumer A customer recreates its
     request with `locationRef: remote-elsewhere`. Allocation must fail with the
     location-not-served error. The custody records, the site store's state, and the
     Machine's finalizers and status must be unchanged. Free capacity rules out contention as the reason for denial.
-15. **Closed boot and evidence.** Live HTTP probes from the runtime Pod to the
+17. **Closed boot and evidence.** Live HTTP probes from the runtime Pod to the
     boot Service are denied after closure. Evidence requires all of:
-    - PXE mode, one install and two wipes, each `Succeeded` at its own fence, with
-      the fences strictly increasing;
+    - PXE mode, one install and two wipes, each `Succeeded` at its own fence,
+      and B's installation `OutcomeUnknown` at its deadline, with the fences
+      strictly increasing;
     - completed broker writes and a DHCP lease for the installer NIC;
     - network-only installer XML, and disk XML with no NIC or direct kernel;
     - closed boot admission, no remaining domain or disk;
-    - kro-created, `Complete` worker Jobs for exactly the one install and two
-      wipes, each with one successful Pod;
+    - kro-created, `Complete` worker Jobs for exactly these four operations,
+      each with one successful Pod;
+    - custody `Verified` with no holder at the rebuilt fence, and only the
+      refused recovery;
     - zero OOM kills.
-16. **Final convergence and teardown.** `flux-final` requires all three
+18. **Final convergence and teardown.** `flux-final` requires all three
     clusters at the last revision with nothing suspended, and repeats the
     single-writer ownership audit. After a pass, only exact-prefix resources are deleted, the
     inotify value is restored, and private credentials are removed.
@@ -350,7 +395,7 @@ hack/multiplane/teardown.sh /tmp/fleet-multiplane.REPLACE --discard-unknown
 ```
 
 `teardown.sh` without `--discard-unknown` refuses unless `summary.json` records
-a pass. `--discard-unknown` is an explicit human decision after inspection: it
+verified acceptance evidence. `--discard-unknown` is an explicit human decision after inspection: it
 deletes the same exact-prefix resources, keeps every private file, and records
 in `teardown.json` that it is not release evidence. Neither script touches other
 prefixes. The original limit of 128 inotify instances was insufficient for this
@@ -478,7 +523,7 @@ path before the cutover to Device custody. They used the Secret-backed
 coordinator, a site-wide provider journal and a single-writer `executor.Client`.
 They show what the earlier composition proved, and the Flux, kro and Karmada
 findings there still describe the same infrastructure. They are not evidence for
-the custody path. Verification of the local VM run on custody is pending.
+the custody path. The local VM and Redfish runs on custody pass every phase.
 
 ### Flux-owned shared site acceptance (2026-11-16)
 

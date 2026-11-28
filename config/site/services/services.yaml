@@ -103,6 +103,10 @@ spec:
             - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
             - {name: FLEET_BOOT_ORIGIN, value: "http://${FLEET_BOOT_SERVICE_IP}:8080"}
             - {name: FLEET_BOOT_EVIDENCE, value: /var/lib/fleet-boot}
+            # Lab-only fault hook: while this file exists the boot service
+            # withholds every boot, and stays Ready. The deadline scenario
+            # arms it with `fleet-multiplane boot-withhold`.
+            - {name: FLEET_LAB_BOOT_WITHHOLD, value: /var/lib/fleet-boot/lab-withhold}
           ports:
             - {name: http, containerPort: 8080}
           readinessProbe:

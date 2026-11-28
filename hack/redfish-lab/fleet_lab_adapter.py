@@ -12,7 +12,8 @@ authentication. This module, loaded into the same Flask process, adds only:
     persistent libvirt domain per System, and PowerState read from libvirt;
   * Boot source override (Pxe or Hdd, Once) persisted like BMC NVRAM and
     consumed when the domain is started;
-  * an append-only request audit log (no bodies, no credentials);
+  * an append-only request audit log (no bodies, no credentials), each
+    entry naming the client's User-Agent so a check can tell readers apart;
   * bounded, one-shot lab fault injection driven by a state file.
 
 It is never part of Fleet's production code. It is the only component in
@@ -184,6 +185,12 @@ class Lab:
         return boot
 
 
+def client(user_agent):
+    """The User-Agent as the audit records it: printable ASCII, at most 128
+    characters. It identifies a reader; it is not a credential."""
+    return ''.join(c for c in user_agent if ' ' <= c <= '~')[:128]
+
+
 def error(status, message):
     return {'error': {'code': 'Base.1.0.GeneralError', 'message': message}}, status
 
@@ -340,7 +347,7 @@ def create_app(targets, state, credentials, boot_ip):
     @g.app.after_request
     def audit(response):
         entry = {'at': now(), 'method': request.method, 'path': request.path, 'status': response.status_code,
-                 'principal': getattr(request_context, 'principal', 'anonymous')}
+                 'principal': getattr(request_context, 'principal', 'anonymous'), 'client': client(request.headers.get('User-Agent', ''))}
         entry.update(getattr(request_context, 'detail', {}))
         with LOCK, open(audit_path, 'a') as f:
             f.write(json.dumps(entry, sort_keys=True) + '\n')

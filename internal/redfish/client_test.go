@@ -22,6 +22,7 @@ type bmcStub struct {
 	hold     map[string]time.Duration
 	requests []string
 	ifMatch  []string
+	agents   []string
 }
 
 func newStub() *bmcStub {
@@ -51,6 +52,7 @@ func (b *bmcStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	b.mu.Lock()
 	b.requests = append(b.requests, r.Method+" "+key)
+	b.agents = append(b.agents, r.Header.Get("User-Agent"))
 	if r.Method != http.MethodGet {
 		b.ifMatch = append(b.ifMatch, r.Header.Get("If-Match"))
 	}
@@ -123,6 +125,45 @@ func TestDiscoveryWalksEveryPageOfTheSystemsCollection(t *testing.T) {
 	}
 	if n := b.count("POST") + b.count("PATCH"); n != 0 {
 		t.Fatalf("discovery mutated: %d", n)
+	}
+}
+
+func TestSetUserAgentMarksEveryRequestOnlyWhenSet(t *testing.T) {
+	b := newStub()
+	c := stubClient(t, b, time.Second)
+	if _, err := c.Discover(context.Background(), Target{SystemID: "B", SystemUUID: uuidB}); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range b.agents {
+		if strings.HasPrefix(a, "fleet-") {
+			t.Fatalf("a client without SetUserAgent sent %q", a)
+		}
+	}
+	// Once connected, the identity can no longer change mid-stream.
+	if err := c.SetUserAgent("fleet-redfish-probe/late"); err == nil {
+		t.Fatal("set a user agent after the first request")
+	}
+
+	b = newStub()
+	c = stubClient(t, b, time.Second)
+	for _, bad := range []string{"", "two\nlines", strings.Repeat("x", 129), "caf\u00e9"} {
+		if err := c.SetUserAgent(bad); err == nil {
+			t.Fatalf("accepted user agent %q", bad)
+		}
+	}
+	if err := c.SetUserAgent("fleet-redfish-probe/0123abcd"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Discover(context.Background(), Target{SystemID: "B", SystemUUID: uuidB}); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.agents) == 0 {
+		t.Fatal("no request reached the BMC")
+	}
+	for i, a := range b.agents {
+		if a != "fleet-redfish-probe/0123abcd" {
+			t.Fatalf("request %s carried user agent %q", b.requests[i], a)
+		}
 	}
 }
 

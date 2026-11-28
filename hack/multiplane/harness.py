@@ -23,15 +23,25 @@ CONTEXT = 'colima-' + PROFILE
 EXIT_PASSED, EXIT_FAILED, EXIT_PREFLIGHT, EXIT_BLOCKED, EXIT_TIMEOUT, EXIT_USAGE = 0, 1, 2, 3, 4, 64
 STATUS_BY_EXIT = {EXIT_PASSED: 'passed', EXIT_FAILED: 'failed', EXIT_PREFLIGHT: 'preflight-failed',
                   EXIT_BLOCKED: 'blocked', EXIT_TIMEOUT: 'timeout', EXIT_USAGE: 'usage'}
+# A run or phase ended by a signal exits 128 plus the signal number.
+INTERRUPT_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+# run.sh writes these markers as its last act, so exit 0 without one is an
+# interrupted run, never a pass.
+COMPLETED, PREFLIGHT_COMPLETED = 'completed', 'preflight-completed'
+
+
+class Interrupted(Exception):
+    pass
 DEBIAN = 'debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc'
 # Subcommands and errors the live harness depends on. A missing one blocks before any resource exists.
 REQUIRED_SOURCE_MARKERS = tuple('"%s"' % c for c in ('seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse',
-                                                     'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer')) + ('multiplane.ErrLocationNotServed',)
+                                                     'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer',
+                                                     'admit-install-b', 'recovery-mismatch', 'probe-unallocatable', 'tenant-isolation')) + ('multiplane.ErrLocationNotServed',)
 READINESS_PACKAGES = ('./internal/coordination', './internal/custody', './internal/site/...', './internal/multiplane', './cmd/fleet-multiplane')
 # Redfish mode (run.sh --redfish) adds its executor and probe to the readiness gate.
 PROVIDER = os.environ.get('FLEET_SITE_PROVIDER', 'libvirt')
 if PROVIDER == 'redfish':
-    REQUIRED_SOURCE_MARKERS += ('"redfish-probe"', '"install-b"', 'redfish.NewPinnedClient')
+    REQUIRED_SOURCE_MARKERS += ('"redfish-probe"', 'redfish.NewPinnedClient')
     READINESS_PACKAGES += ('./internal/redfish',)
 # The one Device the acceptance allocates, as the site store names it. In
 # Redfish mode it is enrolled as lab target A (System-1), a persistent domain.
@@ -192,56 +202,77 @@ def phase(args):
     started = time.monotonic()
     record = {'name': args.name, 'startedAt': now(), 'timeoutSeconds': args.timeout}
     print('==> %s (bound %ss)' % (args.name, args.timeout), flush=True)
+    # A signal stops the phase's command and records the phase interrupted.
+    received = []
+
+    def on_signal(signum, _frame):
+        received.append(signum)
+        raise Interrupted()
+    for sig in INTERRUPT_SIGNALS:
+        signal.signal(sig, on_signal)
+    (state / 'current-phase').write_text(args.name + '\n')
     with open(log, 'ab') as out, open(state / 'phases.log', 'ab') as markers:
         p = subprocess.Popen(args.command, stdout=subprocess.PIPE, stderr=out, start_new_session=True)
-        deadline = started + args.timeout
-        timed_out = False
-        import selectors
-        sel = selectors.DefaultSelector()
-        os.set_blocking(p.stdout.fileno(), False)
-        sel.register(p.stdout, selectors.EVENT_READ)
-        eof = False
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
-                break
-            if eof:
-                try:
-                    p.wait(timeout=remaining)
-                except subprocess.TimeoutExpired:
+        try:
+            deadline = started + args.timeout
+            timed_out = False
+            import selectors
+            sel = selectors.DefaultSelector()
+            os.set_blocking(p.stdout.fileno(), False)
+            sel.register(p.stdout, selectors.EVENT_READ)
+            eof = False
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
                     timed_out = True
-                break
-            if sel.select(timeout=min(remaining, 1.0)):
-                line = os.read(p.stdout.fileno(), 65536)
-                if not line:
-                    sel.unregister(p.stdout)
-                    eof = True
-                    continue
-                out.write(line)
-                markers.write(line)
-                out.flush()
-                markers.flush()
-                if args.echo:
-                    sys.stdout.write(''.join('    ' + l for l in line.decode(errors='replace').splitlines(True)))
-                    sys.stdout.flush()
-        sel.close()
-        p.stdout.close()
-        if timed_out:
+                    break
+                if eof:
+                    try:
+                        p.wait(timeout=remaining)
+                    except subprocess.TimeoutExpired:
+                        timed_out = True
+                    break
+                if sel.select(timeout=min(remaining, 1.0)):
+                    line = os.read(p.stdout.fileno(), 65536)
+                    if not line:
+                        sel.unregister(p.stdout)
+                        eof = True
+                        continue
+                    out.write(line)
+                    markers.write(line)
+                    out.flush()
+                    markers.flush()
+                    if args.echo:
+                        sys.stdout.write(''.join('    ' + l for l in line.decode(errors='replace').splitlines(True)))
+                        sys.stdout.flush()
+            sel.close()
+            p.stdout.close()
+            if timed_out:
+                terminate(p)
+            code = p.wait(timeout=5)
+        except Interrupted:
+            for sig in INTERRUPT_SIGNALS:
+                signal.signal(sig, signal.SIG_IGN)
             terminate(p)
-        code = p.wait(timeout=5)
+            p.stdout.close()
+            code = 128 + received[0]
     record['durationSeconds'] = round(time.monotonic() - started, 1)
     record['finishedAt'] = now()
-    if timed_out:
+    if received:
+        record.update(status='interrupted', exitCode=code)
+    elif timed_out:
         record.update(status='timeout', exitCode=EXIT_TIMEOUT)
     else:
         record.update(status='passed' if code == 0 else 'blocked' if code == EXIT_BLOCKED else 'failed', exitCode=code)
     with open(evidence_dir(state) / 'phases.jsonl', 'a') as f:
         f.write(json.dumps(record, sort_keys=True) + '\n')
+    (state / 'current-phase').unlink(missing_ok=True)
     if record['status'] != 'passed':
         print('<== %s %s (exit %s); private log: %s' % (args.name, record['status'], record['exitCode'], log), flush=True)
         tail = log.read_bytes()[-1500:].decode(errors='replace')
         print('\n'.join('    ' + l for l in tail.splitlines()[-15:]), flush=True)
+    if received:
+        return code
     return EXIT_TIMEOUT if timed_out else (0 if code == 0 else EXIT_BLOCKED if code == EXIT_BLOCKED else EXIT_FAILED)
 
 
@@ -462,18 +493,31 @@ def result(args):
     if prefix:
         code, out, _ = capture(['docker', 'ps', '-a', '--filter', 'name=^' + prefix + '-', '--format', '{{.Names}}\t{{.State}}'], 30)
         retained = [dict(zip(('name', 'state'), l.split('\t'))) for l in out.splitlines() if code == 0 and l.strip()]
+    code = args.exit_code
+    status = STATUS_BY_EXIT.get(code, 'interrupted' if code in [128 + s for s in INTERRUPT_SIGNALS] else 'failed')
+    # Exit 0 is a pass only if run.sh reached its last line.
+    if code == EXIT_PASSED:
+        if (state / COMPLETED).exists():
+            status = 'passed'
+        elif (state / PREFLIGHT_COMPLETED).exists():
+            status = 'preflight-passed'
+        else:
+            status, code = 'interrupted', EXIT_FAILED
     failed = next((p for p in phases if p['status'] != 'passed'), None)
-    status = STATUS_BY_EXIT.get(args.exit_code, 'failed')
+    running = state / 'current-phase'
+    if failed is None and status != 'passed' and running.exists():
+        failed = {'name': running.read_text().strip()}
     summary = ev / 'summary.json'
-    value = {'schemaVersion': 1, 'observedAt': now(), 'status': status, 'exitCode': args.exit_code, 'prefix': prefix,
+    value = {'schemaVersion': 1, 'observedAt': now(), 'status': status, 'exitCode': code, 'prefix': prefix,
              'failedPhase': failed['name'] if failed else None, 'phases': phases, 'retainedContainers': retained,
              'stateDirectory': str(state), 'evidenceDirectory': str(ev),
              'summary': 'summary.json' if summary.exists() and status == 'passed' else None,
              'custody': 'released and verified' if status == 'passed' else 'Unknown: inspect private state before any cleanup',
              'productionAuthority': False}
     write_json(ev / 'result.json', value)
-    print('RESULT %s exit=%s evidence=%s' % (status, args.exit_code, ev / 'result.json'))
-    return 0
+    print('RESULT %s exit=%s evidence=%s' % (status, code, ev / 'result.json'))
+    # run.sh exits with this code, so only a completed run exits 0.
+    return code
 
 
 def main():

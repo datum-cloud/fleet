@@ -161,10 +161,15 @@ func coordinator(ctx context.Context, c Config, registry *custody.Registry) (*cu
 // Coordinate is the coordinator process: the custody loop, delivering
 // through Karmada, and fixture discovery for the cell's Devices under the
 // discovery identity.
-func Coordinate(ctx context.Context, c Config, onError func(error)) error {
+// A positive installationDeadline replaces the installation kind's deadline
+// for operations this process admits; the deadline scenario uses it.
+func Coordinate(ctx context.Context, c Config, installationDeadline time.Duration, onError func(error)) error {
 	registry, err := custody.DefaultRegistry()
 	if err != nil {
 		return err
+	}
+	if installationDeadline > 0 {
+		registry.Kind("DeviceInstallation").Deadline = installationDeadline
 	}
 	coord, _, sites, api, err := coordinator(ctx, c, registry)
 	if err != nil {
@@ -390,7 +395,7 @@ func (r *Runner) installation(ctx context.Context, index int) (*request, *fleet.
 		return nil, nil, nil, nil, err
 	}
 	if current == nil || current.Status.Phase != fleet.AllocationActive {
-		return nil, nil, nil, nil, errors.New("the consumer has no active allocation")
+		return nil, nil, nil, nil, errNoActiveAllocation
 	}
 	var install fleet.Installation
 	if err := q.project.API.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: "debian-pxe"}, &install); err != nil {
@@ -418,8 +423,10 @@ var ErrAdmittedUnknown = errors.New("installation admitted; its result remains u
 
 // AdmitInstall creates consumer A's installation and returns
 // ErrAdmittedUnknown once custody admitted it and its handoff exists.
-func (r *Runner) AdmitInstall(ctx context.Context) error {
-	_, _, _, operation, err := r.installation(ctx, 0)
+func (r *Runner) AdmitInstall(ctx context.Context) error { return r.admitIndex(ctx, 0) }
+
+func (r *Runner) admitIndex(ctx context.Context, index int) error {
+	_, _, _, operation, err := r.installation(ctx, index)
 	if err != nil {
 		return err
 	}
@@ -435,10 +442,6 @@ func (r *Runner) AdmitInstall(ctx context.Context) error {
 }
 
 func (r *Runner) Install(ctx context.Context) error { return r.InstallIndex(ctx, 0) }
-
-// InstallSecond installs consumer B's Installation after it reused the
-// capacity, through the same allocator and federation path.
-func (r *Runner) InstallSecond(ctx context.Context) error { return r.InstallIndex(ctx, 1) }
 
 func (r *Runner) InstallIndex(ctx context.Context, index int) error {
 	q, _, install, operation, err := r.installation(ctx, index)
@@ -465,6 +468,10 @@ func (r *Runner) InstallIndex(ctx context.Context, index int) error {
 	}
 	return r.projectPower(ctx, q)
 }
+
+// errNoActiveAllocation means the consumer holds no active allocation, so
+// the Metal provider installs nothing for it.
+var errNoActiveAllocation = errors.New("the consumer has no active allocation")
 
 // errTerminal marks an error that retrying cannot fix.
 var errTerminal = errors.New("terminal")

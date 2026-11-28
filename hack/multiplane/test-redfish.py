@@ -154,7 +154,7 @@ for name in re.findall(r'^step (\S+)', sequence, re.M):
 for name in re.findall(r'^rf (\S+)', sequence, re.M):
     check('redfish step implemented: ' + name, "'%s':" % name in redfish_steps)
 order = ['baseline', 'discovery-faults', 'allocate', 'arm-lost-response', 'dispatch', 'bmc-interrupt', 'interrupt-pod', 'interrupt-job', 'lost-response', 'resume', 'release',
-         'reuse', 'delivery-faults', 'install-b', 'release-b', 'boot-denials', 'isolation', 'evidence']
+         'reuse', 'delivery-faults', 'deadline-admit', 'machine-delete', 'deadline-hold', 'release-b', 'deadline-settled', 'rebuild', 'boot-denials', 'isolation', 'evidence']
 positions = [sequence.find(' ' + n + ' ') for n in order]
 check('Redfish phase order', all(p >= 0 for p in positions) and positions == sorted(positions), str(list(zip(order, positions))))
 for path in sorted(list((root / 'internal/redfish').glob('*.go')) + list((root / 'internal/site/redfishwork').glob('*.go'))):
@@ -184,6 +184,76 @@ for marker in re.findall(r"'([^']+)'", block):
 teardown = (root / 'hack/multiplane/teardown.sh').read_text()
 check('teardown removes the synthetic BMC credential after a pass', '"$state/redfish"' in teardown)
 check('teardown removes the BMC image tags', '"$prefix-bmc-image"' in teardown and 'fleet-bmc:$prefix' in teardown)
+
+# Discovery faults count only the probe's own audit entries. A concurrent
+# reader with the same credential (discovery, a worker) shares the BMC log,
+# including a mutation and a rejected request, and must not change the result.
+import types  # noqa: E402
+import redfish_steps as rs  # noqa: E402
+
+
+def discovery_run(own_extra=None, wrong_pin_reaches=False):
+    st = pathlib.Path(tempfile.mkdtemp())
+    (st / 'evidence').mkdir()
+    (st / 'redfish').mkdir()
+    for name, value in (('bmc-password.token', 'synthetic-password\n'), ('bmc-username', 'lab-operator\n'), ('bmc-pin', 'a' * 64 + '\n')):
+        (st / 'redfish' / name).write_text(value)
+    log, hidden = [], set()
+
+    def entry(client, method='GET', principal='authenticated', path='/redfish/v1/Systems/System-1'):
+        return {'method': method, 'path': path, 'status': 200, 'principal': principal, 'client': client}
+
+    def bmc(_s, *command, check=True):
+        if command[-2:] == ('hide-reset', 'On'):
+            hidden.add('On')
+        if command[-1:] == ('clear',):
+            hidden.clear()
+        return types.SimpleNamespace(returncode=0, stdout='', stderr='')
+
+    real_run = subprocess.run
+
+    def run(command, **kw):
+        if 'redfish-probe' not in command:
+            return real_run(command, **kw)
+        arg = dict(zip(command[2::2], command[3::2]))
+        agent = 'fleet-redfish-probe/' + arg['--client-id']
+        # The concurrent reader: discovery polling with the same credential.
+        log.extend([entry('gofish/1.0'), entry('gofish/1.0', method='POST', path='/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset'),
+                    entry('gofish/1.0', principal='rejected')])
+        if arg['--pin'] != 'a' * 64:
+            if wrong_pin_reaches:
+                log.append(entry(agent))
+            return types.SimpleNamespace(returncode=13, stdout='redfish-probe: pin mismatch\n', stderr='')
+        if arg['--credentials'].endswith('probe-bad'):
+            log.append(entry(agent, principal='rejected'))
+            return types.SimpleNamespace(returncode=10, stdout='redfish-probe: credential rejected\n', stderr='')
+        log.extend([entry(agent, path='/redfish/v1/'), entry(agent)] + [entry(agent, **x) for x in (own_extra or [])])
+        want = {(rs.TARGET_A['system'], rs.TARGET_A['uuid']): 0, (rs.TARGET_B['system'], rs.TARGET_B['uuid']): 0}.get((arg['--system'], arg['--uuid']), 12)
+        if want == 0 and hidden:
+            want = 11
+        return types.SimpleNamespace(returncode=want, stdout='redfish-probe: done\n', stderr='')
+
+    saved = (rs.audit, rs.bmc, rs.port_forward, rs.subprocess.run)
+    rs.audit = lambda _s: list(log)
+    rs.bmc = bmc
+    rs.port_forward = lambda _s: (types.SimpleNamespace(kill=lambda: None), 1)
+    rs.subprocess.run = run
+    try:
+        rs.discovery_faults(st)
+        return None, json.loads((st / 'evidence' / 'redfish-discovery-faults.json').read_text())
+    except SystemExit as e:
+        return str(e), None
+    finally:
+        rs.audit, rs.bmc, rs.port_forward, rs.subprocess.run = saved
+
+
+err, record = discovery_run()
+check('discovery faults ignore a concurrent reader', err is None and record['userAgent'].startswith('fleet-redfish-probe/')
+      and record['auditRequests'] == 13 and record['rejectedRequests'] == 1, str(err or record))
+err, _ = discovery_run(own_extra=[{'method': 'POST', 'path': '/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset'}])
+check("discovery faults still fail on the probe's own effect", err is not None and 'issued an effect' in err, str(err))
+err, _ = discovery_run(wrong_pin_reaches=True)
+check('discovery faults still fail when the wrong-pin probe reaches the BMC', err is not None and 'wrong pin reached' in err, str(err))
 
 if failures:
     print('FAIL Redfish mode tests:\n  ' + '\n  '.join(failures))

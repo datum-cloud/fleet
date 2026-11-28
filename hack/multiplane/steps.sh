@@ -39,14 +39,46 @@ local_phase() { cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o
 custody_digest() { "${harness[@]}" custody-digest --state "$state"; }
 # The Device's site store state: its fences and journal.
 store_state=$(python3 -c 'import sys; sys.path.insert(0, "hack/multiplane"); import harness; print(harness.STATE_PATH)')
+# A store with no state file yet, before any assignment, digests as empty.
 journal_digest() {
- runtime cat "$store_state" | python3 -c '
+ runtime sh -c "cat '$store_state' 2>/dev/null || true" | python3 -c '
 import hashlib,sys
 print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
 }
 # The step the install has journaled once its installer boot was requested.
 installer_step=installer-start
 [[ $(cat "$state/site-provider" 2>/dev/null) != redfish ]] || installer_step=installer-power-on
+scenario() { python3 hack/multiplane/scenarios.py "$@"; }
+redfish() { [[ $(cat "$state/site-provider" 2>/dev/null) == redfish ]]; }
+# Effects on servers, independent of the site journal: the hypervisor's
+# running domains and its append-only QEMU logs, in both modes, and the lab
+# BMC audit in Redfish mode. Mark them, then require none after the mark.
+server_effects() {
+ runtime sh -c 'virsh --connect "qemu:///system?socket=/run/fleet-libvirt/libvirt-sock" list --name && { ls -ln /var/log/libvirt/qemu 2>/dev/null || true; }' | python3 -c '
+import hashlib,sys
+print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+}
+audit_mark() {
+ server_effects > "$state/server-effects-mark"
+ ! redfish || python3 hack/multiplane/redfish_steps.py audit-mark "$state"
+}
+audit_unchanged() {
+ [[ $(server_effects) == "$(cat "$state/server-effects-mark")" ]] || { echo 'a domain started or a QEMU log changed' >&2; return 1; }
+ ! redfish || python3 hack/multiplane/redfish_steps.py audit-unchanged "$state"
+}
+# A cell site Deployment stopped for a fault. Its Flux layer is suspended
+# first, so the harness is never a second writer, and resumed to restore it.
+site_stop() {
+ cell -n flux-system patch kustomization/fleet-site-services --field-manager=fleet-fault-injection --type=merge -p '{"spec":{"suspend":true}}' >/dev/null
+ site scale "deployment/$1" --replicas=0 >/dev/null
+ for _ in $(seq 1 120); do [[ -z $(site get pods -l "app.kubernetes.io/name=$1" -o name) ]] && return; sleep 1; done
+ echo "$1 did not stop" >&2; return 1
+}
+site_restore() {
+ cell -n flux-system patch kustomization/fleet-site-services --field-manager=fleet-fault-injection --type=merge -p '{"spec":{"suspend":false}}' >/dev/null
+ cell -n flux-system annotate --overwrite kustomization/fleet-site-services "reconcile.fluxcd.io/requestedAt=$(date +%s)" >/dev/null
+ site wait --for=jsonpath='{.status.availableReplicas}'=1 "deployment/$1" --timeout=300s >/dev/null
+}
 wait_running_pod() {
  for _ in $(seq 1 "${2:-120}"); do
   uid=$(py running-pod "$state" "$1")
@@ -63,6 +95,94 @@ case "$step" in
   b=$(k "$state/consumer-b/management-project.json" -n default get machine allocation -o jsonpath='{.status.phase}/{.status.conditions[?(@.type=="Bound")].reason}')
   [[ $a == Bound/* && $b == Pending/InsufficientCapacity ]] || { echo "unexpected contention status: A=$a B=$b" >&2; exit 1; }
   printf 'contention: consumer-a %s; consumer-b %s\n' "$a" "$b"
+  scenario contention "$state"
+  ;;
+ tenant-isolation)
+  # Consumer A holds the Device and consumer B holds nothing. Nothing B's
+  # side asks for reaches the site or the server.
+  before=$(journal_digest)
+  audit_mark
+  "$host" tenant-isolation --config "$state/acceptance.json"
+  [[ $before == "$(journal_digest)" ]] || { echo 'site store changed for an unheld tenant' >&2; exit 1; }
+  [[ -z $(cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o name) ]] || { echo 'an assignment was delivered for an unheld tenant' >&2; exit 1; }
+  audit_unchanged
+  ;;
+ import-inert)
+  scenario import-inert "$state"
+  ;;
+ staff-access)
+  scenario staff-access "$state"
+  ;;
+ deadline-admit)
+  # Consumer B's installation is admitted under a six-minute deadline with
+  # the lab boot hook armed: the boot service stays Ready, so kro creates
+  # the worker, and withholds every boot, so the installer never runs and
+  # the worker waits for its receipt until the deadline. Only this admission
+  # uses the short deadline. A failure here restores the default
+  # coordinator and clears the hook, so a rerun starts clean.
+  trap 'bash hack/multiplane/coordinator.sh restart "$state" >/dev/null; site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold clear' ERR
+  site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold arm
+  bash hack/multiplane/coordinator.sh restart "$state" --installation-deadline=6m >/dev/null
+  "$host" admit-install-b --config "$state/acceptance.json" >/dev/null
+  bash hack/multiplane/coordinator.sh restart "$state" >/dev/null
+  trap 'site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold clear' ERR
+  scenario wait-installer "$state" "$installer_step"
+  trap - ERR
+  printf 'deadline-admit: the second installation was admitted under a six-minute deadline and journaled its installer boot with the lab boot hook withholding it\n'
+  ;;
+ machine-delete)
+  # The customer deletes Machine B mid-install. One release pass begins the
+  # release, which must wait for the installation.
+  k "$state/consumer-b/customer-project.json" -n default delete machine allocation --wait=false >/dev/null
+  "$host" release-b --config "$state/acceptance.json" --once >/dev/null 2>&1 || true
+  scenario release-waits "$state"
+  ;;
+ deadline-hold)
+  trap 'site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold clear' ERR
+  scenario deadline-hold "$state"
+  # A staff recovery naming the wrong hold is refused before anything is
+  # delivered or sent.
+  before=$(journal_digest)
+  audit_mark
+  "$host" recovery-mismatch --config "$state/acceptance.json"
+  [[ $before == "$(journal_digest)" ]] || { echo 'site store changed for a refused recovery' >&2; exit 1; }
+  audit_unchanged
+  # The hook withheld the installation's boot: it counted at least one
+  # denial since it was armed.
+  denied=$(site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold denied)
+  [[ $denied =~ ^[0-9]+$ ]] && (( denied > 0 )) || { echo "the lab boot hook denied no boot request: ${denied:-none}" >&2; exit 1; }
+  # The release's wipe boots normally.
+  trap - ERR
+  site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold clear
+  printf 'deadline-hold: the lab boot hook denied %s boot requests\n' "$denied"
+  ;;
+ deadline-settled)
+  scenario deadline-settled "$state"
+  ;;
+ rebuild)
+  # Custody of the free Device is deleted while the site cannot report its
+  # fence: the observer answers fence reports, and the hub accepts none
+  # older than a minute.
+  scenario rebuild-before "$state"
+  # A failure hands the observer back to Flux, so a rerun starts clean.
+  trap 'site_restore fleet-site-observer' ERR
+  site_stop fleet-site-observer
+  sleep 75
+  bootstrap="$state/provider/bootstrap-project.json"
+  k "$bootstrap" -n fleet-provider delete devicecustody synthetic-device-central-01 --wait=false >/dev/null
+  k "$bootstrap" -n fleet-provider patch devicecustody synthetic-device-central-01 --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null
+  scenario rebuild-unverified "$state"
+  # A new consumer-a Machine finds no eligible capacity while custody is
+  # Unverified.
+  customer="$state/consumer-a/customer-project.json"
+  k "$customer" -n default delete machine allocation --wait --timeout=60s >/dev/null
+  k "$customer" -n default create -f - >/dev/null <<'JSON'
+{"apiVersion":"metal.datumapis.com/v1alpha1","kind":"Machine","metadata":{"name":"allocation","namespace":"default"},"spec":{"machineClassRef":{"name":"local-class"},"machineProfileRef":{"name":"local-profile"},"locationRef":{"name":"local"},"powerState":"Off"}}
+JSON
+  "$host" probe-unallocatable --config "$state/acceptance.json" --once
+  trap - ERR
+  site_restore fleet-site-observer
+  scenario rebuild-verified "$state"
   ;;
  await-delivery)
   for _ in $(seq 1 120); do
@@ -225,6 +345,7 @@ case "$step" in
   # duplicate the API refuses, an assignment naming another cell, and a
   # replay of an admitted operation below the Device's stored fence.
   before=$(journal_digest)
+  audit_mark
   py delivery-faults "$state" create
   for fault in wrong-cell stale-fence; do
    job=$(cat "$state/fault-$fault-job")
@@ -233,13 +354,20 @@ case "$step" in
   done
   after=$(journal_digest)
   [[ $before == "$after" ]] || { echo 'site store changed during delivery faults' >&2; exit 1; }
+  audit_unchanged
   py delivery-faults "$state" verify
   py delivery-faults "$state" delete
   printf 'delivery-faults: duplicate refused by the API; wrong-cell and stale-fence deliveries failed their Jobs by podFailurePolicy before effects; site store unchanged; kro pruned them\n'
   ;;
- release-status-a|release-status-b)
+ release-status-b)
+  # The customer deleted Machine B; its release removed the finalizer last.
+  r=$(k "$state/consumer-b/management-project.json" -n default get machine allocation 2>&1 || true)
+  [[ $r == *NotFound* ]] || { echo "deleted consumer-b Machine remains: $r" >&2; exit 1; }
+  printf 'release-status-b: consumer-b Machine deleted after its release finished\n'
+  ;;
+ release-status-a)
   # Released claims must not keep public readiness or an installation reference.
-  project=consumer-a; [[ $step == release-status-a ]] || project=consumer-b
+  project=consumer-a
   v=$(k "$state/$project/management-project.json" -n default get machine allocation -o jsonpath='{.status.phase}/{.status.conditions[?(@.type=="Bound")].status}/{.status.conditions[?(@.type=="Ready")].status}/{.status.currentInstallationRef.name}/{.metadata.finalizers}')
   [[ $v == Released/False/False// ]] || { echo "released $project Machine phase/Bound/Ready/currentInstallationRef/finalizers: $v" >&2; exit 1; }
   if [[ $step == release-status-a ]]; then

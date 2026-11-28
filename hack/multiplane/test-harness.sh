@@ -7,6 +7,7 @@ for f in "$root"/hack/multiplane/*.sh; do bash -n "$f"; done
 python3 -m py_compile "$root"/hack/multiplane/*.py
 python3 "$root"/hack/multiplane/test-k8s-evidence.py "$root"
 python3 "$root"/hack/multiplane/test-redfish.py "$root"
+python3 "$root"/hack/multiplane/test-interrupt.py "$root"
 python3 -m py_compile "$root"/hack/redfish-lab/*.py
 exec python3 - "$root" <<'PY'
 import json, os, pathlib, re, stat, subprocess, sys, tempfile, time
@@ -68,7 +69,8 @@ with tempfile.TemporaryDirectory() as tmp:
         d = pathlib.Path(tempfile.mkdtemp(dir=tmp)); d.chmod(0o700); return d
 
     good_root = tmp / 'good'; (good_root / 'cmd/fleet-multiplane').mkdir(parents=True)
-    markers = ['seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse', 'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer']
+    markers = ['seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse', 'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer',
+               'admit-install-b', 'recovery-mismatch', 'probe-unallocatable', 'tenant-isolation']
     (good_root / 'cmd/fleet-multiplane/main.go').write_text(' '.join('"%s"' % m for m in markers) + ' multiplane.ErrLocationNotServed')
     bad_root = tmp / 'bad'; (bad_root / 'cmd/fleet-multiplane').mkdir(parents=True)
     (bad_root / 'cmd/fleet-multiplane/main.go').write_text(' '.join('"%s"' % m for m in markers))
@@ -159,9 +161,11 @@ with tempfile.TemporaryDirectory() as tmp:
         check('scan detects ' + secret[0], run(['scan', '--state', str(s)]).returncode == 1)
         check('scan redacts ' + secret[0], secret not in (s / 'evidence/leak.json').read_text())
 
-    # Result: status mapping and retained owned containers.
+    # Result: status mapping and retained owned containers. Exit 0 is passed
+    # only with the completion marker run.sh writes last.
     s = state(); (s / 'prefix').write_text('fleet-mp-0000aaaa\n')
-    for code, status in ((0, 'passed'), (1, 'failed'), (2, 'preflight-failed'), (3, 'blocked'), (4, 'timeout')):
+    (s / 'completed').write_text('')
+    for code, status in ((0, 'passed'), (1, 'failed'), (2, 'preflight-failed'), (3, 'blocked'), (4, 'timeout'), (143, 'interrupted'), (130, 'interrupted')):
         run(['result', '--state', str(s), '--exit-code', str(code)])
         res = json.loads((s / 'evidence/result.json').read_text())
         check('result ' + status, res['status'] == status and res['productionAuthority'] is False)
@@ -176,6 +180,9 @@ with tempfile.TemporaryDirectory() as tmp:
     (s / 'evidence/summary.json').write_text('{"acceptance":"failed"}')
     r = subprocess.run(['bash', str(root / 'hack/multiplane/teardown.sh'), str(s)], text=True, capture_output=True, env=base)
     check('teardown refuses failed summary', r.returncode == 1)
+    (s / 'evidence/summary.json').write_text('{"acceptance":"passed"}')
+    r = subprocess.run(['bash', str(root / 'hack/multiplane/teardown.sh'), str(s)], text=True, capture_output=True, env=base)
+    check('teardown refuses a summary that claims the run passed', r.returncode == 1)
     check('teardown refusal is effect-free', trace.read_text() == '')
     (s / 'prefix').write_text('other-prefix\n')
     r = subprocess.run(['bash', str(root / 'hack/multiplane/teardown.sh'), str(s), '--discard-unknown'], text=True, capture_output=True, env=base)
@@ -189,10 +196,11 @@ with tempfile.TemporaryDirectory() as tmp:
     for name, text in (('steps', steps), ('evidence', evidence), ('harness', harness.read_text())):
         check('no docker process launch in site execution: ' + name, '-vm' not in text and 'cell.pid' not in text)
     sequence = (root / 'hack/multiplane/acceptance.sh').read_text()
-    order = ['custody-crd-rules', 'allocate', 'verify-contention', 'admit-install', 'await-delivery', 'partition', 'dispatch', 'interrupt-pod', 'interrupt-job', 'resume',
+    order = ['custody-crd-rules', 'import-inert', 'staff-access', 'allocate', 'verify-contention', 'tenant-isolation', 'admit-install', 'await-delivery', 'partition', 'dispatch', 'interrupt-pod', 'interrupt-job', 'resume',
              'worker-rbac', 'partition-readiness', 'heal', 'install', 'install-repeat', 'lifecycle', 'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention',
              'reflection-faults', 'release', 'release-status-a',
-             'reuse', 'reuse-status', 'delivery-faults', 'release-b', 'release-status-b', 'wrong-location', 'boot-denials', 'flux-final', 'evidence']
+             'reuse', 'reuse-status', 'delivery-faults', 'deadline-admit', 'machine-delete', 'deadline-hold', 'release-b', 'deadline-settled', 'release-status-b',
+             'rebuild', 'wrong-location', 'boot-denials', 'flux-final', 'evidence']
     positions = [sequence.find(' ' + name + ' ') for name in order]
     check('acceptance phase order', all(p >= 0 for p in positions) and positions == sorted(positions), str(list(zip(order, positions))))
     for name in order:

@@ -76,6 +76,14 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual(self.app.get('/redfish/v1/Systems/System-1', headers=AUTH).json['PowerState'], 'Off')
         self.assertEqual(self.app.post('/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset', headers=AUTH, json={'ResetType': 'Nmi'}).status_code, 400)
 
+    def test_4b_audit_names_each_client(self):
+        self.app.get('/redfish/v1/Systems', headers=dict(AUTH, **{'User-Agent': 'fleet-redfish-probe/0123abcd'}))
+        self.app.get('/redfish/v1/Systems', headers=dict(AUTH, **{'User-Agent': 'another\treader'}))
+        self.assertEqual([e['client'] for e in self.audit()[-2:]], ['fleet-redfish-probe/0123abcd', 'anotherreader'])
+        # The HTTP stack refuses a newline in a header before the adapter sees
+        # it; the audit form also drops other control characters and caps it.
+        self.assertEqual(adapter.client('a\r\nb\x7fc' + 'z' * 200), ('abc' + 'z' * 200)[:128])
+
     def test_5_faults_are_bounded_and_audited(self):
         adapter.fault_cli(['reject-auth', '1'])
         self.assertEqual(self.app.get('/redfish/v1/Systems', headers=AUTH).status_code, 401)

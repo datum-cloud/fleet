@@ -106,6 +106,26 @@ func newClient(endpoint, user, password string, timeout time.Duration, tlsConfig
 	}}, nil
 }
 
+// SetUserAgent makes every request this client sends carry userAgent, so a
+// lab BMC's audit can tell its requests from another reader's. Without it the
+// client sends gofish's default. It must be called before the first request.
+func (c *Client) SetUserAgent(userAgent string) error {
+	if userAgent == "" || len(userAgent) > 128 || strings.ContainsFunc(userAgent, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
+		return errors.New("redfish: a user agent must be 1 to 128 printable ASCII characters")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.api != nil {
+		return errors.New("redfish: the user agent must be set before the first request")
+	}
+	httpClient := *c.config.HTTPClient
+	g := httpClient.Transport.(guard)
+	g.userAgent = userAgent
+	httpClient.Transport = g
+	c.config.HTTPClient = &httpClient
+	return nil
+}
+
 func cleanPath(p string) (string, error) {
 	if (p != "/redfish/v1" && !strings.HasPrefix(p, "/redfish/v1/")) || strings.Contains(p, "..") || strings.ContainsAny(p, "?#\\ ") {
 		return "", fmt.Errorf("%w: unexpected resource path", ErrIdentity)
@@ -118,6 +138,7 @@ func cleanPath(p string) (string, error) {
 // mutation cannot carry a query.
 type guard struct {
 	scheme, host string
+	userAgent    string
 	next         http.RoundTripper
 }
 
@@ -131,6 +152,9 @@ func (g guard) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	r = r.Clone(r.Context())
 	r.Header.Set("OData-Version", "4.0")
+	if g.userAgent != "" {
+		r.Header.Set("User-Agent", g.userAgent)
+	}
 	resp, err := g.next.RoundTrip(r)
 	if err != nil {
 		return nil, err

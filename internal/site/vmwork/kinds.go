@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -246,10 +247,11 @@ func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 			return nil, err
 		}
 		// A failed network boot closes its admission at once, so the boot
-		// server stops serving the installer. A worker stopped from outside
-		// leaves it open for its replacement to resume.
+		// server stops serving the installer, and so does a worker stopped at
+		// its deadline, which nothing can resume. A worker stopped from
+		// outside leaves it open for its replacement to resume.
 		fail := func(err error) error {
-			if stage == "installer" && k.PXE && boot.Open && ctx.Err() == nil {
+			if stage == "installer" && k.PXE && boot.Open && (ctx.Err() == nil || site.DeadlinePassed(ctx)) {
 				boot.Open, boot.Closed = false, true
 				_ = k.save(work, boot)
 			}
@@ -427,6 +429,41 @@ func (k Wipe) Run(ctx context.Context, work *site.Work) (any, error) {
 	spec, refusal := Installation(k).wipeSpec(work)
 	if refusal != nil {
 		return nil, refusal
+	}
+	// Power the guest off first, as a Redfish wipe does: an installation
+	// stopped at its deadline can leave it running. The local VM serves one
+	// guest, so every local domain is the Device's, and the fence and run
+	// lock already stopped every older worker. Sending it again is safe.
+	running := func(ctx context.Context) ([]string, error) {
+		names, err := k.virsh(ctx, "list", "--name")
+		var local []string
+		for _, name := range strings.Fields(names) {
+			if strings.HasPrefix(name, "fleet-local-") {
+				local = append(local, name)
+			}
+		}
+		return local, err
+	}
+	if err := work.Step(ctx, site.Step{
+		Name: "wipe-power-off",
+		Send: func(ctx context.Context) error {
+			names, err := running(ctx)
+			if err != nil {
+				return err
+			}
+			for _, name := range names {
+				if _, err := k.virsh(ctx, "destroy", name); err != nil {
+					// A guest that exited after the list is already off.
+					if still, lerr := running(ctx); lerr != nil || slices.Contains(still, name) {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+		Idempotent: true,
+	}); err != nil {
+		return nil, err
 	}
 	root := filepath.Join(k.Disks, deviceKey(work.Device))
 	remaining := func() ([]string, error) {

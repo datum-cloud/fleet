@@ -32,7 +32,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: fleet-multiplane coordinator|site-worker|site-observer|image|boot-service|boot-denials|dhcp-feed|redfish-probe|<management phase> [flags]")
+		return fmt.Errorf("usage: fleet-multiplane coordinator|site-worker|site-observer|image|boot-service|boot-withhold|boot-denials|dhcp-feed|redfish-probe|<management phase> [flags]")
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 	once := fs.Bool("once", false, "one attempt, for fault injection")
@@ -48,7 +48,9 @@ func run() error {
 	system := fs.String("system", "", "enrolled Redfish System Id (redfish-probe)")
 	uuid := fs.String("uuid", "", "enrolled Redfish System UUID (redfish-probe)")
 	pin := fs.String("pin", "", "the BMC's approved key digest; the probe connects only to that key (redfish-probe)")
+	clientID := fs.String("client-id", "", "identity the probe's requests carry as their User-Agent, so the lab BMC audit can tell them apart (redfish-probe)")
 	syncToken := fs.String("sync-token-file", "", "file holding the DHCP synchronizer bearer token (dhcp-feed)")
+	installationDeadline := fs.Duration("installation-deadline", 0, "replace the installation deadline for operations this coordinator admits (coordinator)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
@@ -61,13 +63,13 @@ func run() error {
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
 		fmt.Println("coordinator: custody coordinator running")
-		return multiplane.Coordinate(ctx, config, func(err error) {
+		return multiplane.Coordinate(ctx, config, *installationDeadline, func(err error) {
 			fmt.Fprintf(os.Stderr, "%s coordinator: pass incomplete: %v\n", time.Now().UTC().Format(time.RFC3339), err)
 		})
-	case "seed", "allocate", "install", "install-b", "admit-install", "release", "release-b", "reuse":
+	case "seed", "allocate", "install", "admit-install", "admit-install-b", "release", "release-b", "reuse", "recovery-mismatch", "probe-unallocatable", "tenant-isolation":
 		return phase(os.Args[1], *configPath, *once)
 	case "redfish-probe":
-		return probe(*endpoint, *credentials, *system, *uuid, *pin)
+		return probe(*endpoint, *credentials, *system, *uuid, *pin, *clientID)
 	case "image":
 		image, err := siteImage()
 		if err != nil {
@@ -77,6 +79,8 @@ func run() error {
 		return nil
 	case "boot-service", "boot-denials", "dhcp-feed":
 		return boot(os.Args[1], *origin, *extraMAC, *syncToken)
+	case "boot-withhold":
+		return armWithhold(fs.Arg(0))
 	case "site-worker", "site-observer":
 	default:
 		return fmt.Errorf("unknown command")
@@ -142,8 +146,9 @@ func phase(name, configPath string, once bool) error {
 		return err
 	}
 	action := map[string]func(context.Context) error{
-		"allocate": r.Allocate, "admit-install": r.AdmitInstall, "install": r.Install, "install-b": r.InstallSecond,
+		"allocate": r.Allocate, "admit-install": r.AdmitInstall, "install": r.Install,
 		"release": r.Release, "release-b": r.ReleaseSecond, "reuse": r.Reuse,
+		"admit-install-b": r.AdmitInstallSecond, "recovery-mismatch": r.RecoveryMismatch, "probe-unallocatable": r.ProbeUnallocatable, "tenant-isolation": r.TenantIsolation,
 	}[name]
 	last := ""
 	for {
@@ -154,8 +159,11 @@ func phase(name, configPath string, once bool) error {
 			last = err.Error()
 			fmt.Printf("%s: waiting: %v\n", name, err)
 		}
-		if name == "admit-install" && errors.Is(err, multiplane.ErrAdmittedUnknown) {
+		if strings.HasPrefix(name, "admit-install") && errors.Is(err, multiplane.ErrAdmittedUnknown) {
 			fmt.Println("Installation admitted and delivered; its result remains Unknown")
+			return nil
+		}
+		if err == nil && (name == "recovery-mismatch" || name == "probe-unallocatable" || name == "tenant-isolation") {
 			return nil
 		}
 		if err == nil {
@@ -180,8 +188,9 @@ func redfishMode() bool { return os.Getenv("FLEET_SITE_PROVIDER") == "redfish" }
 
 // probe performs read-only Redfish discovery of one enrolled System and
 // prints only an outcome class. Exit codes: 0 discovered, 10 credential
-// rejected, 11 capability unsupported, 12 identity mismatch.
-func probe(endpoint, credentials, system, uuid, pin string) error {
+// rejected, 11 capability unsupported, 12 identity mismatch, 13 TLS key
+// other than the pin.
+func probe(endpoint, credentials, system, uuid, pin, clientID string) error {
 	user, err1 := os.ReadFile(credentials + "/username")
 	password, err2 := os.ReadFile(credentials + "/password")
 	if credentials == "" || err1 != nil || err2 != nil {
@@ -190,6 +199,11 @@ func probe(endpoint, credentials, system, uuid, pin string) error {
 	c, err := redfish.NewPinnedClient(endpoint, strings.TrimSpace(string(user)), strings.TrimSpace(string(password)), pin, 20*time.Second)
 	if err != nil {
 		return err
+	}
+	if clientID != "" {
+		if err := c.SetUserAgent("fleet-redfish-probe/" + clientID); err != nil {
+			return err
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -204,6 +218,9 @@ func probe(endpoint, credentials, system, uuid, pin string) error {
 	case errors.Is(err, redfish.ErrUnsupported):
 		fmt.Println("redfish-probe: required capability not advertised; no effect issued")
 		os.Exit(11)
+	case errors.Is(err, redfish.ErrPinMismatch):
+		fmt.Println("redfish-probe: the BMC's TLS key does not match the pin; no request sent")
+		os.Exit(13)
 	case errors.Is(err, redfish.ErrIdentity):
 		fmt.Println("redfish-probe: enrolled identity not matched exactly; no effect issued")
 		os.Exit(12)

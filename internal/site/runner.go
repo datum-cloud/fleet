@@ -432,6 +432,10 @@ func (r *Runner) Run(ctx context.Context, assignment Assignment) (custody.SiteRe
 
 var errDeadline = errors.New("the operation's deadline passed")
 
+// DeadlinePassed reports whether ctx ended because the operation's deadline
+// passed. No replacement worker can resume such an operation.
+func DeadlinePassed(ctx context.Context) bool { return errors.Is(context.Cause(ctx), errDeadline) }
+
 func outcomeReason(ctx context.Context, err error) string {
 	switch cause := context.Cause(ctx); {
 	case errors.Is(err, errSuperseded) || errors.Is(cause, errSuperseded):

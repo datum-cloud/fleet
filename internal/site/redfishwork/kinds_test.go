@@ -53,6 +53,8 @@ type lab struct {
 	bootRoot  string
 	store     *site.Store
 	operation string
+	// silent keeps the server running with no console receipt.
+	silent bool
 }
 
 func newLab(t *testing.T) *lab {
@@ -130,6 +132,9 @@ func (l *lab) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // boot runs the armed boot, as the server and the boot server would.
 func (l *lab) boot(target string) {
 	time.Sleep(30 * time.Millisecond)
+	if l.silent {
+		return
+	}
 	var boot Boot
 	if _, err := l.store.GetRecord(device, "boot", l.operation, &boot); err != nil {
 		l.t.Error(err)
@@ -289,6 +294,25 @@ func TestAnInterruptedWorkerResumesWithoutASecondOn(t *testing.T) {
 	}
 	if second.Phase != ops.PhaseSucceeded || l.onCount() != 2 {
 		t.Fatalf("resumed result = %+v, %d power-ons, want one per phase", second, l.onCount())
+	}
+}
+
+func TestAWorkerStoppedAtItsDeadlineClosesItsAdmission(t *testing.T) {
+	l := newLab(t)
+	l.silent = true
+	r := runner(t, l)
+	a := assignment(l, "DeviceInstallation", "00000000-0000-4000-8000-000000000301", 2, installSpec())
+	a.Deadline = time.Now().Add(2 * time.Second)
+	result, err := r.Run(context.Background(), a)
+	if err != nil || result.Phase != ops.PhaseOutcomeUnknown || result.Reason != site.ReasonDeadline {
+		t.Fatalf("install past its deadline = %+v, %v", result, err)
+	}
+	var boot Boot
+	if found, err := r.Store.GetRecord(device, bootRecords, a.Key(), &boot); err != nil || !found || !boot.Closed || boot.Phase != "" {
+		t.Fatalf("admission after the deadline = %+v, %v, %v", boot, found, err)
+	}
+	if _, open, _ := OpenAdmission(r.Store, mac, time.Now()); open {
+		t.Fatal("a worker stopped at its deadline left its admission open")
 	}
 }
 

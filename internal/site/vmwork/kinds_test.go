@@ -3,6 +3,7 @@ package vmwork
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,6 +36,10 @@ type hypervisor struct {
 	hold bool
 	// noReceipt makes the guest print no receipt.
 	noReceipt bool
+	// stuck makes destroy leave the domain running.
+	stuck bool
+	// exited makes destroy fail because the guest exited first.
+	exited bool
 }
 
 var receiptArg = regexp.MustCompile(`fleet.receipt=([0-9a-f]{64})`)
@@ -73,6 +78,14 @@ func (h *hypervisor) run(_ context.Context, _ string, args ...string) (string, e
 		h.running[name] = log
 		if !h.hold {
 			delete(h.running, name)
+		}
+	case "destroy":
+		if h.exited {
+			delete(h.running, args[1])
+			return "", errors.New("error: domain is not running")
+		}
+		if !h.stuck {
+			delete(h.running, args[1])
 		}
 	case "list":
 		var names []string
@@ -164,14 +177,38 @@ func TestInstallThenWipe(t *testing.T) {
 	}
 }
 
-// TestAWipeWithARunningDomainIsNotProven keeps a disk in use from counting
-// as wiped.
-func TestAWipeWithARunningDomainIsNotProven(t *testing.T) {
+// TestAWipePowersOffARunningDomain powers off a guest an earlier worker left
+// running, then wipes.
+func TestAWipePowersOffARunningDomain(t *testing.T) {
 	r := newRig(t)
 	r.vm.running["fleet-local-0000000000000000"] = "console"
+	result, err := r.runner.Run(context.Background(), r.assignment("DeviceWipe", "00000000-0000-4000-8000-000000000208", 2, wipeSpec()))
+	if err != nil || result.Phase != ops.PhaseSucceeded || len(r.vm.running) != 0 {
+		t.Fatalf("wipe with a running domain = %+v, %v, running %v", result, err, r.vm.running)
+	}
+}
+
+// TestAWipeToleratesAGuestThatExitsBeforeItsDestroy treats a guest that
+// stopped between the list and the destroy as powered off.
+func TestAWipeToleratesAGuestThatExitsBeforeItsDestroy(t *testing.T) {
+	r := newRig(t)
+	r.vm.running["fleet-local-0000000000000000"] = "console"
+	r.vm.exited = true
+	result, err := r.runner.Run(context.Background(), r.assignment("DeviceWipe", "00000000-0000-4000-8000-000000000209", 2, wipeSpec()))
+	if err != nil || result.Phase != ops.PhaseSucceeded {
+		t.Fatalf("wipe after the guest exited = %+v, %v", result, err)
+	}
+}
+
+// TestAWipeWithADomainThatKeepsRunningIsNotProven keeps a disk in use from
+// counting as wiped.
+func TestAWipeWithADomainThatKeepsRunningIsNotProven(t *testing.T) {
+	r := newRig(t)
+	r.vm.running["fleet-local-0000000000000000"] = "console"
+	r.vm.stuck = true
 	result, err := r.runner.Run(context.Background(), r.assignment("DeviceWipe", "00000000-0000-4000-8000-000000000203", 2, wipeSpec()))
 	if err != nil || result.Phase == ops.PhaseSucceeded {
-		t.Fatalf("wipe with a running domain = %+v, %v", result, err)
+		t.Fatalf("wipe with a domain that keeps running = %+v, %v", result, err)
 	}
 }
 
@@ -256,6 +293,27 @@ func TestTheBootServerServesOnlyAnOpenAdmissionAtTheStoredFence(t *testing.T) {
 	}
 	if code := get(script); code != http.StatusForbidden {
 		t.Fatalf("superseded admission = %d", code)
+	}
+}
+
+// TestAWorkerStoppedAtItsDeadlineClosesItsAdmission stops serving the
+// installer once nothing can resume the installation.
+func TestAWorkerStoppedAtItsDeadlineClosesItsAdmission(t *testing.T) {
+	r := newRig(t)
+	r.config.PXE = true
+	r.runner.Kinds["DeviceInstallation"] = Installation{r.config}
+	// The guest keeps running and never prints a receipt, so the worker is
+	// still waiting when the deadline passes.
+	r.vm.hold, r.vm.noReceipt = true, true
+	assignment := r.assignment("DeviceInstallation", "00000000-0000-4000-8000-000000000207", 2, installSpec())
+	assignment.Deadline = time.Now().Add(time.Second)
+	result, err := r.runner.Run(context.Background(), assignment)
+	if err != nil || result.Phase != ops.PhaseOutcomeUnknown || result.Reason != site.ReasonDeadline {
+		t.Fatalf("install past its deadline = %+v, %v", result, err)
+	}
+	var boot Boot
+	if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Key()), &boot); err != nil || !found || boot.Open || !boot.Closed {
+		t.Fatalf("admission after the deadline = %+v, %v, %v", boot, found, err)
 	}
 }
 
