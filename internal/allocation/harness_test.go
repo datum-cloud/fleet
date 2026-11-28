@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"go.datum.net/fleet/internal/capacity"
+
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,6 +57,8 @@ type env struct {
 	enrollment fixture.Enrollment
 	class      *fleetv1.MachineClass
 	profile    *fleetv1.MachineProfile
+	projector  *capacity.Projector
+	plan       *ops.DeviceCommissioningPlan
 }
 
 func scheme(t *testing.T) *runtime.Scheme {
@@ -102,7 +106,7 @@ func startEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	runner := &site.Runner{Site: siteName, Store: e.store, Results: site.NewResults(e.store), Access: fixture.Access{Enrollment: e.enrollment},
-		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}}, Poll: 20 * time.Millisecond}
+		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}, "DeviceCommissioning": simwork.Commissioning{}}, Poll: 20 * time.Millisecond}
 	dispatcher := &siteapi.Dispatcher{Runner: runner, Context: ctx}
 	server := httptest.NewServer(siteapi.Handler(dispatcher, e.store, runner.Results, func() (string, error) { return siteToken, nil }))
 	t.Cleanup(func() { cancel(); server.Close(); dispatcher.Wait() })
@@ -118,15 +122,35 @@ func startEnv(t *testing.T) *env {
 	coordinator := &custody.Coordinator{Client: admin, Registry: registry, Sites: sites, Config: custody.Config{Namespace: namespace, Principals: custody.Principals{
 		custody.CreatorMetalProvider: {{Username: providerUser}}, custody.CreatorReleaseController: {{Username: releaseUser}},
 	}}}
-	e.loop = &delivery.Loop{Client: admin, Coordinator: coordinator, Namespace: namespace,
+	e.projector = &capacity.Projector{Reader: admin, Writer: admin, Namespace: namespace, Cleaning: capacity.Fixed(map[string]string{"example-cleaning": policyDigest})}
+	e.loop = &delivery.Loop{Client: admin, Coordinator: coordinator, Namespace: namespace, Capacity: e.projector,
 		Courier: &delivery.Courier{Client: admin, Registry: registry, Coordinator: coordinator, Sites: sites, Namespace: namespace}}
 	e.allocator = &Allocator{
 		Provider: admin, ProviderCreator: ops.Creator{Username: providerUser, UID: uid(801)},
 		Releaser: admin, ReleaseCreator: ops.Creator{Username: releaseUser, UID: uid(802)},
 		Custody: coordinator, Namespace: namespace,
 		Cleaning:      func(string) (string, error) { return policyDigest, nil },
+		Capacity:      e.projector,
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
 	}
+	// One qualified plan covers every fixture server: one person writes it
+	// and another approves it.
+	e.plan = &ops.DeviceCommissioningPlan{ObjectMeta: metav1.ObjectMeta{Name: "example-plan", Namespace: namespace}, Spec: ops.DeviceCommissioningPlanSpec{
+		Creator:        ops.Creator{Username: "plan-author@example.com", UID: uid(803)},
+		DeviceSelector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/hardware-model": "example"}},
+		Content: ops.CommissioningPlanContent{
+			Inspection: ops.CommissioningInspection{CPU: ops.InspectionCPU{Architecture: "amd64", Cores: 2}, Memory: ops.InspectionValue{Capacity: "2Gi"},
+				Disks: ops.InspectionDisks{Count: 1, MinCapacity: "2Gi"}, Interfaces: ops.InspectionCount{Count: 1}},
+			BurnIn: ops.CommissioningBurnIn{Image: ops.ImageInput{Name: "burn-in", Digest: policyDigest}, Duration: metav1.Duration{Duration: time.Minute}},
+		},
+		EvidenceLifetime: metav1.Duration{Duration: 24 * time.Hour},
+	}}
+	e.create(e.plan)
+	approval, err := custody.NewApproval(e.plan, ops.Creator{Username: "plan-approver@example.com", UID: uid(804)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.create(approval)
 	e.class = &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "class-example"}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: "profile-example"}}}, Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: namespace, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "example"}}}}}}
 	e.create(e.class)
 	e.profile = &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "profile-example"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: 2}, Memory: fleetv1.MemoryRequirement{Capacity: "2Gi"}}}
@@ -147,7 +171,7 @@ func (e *env) server(n int) *inventory.Device {
 	e.t.Helper()
 	name := fmt.Sprintf("server-example-%03d", n)
 	mac := fmt.Sprintf("02:00:00:00:00:%02x", n)
-	device := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}, Spec: inventory.DeviceSpec{
+	device := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: map[string]string{"fleet.datumapis.com/hardware-model": "example"}}, Spec: inventory.DeviceSpec{
 		ClaimRef:   inventory.LocalReference{Name: "claim-" + name},
 		Identity:   inventory.DeviceIdentity{Model: "example", Serial: "serial-" + name, SystemUUID: uid(100 + n)},
 		BMC:        &inventory.BMC{Endpoint: fmt.Sprintf("https://[2001:db8::%x]", n)},
@@ -155,18 +179,12 @@ func (e *env) server(n int) *inventory.Device {
 	}}
 	e.create(device)
 	key := fmt.Sprintf("%064x", n)
-	e.enrollment[namespace+"/"+name] = fixture.Target{BMCEndpoint: device.Spec.BMC.Endpoint, SystemUUID: uid(100 + n), BootMACAddress: mac, BMCPublicKeySHA256: key, Disks: []string{"disk-0"}}
+	e.enrollment[namespace+"/"+name] = fixture.Target{BMCEndpoint: device.Spec.BMC.Endpoint, SystemUUID: uid(100 + n), BootMACAddress: mac, BMCPublicKeySHA256: key, Disks: []string{"disk-0"},
+		Hardware: &ops.InspectedHardware{CPU: ops.InspectedCPU{Architecture: "amd64", Cores: 2}, Memory: "2Gi", Disks: []ops.InspectedDisk{{Name: "disk-0", Capacity: "2Gi"}}, Interfaces: []ops.InspectedInterface{{Name: "primary", MACAddress: mac}}}}
 	e.loop.Courier.Sites.Devices[name] = []string{siteName}
 	capacity := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: "capacity-" + name, Namespace: namespace, Labels: map[string]string{"pool": "example"}},
 		Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: name}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "example-cleaning"}, ReclaimPolicy: "Retain"}}
 	e.create(capacity)
-	capacity.Status.Hardware = fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 2}, Memory: fleetv1.HardwareMemory{Capacity: "2Gi"}}
-	for _, kind := range []string{"Prepared", "Healthy", "Available"} {
-		capacity.Status.Conditions = append(capacity.Status.Conditions, metav1.Condition{Type: kind, Status: metav1.ConditionTrue, Reason: "Fixture", ObservedGeneration: capacity.Generation, LastTransitionTime: metav1.Now()})
-	}
-	if err := e.admin.Status().Update(e.ctx, capacity); err != nil {
-		e.t.Fatal(err)
-	}
 	if err := fixture.Discover(e.ctx, e.admin, fixture.Enrollment{namespace + "/" + name: e.enrollment[namespace+"/"+name]}, time.Now()); err != nil {
 		e.t.Fatal(err)
 	}
@@ -174,7 +192,26 @@ func (e *env) server(n int) *inventory.Device {
 		state := e.custody(name)
 		return state != nil && state.Spec.State == ops.CustodyVerified
 	})
+	e.commission(device, capacity)
 	return device
+}
+
+// commission commissions the server under the fixture plan and waits until
+// the projector offers its capacity.
+func (e *env) commission(device *inventory.Device, capacity *fleetv1.MachineCapacity) {
+	e.t.Helper()
+	if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(device), device); err != nil {
+		e.t.Fatal(err)
+	}
+	operation, err := custody.NewCommissioning(device, e.plan, ops.Creator{Username: "operator@example.com", UID: uid(805)}, "fixture intake")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.create(operation)
+	e.until("the capacity is offered", func() bool {
+		offered, _, err := e.projector.Offer(e.ctx, capacity)
+		return err == nil && offered
+	})
 }
 
 // until runs coordinator passes until done holds.

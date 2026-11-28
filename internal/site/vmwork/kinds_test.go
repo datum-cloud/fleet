@@ -40,6 +40,8 @@ type hypervisor struct {
 	stuck bool
 	// exited makes destroy fail because the guest exited first.
 	exited bool
+	// burnInFails makes a burn-in guest report a failure.
+	burnInFails bool
 }
 
 var receiptArg = regexp.MustCompile(`fleet.receipt=([0-9a-f]{64})`)
@@ -59,7 +61,13 @@ func (h *hypervisor) run(_ context.Context, _ string, args ...string) (string, e
 		log := regexp.MustCompile(`<serial type='file'><source path='([^']+)'/>`).FindStringSubmatch(xml)[1]
 		marker := "FLEET-DISK-BOOT:"
 		receipt := ""
-		if match := receiptArg.FindStringSubmatch(xml); match != nil {
+		if match := receiptArg.FindStringSubmatch(xml); match != nil && strings.Contains(xml, "fleet.mode=burnin") {
+			result := "passed"
+			if h.burnInFails {
+				result = "failed"
+			}
+			marker, receipt = "FLEET-BURNIN:", match[1]+":"+result
+		} else if match != nil {
 			marker, receipt = "FLEET-INSTALLED:", match[1]
 		} else {
 			// The disk boot prints the receipt the installer wrote.

@@ -10,7 +10,6 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -28,8 +27,8 @@ func TestImportedDeviceGetsUnverifiedCustodyAndSendsNothing(t *testing.T) {
 	if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-example"); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("Unverified custody was claimed: %v", err)
 	}
-	conditions := ProjectCapacity(CapacityInputs{Custody: &custody.Spec, AllocationPolicyEnabled: true, DiscoveryCurrent: true})
-	if conditions[2].Status != metav1.ConditionFalse {
+	projection := ProjectCapacity(CapacityInputs{Custody: &custody.Spec, AllocationPolicyEnabled: true, Discovery: DiscoveryInput{Current: true}, DeviceActive: true, Cleaning: CleaningResolved})
+	if projection.Available() {
 		t.Fatal("imported Device became Available")
 	}
 	// No configured site: nothing can fence the Device yet.

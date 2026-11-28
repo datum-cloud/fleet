@@ -138,11 +138,14 @@ following before the new manager runs:
    registering physical devices](../docs/operations/physical-inventory.md).
    Records GitOps already manages stay with it; import by hand only the ones it
    does not.
-3. Create two Milo identities that sign in with client certificates, bind one
-   to `fleet.datumapis.com-device-coordinator` and the other to
-   `fleet.datumapis.com-device-wipe-requester` in the provider project, and
+3. Create three Milo identities that sign in with client certificates, bind
+   one to `fleet.datumapis.com-device-coordinator`, one to
+   `fleet.datumapis.com-device-wipe-requester` and one to
+   `fleet.datumapis.com-capacity-projector` in the provider project, and
    issue each a client certificate with a cert-manager Certificate whose
-   Secret is the one below.
+   Secret is the one below. Bind each role on the provider project, not on
+   one namespace: evaluating capacity lists Devices in every namespace to
+   find a duplicate identity.
 4. Give the manager's own identity, the Metal provider, these roles in the
    provider project: `metal.datumapis.com-controller`, which now deletes an
    allocation that lost its Device before it held it;
@@ -254,6 +257,7 @@ manager runs under its leader lease together with fixture discovery:
 | --- | --- | --- |
 | Secret `fleet-system/fleet-custody-coordinator-client-cert`, keys `tls.crt` and `tls.key` | `--synthetic-coordinator-client-cert-dir` | The Milo client certificate of an identity with the `fleet.datumapis.com-device-coordinator` role in the provider project, as a cert-manager Certificate writes it. Supplied by the environment. |
 | Secret `fleet-system/fleet-release-controller-client-cert`, keys `tls.crt` and `tls.key` | `--synthetic-release-client-cert-dir` | The Milo client certificate of an identity with the `fleet.datumapis.com-device-wipe-requester` role in the provider project. Supplied by the environment. |
+| Secret `fleet-system/fleet-capacity-projector-client-cert`, keys `tls.crt` and `tls.key` | `--synthetic-projector-client-cert-dir` | The Milo client certificate of an identity with the `fleet.datumapis.com-capacity-projector` role in the provider project. Supplied by the environment. |
 | ConfigMap `fleet-system/fleet-synthetic-site-enrollment`, key `enrollment.json` | `--synthetic-site-enrollment-file` | The Devices the synthetic site serves, keyed `<namespace>/<name>`, each with its BMC endpoint, system UUID, boot MAC address, key digest and disks. The overlay ships a synthetic placeholder for `server-example-001`, and an environment replaces it with the Devices it imports. |
 | `--synthetic-device-namespace` | Default `default` | The namespace of the Devices, capacities and allocations in the provider project. Every enrolled Device must be in it. |
 

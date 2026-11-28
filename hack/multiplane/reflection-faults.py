@@ -16,6 +16,8 @@ ANSWERED='coordination.fleet.datumapis.com/answered'
 def k(config,*args,input=None):return subprocess.run(['kubectl','--kubeconfig',str(config),'--request-timeout=20s',*args],input=input,text=True,capture_output=True,check=True).stdout
 def handoff():return json.loads(k(hub,'-n','fleet-coordination','get','machineallocationhandoff',name,'-o','json'))
 items=json.loads(k(hub,'-n','fleet-coordination','get','machineallocationhandoffs','-l','coordination.fleet.datumapis.com/role=assignment','-o','json'))['items']
+# The commission phase's commissioning stays delivered; the faults target the install.
+items=[i for i in items if json.loads(i['spec']['assignmentJSON'])['operation']['kind']!='DeviceCommissioning']
 if len(items)!=1:raise SystemExit('run reflection faults after install and before the release wipe')
 obj=items[0];original=obj.get('status');name=obj['metadata']['name']
 if obj['metadata'].get('labels',{}).get(ANSWERED)!='true':raise SystemExit('the install result is not answered yet')

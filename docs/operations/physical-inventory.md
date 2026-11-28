@@ -195,7 +195,7 @@ or provider host ID in `serial` to avoid it.
 
 **What it prevents.** A Device without hardware identity cannot back a
 MachineCapacity. Nothing can match it to a chassis, so enrollment, wiping and
-allocation could reach the wrong machine. Two things enforce this today:
+allocation could reach the wrong machine. Three things enforce this today:
 
 - Admission rejects a `bmc` endpoint on a marked Device, so it has no
   management endpoint to enroll through.
@@ -205,12 +205,13 @@ allocation could reach the wrong machine. Two things enforce this today:
   for one with no identity at all. Any resolver of `deviceRef` must call it
   and treat a non-nil result as ineligible.
 
-Nothing resolves `deviceRef` yet: the allocator uses the name only to form the
-asset key and never reads the Device. Admission cannot check the reference
-either, because MachineCapacity is a separate API group and CEL cannot read
-other objects. Until a resolver exists, operators must not create a
-MachineCapacity whose `deviceRef` names a marked Device, just as they must not
-name a Device that does not exist.
+- The capacity projector and the allocator, the readers of `deviceRef`, both
+  call it. Capacity behind such a Device is never `Prepared`, so it is never
+  offered or allocated.
+
+Admission cannot check the reference, because MachineCapacity is a separate
+API group and CEL cannot read other objects, so such capacity can still be
+created. It stays ineligible; do not create it.
 
 A marked Device still binds to a DeviceClaim through `claimRef`. Do not bind it
 to a claim whose `expectedIdentity.serial` is set; that claim expects

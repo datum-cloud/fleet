@@ -166,6 +166,10 @@ type Boot struct {
 	Expires   time.Time `json:"expires"`
 	Open      bool      `json:"open,omitempty"`
 	Closed    bool      `json:"closed,omitempty"`
+	// Mode is the boot image's mode: empty to install, burnin for a
+	// commissioning's burn-in. DurationSeconds is how long a burn-in runs.
+	Mode            string `json:"mode,omitempty"`
+	DurationSeconds int64  `json:"durationSeconds,omitempty"`
 }
 
 const bootRecords = "vmboot"
@@ -346,8 +350,8 @@ func (k Installation) domainXML(work *site.Work, boot Boot, stage string) string
 	dir := k.directory(work.Device, work.Key())
 	bootXML := "<boot dev='hd'/>"
 	nic := ""
-	if stage == "installer" {
-		bootXML = fmt.Sprintf("<kernel>%s/kernel</kernel><initrd>%s/installer.gz</initrd><cmdline>console=ttyS0 rdinit=/init fleet.receipt=%s</cmdline>", k.Artifacts, k.Artifacts, boot.Receipt)
+	if stage == "installer" || stage == burnInStage {
+		bootXML = fmt.Sprintf("<kernel>%s/kernel</kernel><initrd>%s/installer.gz</initrd><cmdline>console=ttyS0 rdinit=/init fleet.receipt=%s%s</cmdline>", k.Artifacts, k.Artifacts, boot.Receipt, modeArgs(boot))
 		if k.PXE {
 			bootXML = "<boot dev='network'/>"
 			nic = "<interface type='network'><source network='fleet-pxe'/><mac address='" + guestMAC + "'/><model type='e1000'/></interface>"
@@ -358,6 +362,14 @@ func (k Installation) domainXML(work *site.Work, boot Boot, stage string) string
 		domainType = "qemu"
 	}
 	return fmt.Sprintf(`<domain type='%s'><name>%s</name><memory unit='MiB'>2048</memory><vcpu>2</vcpu><cpu><topology sockets='1' cores='2' threads='1'/></cpu><features><acpi/><apic/></features><os><type arch='x86_64' machine='pc'>hvm</type>%s</os><on_poweroff>destroy</on_poweroff><on_reboot>destroy</on_reboot><on_crash>destroy</on_crash><devices>%s<emulator>/usr/bin/qemu-system-x86_64</emulator><disk type='file' device='disk'><driver name='qemu' type='raw'/><source file='%s/disk.raw'/><target dev='vda' bus='virtio'/></disk><serial type='file'><source path='%s/%s.log'/><target port='0'/></serial></devices></domain>`, domainType, domain(work.Key()), bootXML, nic, dir, dir, stage)
+}
+
+// modeArgs is the kernel arguments that select the boot image's mode.
+func modeArgs(boot Boot) string {
+	if boot.Mode == "" {
+		return ""
+	}
+	return fmt.Sprintf(" fleet.mode=%s fleet.duration=%d", boot.Mode, boot.DurationSeconds)
 }
 
 // waitReceipt waits for the guest to stop with exactly this phase's receipt.

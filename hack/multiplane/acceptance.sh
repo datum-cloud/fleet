@@ -14,6 +14,10 @@ ph rbac 600 python3 hack/multiplane/verify-rbac.py "$state"
 ph custody-crd-rules 600 python3 hack/multiplane/custody_crd_rules.py "$state"
 step import-inert 300
 step staff-access 120
+step commission-dispatch 900
+ph commission 1500 "$host" commission --config "$state/acceptance.json"
+ph commission-mark 120 python3 hack/multiplane/harness.py commission-mark --state "$state"
+step commission-settle 900
 ph allocate 900 "$host" allocate --config "$state/acceptance.json"
 step verify-contention 120
 step tenant-isolation 300

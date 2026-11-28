@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -18,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"go.datum.net/fleet/internal/allocation"
+	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
@@ -27,10 +29,11 @@ import (
 )
 
 const (
-	PhaseAllocate  = "allocate"
-	PhaseInstall   = "install"
-	PhaseReinstall = "reinstall"
-	PhaseRelease   = "release"
+	PhaseCommission = "commission"
+	PhaseAllocate   = "allocate"
+	PhaseInstall    = "install"
+	PhaseReinstall  = "reinstall"
+	PhaseRelease    = "release"
 )
 
 type Options struct {
@@ -64,8 +67,19 @@ func DefaultOptions() Options {
 type Runner struct {
 	Client    client.Client
 	Allocator *allocation.Allocator
-	Options   Options
-	Now       func() time.Time
+	// Staff are the commissioning phase's three people.
+	Staff   *Staff
+	Options Options
+	Now     func() time.Time
+}
+
+// Staff are the plan author, the approver and the commissioning operator,
+// each with their own identity, so the two-person rule holds.
+type Staff struct {
+	Author, Approver, Operator client.Client
+	// AuthorCreator, ApproverCreator and OperatorCreator are each client's
+	// authenticated identity.
+	AuthorCreator, ApproverCreator, OperatorCreator ops.Creator
 }
 
 func (r Runner) Run(ctx context.Context, phase string) error {
@@ -76,6 +90,8 @@ func (r Runner) Run(ctx context.Context, phase string) error {
 		r.Now = time.Now
 	}
 	switch phase {
+	case PhaseCommission:
+		return r.commission(ctx)
 	case PhaseAllocate:
 		return r.allocate(ctx)
 	case PhaseInstall:
@@ -130,9 +146,6 @@ func (r Runner) allocate(ctx context.Context) error {
 	}
 	if lost, err := r.Allocator.Get(ctx, second.machine); err != nil || lost != nil {
 		return fmt.Errorf("the losing consumer kept an allocation: %v", err)
-	}
-	if err := r.projectOccupied(ctx, capacity); err != nil {
-		return err
 	}
 	return r.projectPending(ctx, second, profile, "InsufficientCapacity", "The only synthetic machine is allocated to another consumer.")
 }
@@ -255,10 +268,7 @@ func (r Runner) release(ctx context.Context) error {
 	if reused.Spec.DeviceRef.Name != capacity.Spec.DeviceRef.Name {
 		return errors.New("the waiting consumer did not reuse the released Device")
 	}
-	if err := r.projectBound(ctx, second, profile, reused); err != nil {
-		return err
-	}
-	return r.projectOccupied(ctx, capacity)
+	return r.projectBound(ctx, second, profile, reused)
 }
 
 // await polls until done, a failure, or the phase's wait bound.
@@ -280,9 +290,8 @@ func (r Runner) await(ctx context.Context, what string, done func() (bool, error
 	}
 }
 
-// inputs reads the fixtures and writes the synthetic capacity evidence. The
-// capacity projector is not wired, so the fixture writes Prepared, Healthy
-// and Available itself. Custody stays authoritative for exclusivity.
+// inputs reads the fixtures. The capacity projector, not the phase, writes
+// the capacity's status from commissioning evidence.
 func (r Runner) inputs(ctx context.Context) (*fleetv1.MachineClass, *fleetv1.MachineProfile, *fleetv1.MachineCapacity, error) {
 	var class fleetv1.MachineClass
 	var profile fleetv1.MachineProfile
@@ -298,15 +307,6 @@ func (r Runner) inputs(ctx context.Context) (*fleetv1.MachineClass, *fleetv1.Mac
 	}
 	if class.Spec.Capacity == nil || class.Spec.Capacity.MachineCapacities.Namespace != r.Options.ProviderNamespace {
 		return nil, nil, nil, errors.New("synthetic provider scope does not match configuration")
-	}
-	capacity.Status.Hardware = fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 24, Threads: 48, Sockets: 2}, Memory: fleetv1.HardwareMemory{Capacity: "128Gi"}}
-	capacity.Status.Conditions = []metav1.Condition{
-		condition("Prepared", metav1.ConditionTrue, capacity.Generation, "SyntheticEvidence", "Synthetic fixture evidence is current."),
-		condition("Healthy", metav1.ConditionTrue, capacity.Generation, "SyntheticEvidence", "Synthetic fixture evidence is current."),
-		condition("Available", metav1.ConditionTrue, capacity.Generation, "SyntheticEvidence", "Device custody remains authoritative for exclusivity."),
-	}
-	if err := r.Client.Status().Update(ctx, &capacity); err != nil {
-		return nil, nil, nil, err
 	}
 	return &class, &profile, &capacity, nil
 }
@@ -406,11 +406,6 @@ func (r Runner) projectPower(ctx context.Context, machine allocation.Machine) er
 	return manager.ProjectPower(ctx, r.Client, r.Client, r.Options.ProviderNamespace, machine)
 }
 
-func (r Runner) projectOccupied(ctx context.Context, capacity *fleetv1.MachineCapacity) error {
-	apiMeta.SetStatusCondition(&capacity.Status.Conditions, condition("Available", metav1.ConditionFalse, capacity.Generation, "Allocated", "Device custody names an active allocation."))
-	return r.Client.Status().Update(ctx, capacity)
-}
-
 func (r Runner) removeFinalizer(ctx context.Context, key client.ObjectKey, uid types.UID) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var current fleetv1.Machine
@@ -451,4 +446,91 @@ func remove(v []string, w string) []string {
 		}
 	}
 	return out
+}
+
+// Plan is the synthetic commissioning plan: the fixture profile's hardware,
+// the simulator's firmware, and a one-minute burn-in.
+func (o Options) Plan(author ops.Creator) *ops.DeviceCommissioningPlan {
+	return &ops.DeviceCommissioningPlan{ObjectMeta: metav1.ObjectMeta{Name: "synthetic-plan-v1", Namespace: o.ProviderNamespace}, Spec: ops.DeviceCommissioningPlanSpec{
+		Creator:        author,
+		DeviceSelector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/hardware-model": "synthetic"}},
+		Content: ops.CommissioningPlanContent{
+			Inspection: ops.CommissioningInspection{CPU: ops.InspectionCPU{Architecture: "amd64", Cores: 24}, Memory: ops.InspectionValue{Capacity: "128Gi"},
+				Disks: ops.InspectionDisks{Count: 1, MinCapacity: "100Gi"}, Interfaces: ops.InspectionCount{Count: 1}},
+			Firmware: []ops.FirmwareBaseline{{Component: "BMC", Version: "synthetic-1.0"}},
+			BurnIn:   ops.CommissioningBurnIn{Image: ops.ImageInput{Name: "synthetic-burn-in", Digest: "sha256:" + strings.Repeat("5", 64)}, Duration: metav1.Duration{Duration: time.Minute}},
+		},
+		EvidenceLifetime: metav1.Duration{Duration: 30 * 24 * time.Hour},
+	}}
+}
+
+// commission qualifies the synthetic plan with two people, commissions the
+// fixture Device under it, and waits until the projector offers the
+// capacity. It repeats safely.
+func (r Runner) commission(ctx context.Context) error {
+	if r.Staff == nil {
+		return errors.New("commission needs the plan author, approver and operator")
+	}
+	_, _, capacity, err := r.inputs(ctx)
+	if err != nil {
+		return err
+	}
+	plan := r.Options.Plan(r.Staff.AuthorCreator)
+	if err := r.Staff.Author.Create(ctx, plan); apierrors.IsAlreadyExists(err) {
+		if err := r.Staff.Author.Get(ctx, client.ObjectKeyFromObject(plan), plan); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return fmt.Errorf("write the plan: %w", err)
+	}
+	approval, err := custody.NewApproval(plan, r.Staff.ApproverCreator)
+	if err != nil {
+		return err
+	}
+	if err := r.Staff.Approver.Create(ctx, approval); err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("approve the plan: %w", err)
+	}
+	device := &inventory.Device{}
+	if err := r.Staff.Operator.Get(ctx, client.ObjectKey{Namespace: r.Options.ProviderNamespace, Name: capacity.Spec.DeviceRef.Name}, device); err != nil {
+		return err
+	}
+	if err := r.await(ctx, "custody of the fixture Device is Verified", func() (bool, error) {
+		state := &ops.DeviceCustody{}
+		if err := r.Client.Get(ctx, client.ObjectKeyFromObject(device), state); apierrors.IsNotFound(err) {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+		return state.Spec.State == ops.CustodyVerified, nil
+	}); err != nil {
+		return err
+	}
+	operation, err := custody.NewCommissioning(device, plan, r.Staff.OperatorCreator, "synthetic intake")
+	if err != nil {
+		return err
+	}
+	if err := r.Staff.Operator.Create(ctx, operation); err != nil {
+		return fmt.Errorf("commission the Device: %w", err)
+	}
+	if err := r.await(ctx, "the commissioning succeeds", func() (bool, error) {
+		if err := r.Staff.Operator.Get(ctx, client.ObjectKeyFromObject(operation), operation); err != nil {
+			return false, err
+		}
+		switch phase := operation.Status.Phase; {
+		case phase == ops.PhaseSucceeded:
+			return true, nil
+		case phase.Ended():
+			return false, fmt.Errorf("the commissioning ended %s: %s", phase, operation.Status.Reason)
+		}
+		return false, nil
+	}); err != nil {
+		return err
+	}
+	return r.await(ctx, "the projector offers the capacity", func() (bool, error) {
+		if err := r.Client.Get(ctx, client.ObjectKeyFromObject(capacity), capacity); err != nil {
+			return false, err
+		}
+		available := apiMeta.FindStatusCondition(capacity.Status.Conditions, custody.ConditionAvailable)
+		return available != nil && available.Status == metav1.ConditionTrue && available.ObservedGeneration == capacity.Generation, nil
+	})
 }

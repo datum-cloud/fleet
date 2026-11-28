@@ -66,7 +66,7 @@ func run() error {
 		return multiplane.Coordinate(ctx, config, *installationDeadline, func(err error) {
 			fmt.Fprintf(os.Stderr, "%s coordinator: pass incomplete: %v\n", time.Now().UTC().Format(time.RFC3339), err)
 		})
-	case "seed", "allocate", "install", "admit-install", "admit-install-b", "release", "release-b", "reuse", "recovery-mismatch", "probe-unallocatable", "tenant-isolation":
+	case "seed", "commission", "allocate", "install", "admit-install", "admit-install-b", "release", "release-b", "reuse", "recovery-mismatch", "probe-unallocatable", "tenant-isolation":
 		return phase(os.Args[1], *configPath, *once)
 	case "redfish-probe":
 		return probe(*endpoint, *credentials, *system, *uuid, *pin, *clientID)
@@ -145,8 +145,12 @@ func phase(name, configPath string, once bool) error {
 	if err != nil {
 		return err
 	}
+	// The Redfish lab serves a firmware inventory; the local VM has none.
+	if redfishMode() {
+		r.PlanFirmware = multiplane.LabFirmware
+	}
 	action := map[string]func(context.Context) error{
-		"allocate": r.Allocate, "admit-install": r.AdmitInstall, "install": r.Install,
+		"commission": r.Commission, "allocate": r.Allocate, "admit-install": r.AdmitInstall, "install": r.Install,
 		"release": r.Release, "release-b": r.ReleaseSecond, "reuse": r.Reuse,
 		"admit-install-b": r.AdmitInstallSecond, "recovery-mismatch": r.RecoveryMismatch, "probe-unallocatable": r.ProbeUnallocatable, "tenant-isolation": r.TenantIsolation,
 	}[name]
@@ -163,7 +167,7 @@ func phase(name, configPath string, once bool) error {
 			fmt.Println("Installation admitted and delivered; its result remains Unknown")
 			return nil
 		}
-		if err == nil && (name == "recovery-mismatch" || name == "probe-unallocatable" || name == "tenant-isolation") {
+		if err == nil && (name == "commission" || name == "recovery-mismatch" || name == "probe-unallocatable" || name == "tenant-isolation") {
 			return nil
 		}
 		if err == nil {

@@ -139,7 +139,7 @@ func (c Config) BootHandler(store *site.Store) http.Handler {
 		switch name {
 		case "boot.ipxe":
 			base := c.origin() + "/" + parts[1] + "/" + boot.Token
-			data = []byte(fmt.Sprintf("#!ipxe\nkernel %s/kernel console=ttyS0 rdinit=/init fleet.receipt=%s\ninitrd %s/installer.gz\nboot\n", base, boot.Receipt, base))
+			data = []byte(fmt.Sprintf("#!ipxe\nkernel %s/kernel console=ttyS0 rdinit=/init fleet.receipt=%s%s\ninitrd %s/installer.gz\nboot\n", base, boot.Receipt, modeArgs(boot), base))
 			size = int64(len(data))
 		case "kernel", "installer.gz":
 			// Hash the pinned artifact, then serve the same open file.

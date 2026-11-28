@@ -29,6 +29,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleet "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/capacity"
 	"go.datum.net/fleet/internal/controller"
 	"go.datum.net/fleet/internal/coordination"
 	"go.datum.net/fleet/internal/custody"
@@ -71,11 +72,13 @@ type Project struct {
 }
 
 type Runner struct {
-	Config    Config
-	Provider  Project
-	Consumers [2]Project
-	Allocator *allocation.Allocator
-	Hub       *coordination.Hub
+	Config Config
+	// PlanFirmware is the firmware baseline of the run's commissioning plan.
+	PlanFirmware []ops.FirmwareBaseline
+	Provider     Project
+	Consumers    [2]Project
+	Allocator    *allocation.Allocator
+	Hub          *coordination.Hub
 }
 
 func Scheme() *runtime.Scheme {
@@ -179,7 +182,12 @@ func Coordinate(ctx context.Context, c Config, installationDeadline time.Duratio
 	if err != nil {
 		return err
 	}
-	loop := &delivery.Loop{Client: api, Coordinator: coord, Namespace: DeviceNamespace, OnError: onError,
+	projectorAPI, err := API(filepath.Join(c.State, "provider", "projector-project.json"))
+	if err != nil {
+		return err
+	}
+	projector := &capacity.Projector{Reader: projectorAPI, Writer: projectorAPI, Namespace: DeviceNamespace, Cleaning: cleaningResolver}
+	loop := &delivery.Loop{Client: api, Coordinator: coord, Namespace: DeviceNamespace, OnError: onError, Capacity: projector,
 		Courier: &delivery.Courier{Client: api, Registry: registry, Coordinator: coord, Sites: sites, Namespace: DeviceNamespace}}
 	go fixture.Run(ctx, discovery, c.Enrollment, 30*time.Second, func(err error) { onError(fmt.Errorf("fixture discovery: %w", err)) })
 	return loop.Run(ctx)
@@ -232,11 +240,24 @@ func New(ctx context.Context, c Config) (*Runner, error) {
 			if name != "local-cleaning" {
 				return "", fmt.Errorf("no fixture cleaning policy %q", name)
 			}
-			return custody.SpecDigest(`{"method":"overwrite","disks":"all"}`)
+			return custody.SpecDigest(localCleaningPolicy)
 		},
+		Capacity:      &capacity.Projector{Reader: r.Provider.API, Namespace: DeviceNamespace, Cleaning: cleaningResolver},
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
 	}
 	return r, nil
+}
+
+// localCleaningPolicy is the fixture cleaning policy record. The cleaning
+// policy owner's resolution contract does not exist yet, so the run resolves
+// this one name itself.
+const localCleaningPolicy = `{"method":"overwrite","disks":"all"}`
+
+func cleaningResolver(_ context.Context, name string) (string, error) {
+	if name != "local-cleaning" {
+		return "", capacity.ErrUnresolved
+	}
+	return custody.SpecDigest(localCleaningPolicy)
 }
 
 func condition(kind string, status metav1.ConditionStatus, generation int64, reason string) metav1.Condition {

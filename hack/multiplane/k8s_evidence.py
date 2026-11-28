@@ -229,7 +229,10 @@ def record_lifecycle(state, old, new):
     for key in ('siteStoreSHA256', 'qemuStarts', 'pvcUID', 'pvUID', 'pvReclaimPolicy', 'domains', 'machineA'):
         if a[key] != b[key]:
             raise SystemExit('%s changed across Pod/Job lifecycle: %s -> %s' % (key, a[key], b[key]))
-    if a['machineA'] != {'phase': 'Ready', 'bound': 'True', 'ready': 'True'} or a['qemuStarts'] != 2 or a['domains'] or a['pvReclaimPolicy'] != 'Retain':
+    # Lab target A carries the commissioning's burn-in boot before the
+    # install's two; a local VM install has its own domain.
+    starts = 2 + (json.loads((s / 'redfish' / 'commission.json').read_text())['qemuStartsTargetA'] if REDFISH else 0)
+    if a['machineA'] != {'phase': 'Ready', 'bound': 'True', 'ready': 'True'} or a['qemuStarts'] != starts or a['domains'] or a['pvReclaimPolicy'] != 'Retain':
         raise SystemExit('unexpected lifecycle baseline: %s' % a)
     for d, uids in a['sitePods'].items():
         if set(uids) & set(b['sitePods'][d]) or len(b['sitePods'][d]) != 1:

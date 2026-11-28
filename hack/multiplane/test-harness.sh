@@ -39,10 +39,18 @@ if tool == 'docker':
 if tool == 'kubectl' and 'exec' in a and 'deploy/fleet-site-runtime' in a:
     if a[-1].endswith('/state.json'):
         stage = os.environ.get('FAKE_STAGE', 'installer-start')
+        if stage == 'commissioned':
+            steps = ['burnin-disk', 'burnin-network', 'burnin-start', 'burnin-verified', 'burnin-network-off', 'burnin-disk-removed']
+            print(json.dumps({'device': 'fleet-provider/synthetic-device-central-01', 'fence': 1, 'stopped': 1,
+                  'journal': [{'operation': 'devicecommissioning.commission-1.1', 'fence': 1, 'step': s, 'state': 'Done', 'at': '2026-01-01T00:00:00Z'} for s in steps]})); sys.exit(0)
         steps = {'prepared': ['prepare-disk'], 'installer-start': ['prepare-disk', 'installer-network', 'installer-start'],
                  'disk-start': ['prepare-disk', 'installer-network', 'installer-start', 'installer-verified', 'disk-network-off', 'disk-start']}[stage]
         print(json.dumps({'device': 'fleet-provider/synthetic-device-central-01', 'fence': 3, 'stopped': 3,
               'journal': [{'operation': 'install-op-1', 'fence': 3, 'step': s, 'state': 'Done', 'at': '2026-01-01T00:00:00Z', 'payload': {'note': 'R' * 64}} for s in steps]})); sys.exit(0)
+    if '/vmboot/' in a[-1]:
+        if os.environ.get('FAKE_BOOT_RECORD', 'present') == 'present':
+            print(json.dumps({'operation': 'devicecommissioning.commission-1.1', 'fence': 1, 'receipt': 'r' * 64, 'token': 'T' * 64, 'closed': True, 'mode': 'burnin'}))
+        sys.exit(0)
     if 'virsh' in a:
         import hashlib
         print('fleet-local-' + hashlib.sha256(b'install-op-1').hexdigest()[:16]); sys.exit(0)
@@ -69,7 +77,7 @@ with tempfile.TemporaryDirectory() as tmp:
         d = pathlib.Path(tempfile.mkdtemp(dir=tmp)); d.chmod(0o700); return d
 
     good_root = tmp / 'good'; (good_root / 'cmd/fleet-multiplane').mkdir(parents=True)
-    markers = ['seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse', 'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer',
+    markers = ['seed', 'commission', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse', 'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer',
                'admit-install-b', 'recovery-mismatch', 'probe-unallocatable', 'tenant-isolation']
     (good_root / 'cmd/fleet-multiplane/main.go').write_text(' '.join('"%s"' % m for m in markers) + ' multiplane.ErrLocationNotServed')
     bad_root = tmp / 'bad'; (bad_root / 'cmd/fleet-multiplane').mkdir(parents=True)
@@ -142,6 +150,26 @@ with tempfile.TemporaryDirectory() as tmp:
     check('wait-stage bounded', r.returncode == 4, r.stdout)
     out = run(['journal', '--state', str(obs)]).stdout
     check('journal sanitized', 'R' * 64 not in out and 'install-op-1' in out, out)
+    # The commission mark records the one finished commissioning's journal and
+    # boot record as digests; the evidence phase compares them after replay.
+    mark = state()
+    r = run(['commission-mark', '--state', str(mark)])
+    check('commission-mark refuses a store without a finished commissioning', r.returncode == 1, r.stdout)
+    r = run(['commission-mark', '--state', str(mark)], {'FAKE_STAGE': 'commissioned', 'FAKE_BOOT_RECORD': 'missing'})
+    check('commission-mark refuses a commissioning without a boot record', r.returncode == 1, r.stdout)
+    r = run(['commission-mark', '--state', str(mark)], {'FAKE_STAGE': 'commissioned'})
+    recorded = json.loads((mark / 'commission.json').read_text()) if r.returncode == 0 else {}
+    check('commission-mark records the commissioning', recorded.get('operation') == 'devicecommissioning.commission-1.1' and recorded.get('fence') == 1
+          and len(recorded.get('journalSHA256', '')) == 64 and len(recorded.get('bootRecordSHA256', '')) == 64, r.stdout + r.stderr)
+    check('commission-mark evidence holds no boot token', 'T' * 64 not in (mark / 'evidence/commission.json').read_text() if recorded else False)
+    sys.path.insert(0, str(root / 'hack/multiplane'))
+    import harness as h
+    store = {'journal': [{'operation': 'devicecommissioning.c.1', 'fence': 1, 'step': 'burnin-disk-removed', 'state': 'Done', 'at': '2026-01-01T00:00:00Z'}]}
+    before, _ = h.commission_digest(store, lambda op: {'closed': True})
+    replayed = {'journal': [dict(store['journal'][0], at='2026-01-01T00:05:00Z')]}
+    check('a replayed step changes the commission digest', h.commission_digest(replayed, lambda op: {'closed': True})[0] != before)
+    check('a touched boot record changes the commission digest', h.commission_digest(store, lambda op: {'closed': True, 'open': True})[0] != before)
+    check('an unchanged commissioning digests the same', h.commission_digest(store, lambda op: {'closed': True})[0] == before)
     calls = [json.loads(l) for l in trace.read_text().splitlines()]
     check('provider observation only through the cell API', not any(c[0] == 'docker' and 'exec' in c for c in calls)
           and any(c[0] == 'kubectl' and 'exec' in c and 'deploy/fleet-site-runtime' in c for c in calls))
@@ -196,7 +224,7 @@ with tempfile.TemporaryDirectory() as tmp:
     for name, text in (('steps', steps), ('evidence', evidence), ('harness', harness.read_text())):
         check('no docker process launch in site execution: ' + name, '-vm' not in text and 'cell.pid' not in text)
     sequence = (root / 'hack/multiplane/acceptance.sh').read_text()
-    order = ['custody-crd-rules', 'import-inert', 'staff-access', 'allocate', 'verify-contention', 'tenant-isolation', 'admit-install', 'await-delivery', 'partition', 'dispatch', 'interrupt-pod', 'interrupt-job', 'resume',
+    order = ['custody-crd-rules', 'import-inert', 'staff-access', 'commission-dispatch', 'commission', 'commission-settle', 'allocate', 'verify-contention', 'tenant-isolation', 'admit-install', 'await-delivery', 'partition', 'dispatch', 'interrupt-pod', 'interrupt-job', 'resume',
              'worker-rbac', 'partition-readiness', 'heal', 'install', 'install-repeat', 'lifecycle', 'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention',
              'reflection-faults', 'release', 'release-status-a',
              'reuse', 'reuse-status', 'delivery-faults', 'deadline-admit', 'machine-delete', 'deadline-hold', 'release-b', 'deadline-settled', 'release-status-b',
@@ -204,7 +232,7 @@ with tempfile.TemporaryDirectory() as tmp:
     positions = [sequence.find(' ' + name + ' ') for name in order]
     check('acceptance phase order', all(p >= 0 for p in positions) and positions == sorted(positions), str(list(zip(order, positions))))
     for name in order:
-        if name in ('custody-crd-rules', 'allocate', 'admit-install', 'install', 'install-repeat', 'release', 'reuse', 'release-b', 'reflection-faults', 'evidence',
+        if name in ('custody-crd-rules', 'commission', 'allocate', 'admit-install', 'install', 'install-repeat', 'release', 'reuse', 'release-b', 'reflection-faults', 'evidence',
                     'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention'):
             continue
         check('step implemented: ' + name, ' %s)' % name in steps or '|%s)' % name in steps or ' %s|' % name in steps)

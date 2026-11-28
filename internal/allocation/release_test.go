@@ -72,7 +72,7 @@ func TestAnAllocationThatNeverHeldItsDeviceIsReleased(t *testing.T) {
 	if _, err := q.Acquire(e.ctx, machine(1)); err != nil {
 		t.Fatal(err)
 	}
-	orphan, err := e.allocator.newAllocation(e.request(1), e.capacity(device.Name), device, "fleet-machine-601")
+	orphan, err := e.allocator.newAllocation(e.request(1), e.capacity(device.Name), device, fleetv1.Hardware{}, "fleet-machine-601")
 	if err != nil {
 		t.Fatal(err)
 	}
