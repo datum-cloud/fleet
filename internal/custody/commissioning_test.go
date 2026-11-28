@@ -491,3 +491,26 @@ func (e *env) custodyKey(device *inventory.Device) string {
 	}
 	return device.Status.Discovery.TLS.PublicKeySHA256
 }
+
+// An author and approver are told apart by username, as Kubernetes RBAC
+// identifies principals. A UID counts only when both creators carry one.
+func TestPlanApproverIsAnotherPrincipal(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		author, approver ops.Creator
+		want             bool
+	}{
+		{"different usernames and UIDs", ops.Creator{Username: "author@example.com", UID: "a"}, ops.Creator{Username: "approver@example.com", UID: "b"}, true},
+		{"different usernames without UIDs", ops.Creator{Username: "author"}, ops.Creator{Username: "approver"}, true},
+		{"different usernames, one UID", ops.Creator{Username: "author", UID: "a"}, ops.Creator{Username: "approver"}, true},
+		{"the same username without UIDs", ops.Creator{Username: "author"}, ops.Creator{Username: "author"}, false},
+		{"the same username in another case", ops.Creator{Username: "author"}, ops.Creator{Username: "AUTHOR", UID: "b"}, false},
+		{"the same UID under another username", ops.Creator{Username: "author", UID: "a"}, ops.Creator{Username: "approver", UID: "a"}, false},
+		{"an approver without a username", ops.Creator{Username: "author"}, ops.Creator{UID: "b"}, false},
+		{"an author without a username", ops.Creator{UID: "a"}, ops.Creator{Username: "approver"}, false},
+	} {
+		if got := distinct(tc.author, tc.approver); got != tc.want {
+			t.Errorf("%s: distinct = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

@@ -854,8 +854,9 @@ which a test pins, because the coordinator lists every registered kind.
   governs all three, so each creator is the caller.
 - **Qualified.** An approval qualifies its plan when it has the plan's
   approval name, names the plan's current generation and digest, and its
-  creator is someone else: both creators have a UID, the UIDs differ, and the
-  usernames differ ignoring case. A plan re-created under the same name has
+  creator is someone else: both creators have a username and the usernames
+  differ ignoring case. A client certificate carries no UID, so UIDs are
+  compared only when both creators have one, and then they must differ. A plan re-created under the same name has
   another approval name, so it inherits no approval, and no commissioning
   under the old plan is admitted under it. No role both writes and approves
   plans, which a test pins.

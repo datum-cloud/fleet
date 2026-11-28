@@ -107,11 +107,16 @@ func qualifies(plan *ops.DeviceCommissioningPlan, approval *ops.DeviceCommission
 	return true, "", nil
 }
 
-// distinct reports whether two creators are different people: both are
-// identified, and neither their UIDs nor their usernames match.
+// distinct reports whether two creators are different people. Principals
+// are identified by username, as Kubernetes RBAC identifies them, so both
+// usernames must be set and differ ignoring case. A client certificate
+// carries no UID, so a UID counts only when both creators have one, and then
+// the UIDs must differ too.
 func distinct(author, approver ops.Creator) bool {
-	return author.UID != "" && approver.UID != "" && author.Username != "" && approver.Username != "" &&
-		author.UID != approver.UID && !strings.EqualFold(author.Username, approver.Username)
+	if author.Username == "" || approver.Username == "" || strings.EqualFold(author.Username, approver.Username) {
+		return false
+	}
+	return author.UID == "" || approver.UID == "" || author.UID != approver.UID
 }
 
 // CurrentPlan returns the Device's current plan: the one qualified plan whose
