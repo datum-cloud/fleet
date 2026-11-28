@@ -66,6 +66,8 @@ QUALIFIED = 'fleet.datumapis.com/qualified-delivery-methods'
 # Another address on the lab network, inside the site's report ranges and
 # outside IPAM's pool and the static leases: another server's.
 STRAY_SOURCE = '192.168.77.250'
+# The site's report range, as the lab's site workers declare it.
+REPORT_RANGE = '192.168.77.0/24'
 STORE_ROOT = '/var/lib/fleet-local/site'
 LOCAL = 'https://127.0.0.1:%d' % rf.MEDIA_PORT
 # The lab's virtual media phases, shorter than the 15 and 30 minute
@@ -407,7 +409,8 @@ def stale_fence(s):
         w = window_record(s, op['metadata']['uid'])
         body = {'device': harness.DEVICE, 'operation': op['metadata']['uid'], 'fence': op['status']['fence'], 'bootDigest': w['bootDigest'],
                 'capabilitySHA256': '0' * 64, 'tokenSHA256': '0' * 64, 'configMedium': base64.b64encode(b'stale').decode(),
-                'fetchExpires': later(10), 'reportExpires': later(20), 'reportFrom': ['127.0.0.1/32']}
+                'fetchExpires': later(10), 'reportExpires': later(20), 'reportFrom': [REPORT_RANGE],
+                'reportAddress': op['spec']['delivery']['reportAddress']['address']}
         # A well-formed open, so the cell worker's answer is custody's.
         # Without a client certificate, and with another site's, the open is
         # refused before the service looks at custody; as the cell's worker,
