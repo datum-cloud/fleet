@@ -84,8 +84,6 @@
 .inventory-rack-plan-far a { color:var(--muted-foreground); }
 .inventory-rack-plan-side { font-style:italic; }
 .inventory-rack-plan[data-depth="unknown"]:not(.inventory-rack-plan-far) { border-style:dotted; }
-.inventory-face-switch { display:flex; gap:4px; }
-.inventory-face-switch button { flex:none; }
 .inventory-equipment-sections { display:grid; gap:16px; min-width:0; }
 .inventory-equipment-sections section { display:grid; gap:10px; }
 .inventory-count { font-size:11px; color:var(--muted-foreground); font-weight:400; }
@@ -123,8 +121,7 @@
 .inventory-rack-header { display:grid; gap:6px; min-width:0; }
 .inventory-rack-summary { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; }
 .inventory-rack-summary > span + span::before { content:"·"; margin-right:12px; color:var(--muted-foreground); }
-.fleet-inventory a.inventory-issue-badge { display:inline-flex; align-items:center; min-height:24px; padding:0 8px; border:1px solid var(--destructive); border-radius:999px; font-size:12px; text-decoration:none; }
-.fleet-inventory a.inventory-issue-badge[data-kind="unpositioned"] { border-style:dashed; border-color:var(--muted-foreground); }
+.fleet-inventory a.inventory-issue-badge { display:inline-flex; text-decoration:none; }
 .inventory-rack-tabs [role="tablist"] { max-width:100%; overflow-x:auto; }
 .inventory-rack-tabs [role="tab"] { flex-shrink:0; }
 .fleet-inventory .inventory-rack-tabs a[role="tab"] { text-decoration:none; }
@@ -599,10 +596,7 @@
 
 /* BMC discovery on the Device page: red disagrees or failed, amber needs checking, OK is plain. */
 .inventory-discovery-chips { display:flex; flex-wrap:wrap; gap:4px; margin:0; padding:0; list-style:none; }
-.inventory-discovery-chip { display:inline-flex; align-items:center; gap:3px; padding:0 6px; border:1px solid var(--border); border-radius:4px; font-size:12px; line-height:20px; white-space:nowrap; }
-.inventory-discovery-chip[data-tone="danger"] { border-color:var(--destructive); color:var(--destructive); font-weight:500; }
-.inventory-discovery-chip[data-tone="warning"] { border-color:var(--warning,#d97706); }
-.inventory-fact-strip .inventory-discovery-chip { line-height:18px; }
+.inventory-discovery-chip { gap:3px; white-space:nowrap; }
 .inventory-discovery-mark[data-tone="danger"] { color:var(--destructive); font-weight:500; }
 .inventory-discovery-key { display:inline-flex; flex-wrap:wrap; align-items:baseline; gap:6px; min-width:0; }
 .inventory-copy { height:20px; padding:0 6px; font-size:11px; }
@@ -638,11 +632,7 @@
 .inventory-switcher-menu a[aria-current="page"] .inventory-tab-count { margin-left:auto; }
 .inventory-switcher-check { margin-left:6px; }
 
-.inventory-catalog-toggle a { display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 10px; border-radius:var(--radius); color:var(--foreground); font-size:14px; font-weight:400; text-decoration:none; white-space:nowrap; }
-.inventory-catalog-toggle a:hover { background:var(--muted); color:var(--primary); }
-.inventory-catalog-toggle a[aria-current="page"] { background:var(--muted); color:var(--primary); font-weight:500; }
-.inventory-catalog-toggle a:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
-.inventory-catalog-toggle svg { flex:none; }
+.inventory-catalog-toggle a { gap:6px; text-decoration:none; white-space:nowrap; }
 
 /* The toolbar row: a card whose bottom edge joins the table. */
 .inventory-list-frame .inventory-toolbar { flex-wrap:nowrap; gap:4px; min-height:44px; padding:0 8px 0 calc(var(--inventory-switcher-w, 0px) + 2px); border:1px solid var(--border); border-radius:var(--radius) var(--radius) 0 0; background:var(--card); }
@@ -653,7 +643,8 @@
 .inventory-list-frame .inventory-search input:focus-visible { outline:none; box-shadow:none; }
 .inventory-list-frame .inventory-search:focus-within { box-shadow:inset 0 -2px 0 var(--ring); }
 .inventory-list-frame .inventory-toolbar-actions { flex-wrap:nowrap; gap:4px; }
-.inventory-filter-count { display:inline-block; min-width:18px; height:18px; margin-left:6px; padding:0 5px; border-radius:9px; background:var(--primary); color:var(--primary-foreground); font-size:11px; line-height:18px; text-align:center; }
+.inventory-filter-count { margin-left:6px; padding:0 6px; font-variant-numeric:tabular-nums; }
+.inventory-loading { display:flex; align-items:center; gap:8px; }
 .inventory-filter-panel { display:grid; gap:12px; width:min(280px,calc(100vw - 32px)); }
 .inventory-filter-panel .inventory-filter-field { display:grid; gap:6px; font-size:13px; }
 .inventory-filter-panel .field-select { width:100%; }
@@ -683,7 +674,7 @@
 @media(max-width:640px) {
   .inventory-list-frame > .inventory-sections { position:static; height:auto; margin-bottom:8px; padding:0; border:0; }
   .inventory-list-frame > .inventory-sections .inventory-switcher { border-color:var(--border); background:var(--card); }
-  .inventory-list-frame > .inventory-catalog-toggle { display:inline-flex; padding:4px; border:1px solid var(--border); border-radius:calc(var(--radius) + 2px); background:var(--card); }
+  .inventory-list-frame > .inventory-catalog-toggle { display:inline-flex; }
   .inventory-list-frame .inventory-toolbar { padding-left:0; }
   .inventory-list-frame .inventory-filter-label { display:none; }
 }
@@ -718,7 +709,3 @@
 .fleet-inventory .inventory-tab-row a[role="tab"]:hover,.fleet-inventory .inventory-tab-row a[role="tab"][data-state="active"] { color:var(--primary); }
 
 /* Rack face toggle: a segmented pill, like the host's ViewTabs. */
-.inventory-face-switch { display:inline-flex; flex-wrap:wrap; gap:2px; width:fit-content; max-width:100%; padding:3px; border-radius:calc(var(--radius) + 2px); background:color-mix(in oklab,var(--border) 50%,transparent); }
-.inventory-face-switch button { flex:none; height:28px; padding:0 12px; border:0; border-radius:var(--radius); background:transparent; color:var(--foreground); font-weight:400; box-shadow:none; }
-.inventory-face-switch button:hover { color:var(--primary); }
-.inventory-face-switch button[aria-pressed="true"] { background:var(--card); color:var(--primary); font-weight:500; }

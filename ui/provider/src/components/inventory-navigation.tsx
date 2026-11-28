@@ -1,5 +1,6 @@
 import { Link, useLocation, useSearchParams } from 'react-router';
 import { Button } from '@datum-cloud/datum-ui/button';
+import { ButtonGroup } from '@datum-cloud/datum-ui/button-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@datum-cloud/datum-ui/popover';
 import { Box, Building2, Cable, Check, ChevronDown, ClipboardList, Factory, HardDrive, MapPin, Server, Zap } from 'lucide-react';
 import { inventoryDirectoryPath, inventoryReturnSearch } from './inventory-page-title';
@@ -114,15 +115,17 @@ function CatalogNavigation({ counts }: { counts?: InventoryCounts }) {
   const { href, current } = useCategoryHref(active);
   return <nav ref={nav} className="inventory-sections inventory-catalog-toggle" aria-label="Catalog categories">
     {CATALOG_KINDS.map(kind => <CountWords key={`words-${kind}`} id={`${countID}-${kind}`} count={counts?.[kind]} />)}
-    {CATALOG_KINDS.map(kind => {
+    <ButtonGroup>{CATALOG_KINDS.map(kind => {
       const section = sections.find(item => item.kind === kind)!;
       const Icon = section.icon;
       const target = href(kind);
-      return <Link key={kind} to={target} aria-current={kind === active ? 'page' : undefined} aria-describedby={counts?.[kind] ? `${countID}-${kind}` : undefined}
-        onClick={event => { if (target === current) event.preventDefault(); }}>
-        <Icon size={16} aria-hidden="true" />{section.title}<CountMark count={counts?.[kind]} />
-      </Link>;
-    })}
+      return <Button key={kind} asChild type={kind === active ? 'primary' : 'secondary'} theme={kind === active ? 'light' : 'outline'} size="small">
+        <Link to={target} aria-current={kind === active ? 'page' : undefined} aria-describedby={counts?.[kind] ? `${countID}-${kind}` : undefined}
+          onClick={event => { if (target === current) event.preventDefault(); }}>
+          <Icon size={16} aria-hidden="true" />{section.title}<CountMark count={counts?.[kind]} />
+        </Link>
+      </Button>;
+    })}</ButtonGroup>
   </nav>;
 }
 

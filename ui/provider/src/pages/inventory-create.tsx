@@ -1,3 +1,4 @@
+import { Spinner } from '@datum-cloud/datum-ui/spinner';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { FleetPage } from '../components/fleet-page';
 import { InventorySessionBoundary } from '../components/inventory-session-boundary';
@@ -30,7 +31,7 @@ export default function InventoryCreatePage() {
 function CreateContent({ kind, back }: { kind: ManagedKind; back: string }) {
   const { data, error, isLoading, refetch } = useInventory();
   const navigate = useNavigate();
-  if (isLoading) return <p role="status">Loading inventory references…</p>;
+  if (isLoading) return <p role="status" className="inventory-loading"><Spinner aria-hidden="true" />Loading inventory references…</p>;
   if (error) return <InventoryAccessState status={error.status} onRetry={() => void refetch()} />;
   if (!data) return null;
   if (Object.values(data.issues ?? {}).some(issue => issue?.status === 401)) return <InventoryAccessState status={401} />;
