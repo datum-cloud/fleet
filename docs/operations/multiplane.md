@@ -285,7 +285,9 @@ and fence, each handoff's reported result on the cell and the hub, Karmada's
 ResourceBinding and Work conditions, and the recent error lines of the
 coordinator, site workers and observer. It copies no spec, Secret or receipt.
 Every copied string is masked for credential shapes, including ones the run
-never retained, and cut to a bounded length. A section it cannot read records
+never retained, and cut to a bounded length. After a credential keyword such
+as password, token, secret or cookie, the rest of the line is masked whatever
+its quoting or spacing. A section it cannot read records
 why. A run stopped by a signal gives it 8 seconds, so its containers still
 stop; any other failure gives it 60. Status: verified against a fake API
 only, until a real failed run produces one.

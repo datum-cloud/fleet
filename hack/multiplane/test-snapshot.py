@@ -24,7 +24,12 @@ JWT = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJzeW50aGV0aWMifQ.c2lnbmF0dXJlc2lnbmF0dXJl'
 UNRETAINED = {'bmc_password=hunter2xx': 'hunter2xx', 'access_token: abcdef123456': 'abcdef123456', 'secretKey=abcd1234': 'abcd1234',
               'https://admin:s3cretpw@10.0.0.1/redfish': 's3cretpw', 'ghp_abcdefghijklmnopqrstu1234': 'ghp_abcdefghijklmnopqrstu1234',
               'Authorization: Digest digestvalue123': 'digestvalue123', '"password":"two words here"': 'words here',
-              'bare ' + JWT: JWT, 'pin ' + 'ab' * 32: 'ab' * 32}
+              'bare ' + JWT: JWT, 'pin ' + 'ab' * 32: 'ab' * 32,
+              # Escaped JSON echoed in a quoted log field, an escaped quote in a
+              # value, and keys separated from their value by a space.
+              'body="{\\"Password\\":\\"escjson71\\"}"': 'escjson71', 'password="a\\"b escquote72"': 'escquote72',
+              'PASSWORD spaced73': 'spaced73', 'sshpass -p flagged74 ssh': 'flagged74', 'pw=short75': 'short75',
+              'Cookie: session=cookie76': 'cookie76', 'AKIAABCDEFGHIJKLMNOP': 'AKIAABCDEFGHIJKLMNOP'}
 tmp = pathlib.Path(tempfile.mkdtemp())
 bin_dir = tmp / 'bin'
 bin_dir.mkdir()
@@ -85,6 +90,8 @@ r = snapshot(s)
 path = s / 'evidence' / 'failure-snapshot.json'
 text = path.read_text() if path.exists() else ''
 snap = json.loads(text) if text else {}
+check('keeps diagnosis readable', any('pass incomplete: reading the hub' in l for l in snap.get('coordinatorErrors') or [])
+      and any('reflected status missing' in c.get('message', '') for c in ((snap.get('cellHandoffs') or [{}])[0].get('conditions') or [])), text[:400])
 check('records a snapshot', r.returncode == 0 and snap.get('failedPhase') == 'install', r.stdout + r.stderr)
 custody = (snap.get('provider') or {}).get('devicecustody') or [{}]
 check('records custody and the operation phase', custody[0].get('phase') == 'Admitted' and custody[0].get('holder') == 'Allocation'
@@ -100,7 +107,7 @@ check('masks credential-shaped values', RETAINED not in text and JWT not in text
 leaked = [shape for shape, value in UNRETAINED.items() if value in text]
 check('masks credentials the run never retained, in every shape', not leaked, str(leaked))
 check('masks names, reasons and conflicts too', not any(v in text for v in ('nameleak99', 'reasonleak9', 'conflictleak9', 'fenceleak9'))
-      and custody[0].get('conflicts') == ['DeviceUIDMismatch', 'token=<masked>'] and custody[0].get('fence') == 4
+      and custody[0].get('conflicts', [None])[0] == 'DeviceUIDMismatch' and len(custody[0].get('conflicts')) == 2 and custody[0].get('fence') == 4
       and (snap.get('provider') or {}).get('deviceinstallation', [{}])[0].get('fence') is None, str(custody))
 
 # A section that cannot be read says why, and the rest is still recorded.
