@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strings"
@@ -32,7 +33,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: fleet-multiplane coordinator|site-worker|site-observer|image|boot-service|boot-withhold|boot-denials|dhcp-feed|redfish-probe|<management phase> [flags]")
+		return fmt.Errorf("usage: fleet-multiplane coordinator|site-worker|site-observer|image|boot-service|boot-withhold|media-stale|media-service|boot-denials|dhcp-feed|redfish-probe|<management phase> [flags]")
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 	once := fs.Bool("once", false, "one attempt, for fault injection")
@@ -50,8 +51,17 @@ func run() error {
 	pin := fs.String("pin", "", "the BMC's approved key digest; the probe connects only to that key (redfish-probe)")
 	syncToken := fs.String("sync-token-file", "", "file holding the DHCP synchronizer bearer token (dhcp-feed)")
 	installationDeadline := fs.Duration("installation-deadline", 0, "replace the installation deadline for operations this coordinator admits (coordinator)")
-	tlsCert := fs.String("tls-cert", "", "TLS certificate the DHCP feed serves (dhcp-feed)")
-	tlsKey := fs.String("tls-key", "", "TLS key of the DHCP feed (dhcp-feed)")
+	tlsCert := fs.String("tls-cert", "", "TLS certificate the DHCP feed or media service serves (dhcp-feed, media-service)")
+	tlsKey := fs.String("tls-key", "", "TLS key of the DHCP feed or media service (dhcp-feed, media-service)")
+	deviceName := fs.String("device", "", "exact <namespace>/<name> Device (media-stale)")
+	listen := fs.String("listen", "127.0.0.1:18443", "listen address (media-service)")
+	mediaRoot := fs.String("state-dir", "", "the media service's own state directory (media-service)")
+	mediaArtifacts := fs.String("artifacts", "", "directory of the image's pinned artifacts (media-service)")
+	mediaClients := fs.String("clients", "", "comma-separated IPv4 prefixes the media service serves (media-service)")
+	proxyListen := fs.String("proxy-listen", "", "comma-separated addresses where report relays connect with a PROXY header (media-service)")
+	relays := fs.String("relays", "", "comma-separated prefixes of the report relays trusted to name a report's source (media-service)")
+	upstream := fs.String("upstream", "", "the media service's PROXY listener, IP:port (report-relay)")
+	clientCA := fs.String("client-ca", "", "CA that signs the site workers' client certificates (media-service)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
@@ -67,7 +77,7 @@ func run() error {
 		return multiplane.Coordinate(ctx, config, *installationDeadline, func(err error) {
 			fmt.Fprintf(os.Stderr, "%s coordinator: pass incomplete: %v\n", time.Now().UTC().Format(time.RFC3339), err)
 		})
-	case "seed", "allocate", "install", "admit-install", "admit-install-b", "release", "release-b", "reuse", "recovery-mismatch", "probe-unallocatable", "tenant-isolation":
+	case "seed", "allocate", "install", "admit-install", "admit-install-b", "release", "release-b", "reuse", "recovery-mismatch", "probe-unallocatable", "tenant-isolation", "media-not-offered", "media-unpinned", "media-install-held", "media-install-download", "media-install-lost", "media-install":
 		return phase(os.Args[1], *configPath, *once)
 	case "redfish-probe":
 		return probe(*endpoint, *credentials, *system, *uuid, *pin)
@@ -82,6 +92,50 @@ func run() error {
 		return boot(os.Args[1], *origin, *extraMAC, *syncToken, *tlsCert, *tlsKey)
 	case "boot-withhold":
 		return armWithhold(fs.Arg(0))
+	case "media-stale":
+		return mediaStale(*deviceName)
+	case "media-service":
+		config, err := multiplane.ReadConfig(*configPath)
+		if err != nil {
+			return err
+		}
+		var clients, trusted []netip.Prefix
+		for _, value := range strings.Split(*mediaClients, ",") {
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+			if err != nil {
+				return fmt.Errorf("media-service: -clients must list IPv4 prefixes")
+			}
+			clients = append(clients, prefix.Masked())
+		}
+		for _, value := range strings.Split(*relays, ",") {
+			if value = strings.TrimSpace(value); value == "" {
+				continue
+			}
+			prefix, err := netip.ParsePrefix(value)
+			if err != nil {
+				return fmt.Errorf("media-service: -relays must list prefixes")
+			}
+			trusted = append(trusted, prefix.Masked())
+		}
+		if *proxyListen != "" && len(trusted) == 0 {
+			return fmt.Errorf("media-service: -proxy-listen needs -relays")
+		}
+		if *mediaRoot == "" || *mediaArtifacts == "" || *tlsCert == "" || *tlsKey == "" || *clientCA == "" {
+			return fmt.Errorf("media-service needs -state-dir, -artifacts, -tls-cert, -tls-key and -client-ca")
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+		fmt.Println("media-service: central media service running")
+		return multiplane.MediaService(ctx, config, *listen, *proxyListen, *tlsCert, *tlsKey, *clientCA, *mediaRoot, *mediaArtifacts, clients, trusted)
+	case "report-relay":
+		// Lab only: forwards the guests' report connections, naming each
+		// guest's address, to the media service's PROXY listener.
+		if *upstream == "" {
+			return fmt.Errorf("report-relay needs -listen and -upstream")
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+		return multiplane.ReportRelay(ctx, *listen, *upstream)
 	case "site-worker", "site-observer":
 	default:
 		return fmt.Errorf("unknown command")
@@ -150,6 +204,7 @@ func phase(name, configPath string, once bool) error {
 		"allocate": r.Allocate, "admit-install": r.AdmitInstall, "install": r.Install,
 		"release": r.Release, "release-b": r.ReleaseSecond, "reuse": r.Reuse,
 		"admit-install-b": r.AdmitInstallSecond, "recovery-mismatch": r.RecoveryMismatch, "probe-unallocatable": r.ProbeUnallocatable, "tenant-isolation": r.TenantIsolation,
+		"media-not-offered": r.MediaNotOffered, "media-unpinned": r.MediaUnpinned, "media-install-held": r.MediaInstallHeld, "media-install-download": r.MediaInstallDownload, "media-install-lost": r.MediaInstallLost, "media-install": r.MediaInstall,
 	}[name]
 	last := ""
 	for {
@@ -164,7 +219,7 @@ func phase(name, configPath string, once bool) error {
 			fmt.Println("Installation admitted and delivered; its result remains Unknown")
 			return nil
 		}
-		if err == nil && (name == "recovery-mismatch" || name == "probe-unallocatable" || name == "tenant-isolation") {
+		if err == nil && (name == "recovery-mismatch" || name == "probe-unallocatable" || name == "tenant-isolation" || strings.HasPrefix(name, "media-")) {
 			return nil
 		}
 		if err == nil {

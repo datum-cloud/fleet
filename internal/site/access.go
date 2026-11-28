@@ -2,6 +2,7 @@ package site
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"strings"
 	"time"
@@ -38,6 +39,27 @@ type RedfishConnection struct {
 	Target redfish.Target
 	System redfish.System
 	BMC    *redfish.Client
+	// identity reads the site worker's media service client certificate.
+	// Only a method that uses the media service reads it, so a missing or
+	// broken identity never stops network boot or a wipe.
+	identity MediaClients
+	device   string
+}
+
+// MediaClient reads the site worker's client certificate for the central
+// media service, or nil when the site has none.
+func (c *RedfishConnection) MediaClient(ctx context.Context) (*tls.Certificate, error) {
+	if c.identity == nil {
+		return nil, nil
+	}
+	return c.identity.MediaClient(ctx, c.device)
+}
+
+// MediaClients reads the site worker's client certificate for the central
+// media service. It is the worker's own identity, kept apart from every
+// Device's BMC credential.
+type MediaClients interface {
+	MediaClient(ctx context.Context, device string) (*tls.Certificate, error)
 }
 
 // Observe reads the verified System's power and boot override.
@@ -55,6 +77,21 @@ func (c *RedfishConnection) SetBootOnce(ctx context.Context, target string) erro
 	return c.BMC.SetBootOnce(ctx, c.System, target)
 }
 
+// VirtualMedia reads the verified System's virtual media devices.
+func (c *RedfishConnection) VirtualMedia(ctx context.Context) ([]redfish.Media, error) {
+	return c.BMC.VirtualMedia(ctx, c.System)
+}
+
+// InsertMedia posts one InsertMedia to a device of the verified System.
+func (c *RedfishConnection) InsertMedia(ctx context.Context, media redfish.Media, image string) error {
+	return c.BMC.InsertMedia(ctx, media, image)
+}
+
+// EjectMedia posts one EjectMedia to a device of the verified System.
+func (c *RedfishConnection) EjectMedia(ctx context.Context, media redfish.Media) error {
+	return c.BMC.EjectMedia(ctx, media)
+}
+
 // RedfishAccess reaches a server through its BMC. It checks the site's
 // enrollment against the admitted snapshot, reads the per-Device credential,
 // requires the operator-approved pin to equal the key discovery recorded at
@@ -62,6 +99,9 @@ func (c *RedfishConnection) SetBootOnce(ctx context.Context, target string) erro
 type RedfishAccess struct {
 	Credentials Credentials
 	Targets     Targets
+	// MediaIdentity, when set, reads the site worker's media service client
+	// certificate.
+	MediaIdentity MediaClients
 	// Dial opens a client pinned to the approved key. Tests replace it.
 	Dial func(endpoint, username, password, pin string) (*redfish.Client, error)
 }
@@ -103,5 +143,5 @@ func (a RedfishAccess) Prepare(ctx context.Context, assignment Assignment) (any,
 	case err != nil:
 		return nil, &custody.Refusal{Reason: ReasonBMCUnavailable, Message: "the BMC could not be read"}
 	}
-	return &RedfishConnection{Target: target, System: system, BMC: client}, nil
+	return &RedfishConnection{Target: target, System: system, BMC: client, identity: a.MediaIdentity, device: assignment.Device}, nil
 }

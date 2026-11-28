@@ -16,3 +16,7 @@ metadata:
 spec:
   cell: "${FLEET_CELL}"
   dispatch: ${FLEET_SITE_DISPATCH}
+  # The central media service's certificate in PEM, base64 encoded, or
+  # empty where no media service runs. It is public; workers verify the
+  # service with it.
+  mediaCA: "${FLEET_MEDIA_CA}"

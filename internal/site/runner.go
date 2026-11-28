@@ -400,6 +400,10 @@ func (r *Runner) Run(ctx context.Context, assignment Assignment) (custody.SiteRe
 		return custody.SiteResult{}, context.Cause(parent)
 	}
 	if err != nil {
+		var unsent *Unsent
+		if errors.As(err, &unsent) {
+			return finish(ops.PhaseFailed, unsent.Refusal.Reason, unsent.Refusal.Message, nil)
+		}
 		var refusal *custody.Refusal
 		if errors.As(err, &refusal) {
 			return end(refusal.Reason, refusal.Message)
@@ -415,6 +419,14 @@ func (r *Runner) Run(ctx context.Context, assignment Assignment) (custody.SiteRe
 }
 
 var errDeadline = errors.New("the operation's deadline passed")
+
+// Unsent is a refusal a kind raises after it journaled steps that it knows
+// took no effect anywhere: each was refused outright by the service it was
+// sent to, and none reached the server. The operation ends Failed rather
+// than unknown. A kind raises it only when its journal proves that.
+type Unsent struct{ Refusal *custody.Refusal }
+
+func (u *Unsent) Error() string { return u.Refusal.Reason + ": " + u.Refusal.Message }
 
 // DeadlinePassed reports whether ctx ended because the operation's deadline
 // passed. No replacement worker can resume such an operation.

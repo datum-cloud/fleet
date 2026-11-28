@@ -29,6 +29,9 @@ type Sites interface {
 	// Fence returns the site's fence report for the Device, and false if
 	// the site has not reported one.
 	Fence(ctx context.Context, site string, device *inventory.Device) (SiteFence, bool, error)
+	// DeliveryMethods returns the boot delivery methods the site declares,
+	// in its order of preference. A site that declares none offers none.
+	DeliveryMethods(site string) []OfferedMethod
 }
 
 // SiteFence is one site's fence report for one Device.
@@ -180,6 +183,7 @@ func (c *Coordinator) Reconcile(ctx context.Context, name string) (Outcome, erro
 			return c.progressActive(ctx, custody, device)
 		},
 		func() (Outcome, error) { return c.settleHolder(ctx, custody, device) },
+		func() (Outcome, error) { return c.holdWaiting(ctx, custody, device) },
 		func() (Outcome, error) { return c.admit(ctx, custody, device) },
 	}
 	for _, step := range steps {
@@ -779,7 +783,7 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 		}
 		return fail(ReasonOperationInProgress, "another operation is running, and staff operations never wait")
 	}
-	admission := &Admission{Operation: operation, Custody: custody.DeepCopy(), Device: device, Row: row, Registry: c.Registry, Reader: c.Client, Now: now, DiscoveryInterval: cfg.DiscoveryInterval}
+	admission := &Admission{Operation: operation, Custody: custody.DeepCopy(), Device: device, Row: row, Registry: c.Registry, Reader: c.Client, Now: now, DiscoveryInterval: cfg.DiscoveryInterval, Offered: offered(c.Sites, device)}
 	// Rule 7, the kind's own checks, runs before the shared identity and
 	// key checks, so a kind's more specific reason, such as a system UUID
 	// that is not recorded, is the one reported.
@@ -939,7 +943,7 @@ func (c *Coordinator) admitOne(ctx context.Context, custody *ops.DeviceCustody, 
 		Fence:              spec.Fence,
 		Phase:              ops.PhaseAdmitted,
 		AdmittedAt:         metav1.NewTime(now),
-		Deadline:           metav1.NewTime(now.Add(kind.Deadline)),
+		Deadline:           metav1.NewTime(now.Add(kind.deadline(operation))),
 		InputDigest:        digest,
 		Snapshot:           snapshot(kind, operation, device, d.extra),
 		Creator:            operation.Envelope().Creator,

@@ -59,6 +59,9 @@ type Kind struct {
 	Name func(ops.Operation) string
 	// Deadline is how long the site may work on an admitted operation.
 	Deadline time.Duration
+	// DeadlineOf, when set and positive for an operation, replaces Deadline
+	// for it, such as an installation's virtual media phases.
+	DeadlineOf func(ops.Operation) time.Duration
 	// Effectful kinds can reach the server. A non-effectful kind, such as
 	// DeviceRecovery, that passes its deadline ends Failed: nothing it does
 	// can leave the server in an unknown state.
@@ -120,6 +123,15 @@ type Kind struct {
 	Clears func(ops.Operation) *ops.HeldOperationReference
 }
 
+func (k *Kind) deadline(operation ops.Operation) time.Duration {
+	if k.DeadlineOf != nil {
+		if d := k.DeadlineOf(operation); d > 0 {
+			return d
+		}
+	}
+	return k.Deadline
+}
+
 func (k *Kind) checksDiscovery(operation ops.Operation) bool {
 	return k.SkipsDiscovery == nil || !k.SkipsDiscovery(operation)
 }
@@ -159,6 +171,9 @@ type Admission struct {
 	Now time.Time
 	// DiscoveryInterval is how often BMC discovery reads each BMC.
 	DiscoveryInterval time.Duration
+	// Offered is the boot delivery methods every site serving the Device
+	// offers, in the first site's order of preference.
+	Offered []OfferedMethod
 }
 
 // RecoverySettleContext is what a held kind's settle hook sees. Hold carries

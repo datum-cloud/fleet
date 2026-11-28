@@ -216,7 +216,7 @@ func assignment(l *lab, kind, uid string, fence int64, spec any) site.Assignment
 }
 
 func installSpec() ops.DeviceInstallationSpec {
-	return ops.DeviceInstallationSpec{Image: ops.ImageInput{Name: "debian-12", Digest: "sha256:" + strings.Repeat("a", 64)}, BootInterface: "primary", TargetDisks: []string{"disk-0"}, RequestUID: "request-1"}
+	return ops.DeviceInstallationSpec{Image: ops.ImageInput{Name: "debian-12", Digest: "sha256:" + strings.Repeat("a", 64)}, BootInterface: "primary", TargetDisks: []string{"disk-0"}, Delivery: ops.DeliveryInput{Method: ops.DeliveryNetworkBoot}, RequestUID: "request-1"}
 }
 
 func TestInstallationRunsBothPhasesWithOneOnEach(t *testing.T) {
@@ -235,6 +235,24 @@ func TestInstallationRunsBothPhasesWithOneOnEach(t *testing.T) {
 	}
 	if _, open, _ := OpenAdmission(r.Store, mac, time.Now()); open {
 		t.Fatal("the boot admission stayed open after the install")
+	}
+}
+
+// TestNetworkBootNeedsNoWorkerIdentity runs a network boot install and a
+// wipe while the site worker's media identity cannot be read: neither reads
+// it, and both succeed.
+func TestNetworkBootNeedsNoWorkerIdentity(t *testing.T) {
+	l := newLab(t)
+	r := runner(t, l)
+	access := r.Access.(site.RedfishAccess)
+	access.MediaIdentity = failingIdentity{}
+	r.Access = access
+	if result, err := r.Run(context.Background(), assignment(l, "DeviceInstallation", "op-nb-identity", 1, installSpec())); err != nil || result.Phase != ops.PhaseSucceeded {
+		t.Fatalf("install = %+v, %v", result, err)
+	}
+	spec := ops.DeviceWipeSpec{Step: 1, CleaningPolicyDigest: "sha256:" + strings.Repeat("b", 64), TargetDisks: []string{"disk-0"}, BootInterface: "primary"}
+	if result, err := r.Run(context.Background(), assignment(l, "DeviceWipe", "op-wipe-identity", 2, spec)); err != nil || result.Phase != ops.PhaseSucceeded {
+		t.Fatalf("wipe = %+v, %v", result, err)
 	}
 }
 

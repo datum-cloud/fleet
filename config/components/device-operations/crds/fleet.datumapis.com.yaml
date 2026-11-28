@@ -342,6 +342,18 @@ spec:
                   retryName:
                     type: string
                     maxLength: 253
+                  waiting:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        maxLength: 128
+                      message:
+                        type: string
+                        maxLength: 512
+                    required:
+                    - reason
+                    - message
                 required:
                 - kind
                 - name
@@ -517,6 +529,23 @@ spec:
                   digest:
                     type: string
                     pattern: ^sha256:[0-9a-f]{64}$
+                  downloads:
+                    type: array
+                    maxItems: 8
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          minLength: 1
+                          maxLength: 63
+                        reference:
+                          type: string
+                          minLength: 1
+                          maxLength: 512
+                      required:
+                      - name
+                      - reference
                 required:
                 - name
                 - digest
@@ -578,6 +607,66 @@ spec:
                 required:
                 - addressClaim
                 - address
+              delivery:
+                type: object
+                properties:
+                  method:
+                    type: string
+                    enum:
+                    - NetworkBoot
+                    - VirtualMedia
+                  addresses:
+                    type: string
+                    enum:
+                    - DataNetwork
+                  mediaService:
+                    type: string
+                    maxLength: 64
+                  fetchWindow:
+                    type: string
+                    maxLength: 32
+                  reportWindow:
+                    type: string
+                    maxLength: 32
+                  reportAddress:
+                    type: object
+                    properties:
+                      addressClaim:
+                        type: object
+                        properties:
+                          apiGroup:
+                            type: string
+                            minLength: 1
+                            maxLength: 253
+                          kind:
+                            type: string
+                            minLength: 1
+                            maxLength: 63
+                          name:
+                            type: string
+                            minLength: 1
+                            maxLength: 253
+                        required:
+                        - apiGroup
+                        - kind
+                        - name
+                      address:
+                        type: string
+                        minLength: 2
+                        maxLength: 45
+                        x-kubernetes-validations:
+                        - rule: isIP(self)
+                          message: address must be one IP address without a prefix length
+                    required:
+                    - addressClaim
+                    - address
+                required:
+                - method
+                x-kubernetes-validations:
+                - rule: self.method != 'NetworkBoot' || (!has(self.addresses) && !has(self.mediaService) && !has(self.fetchWindow) && !has(self.reportWindow) && !has(self.reportAddress))
+                  message: network boot records no virtual media inputs
+                - rule: self.method != 'VirtualMedia' || (has(self.addresses) && has(self.mediaService) && has(self.fetchWindow) && has(self.reportWindow) && has(self.reportAddress))
+                  message: virtual media records the site's address mode, media service, phase windows and the Machine's report address
             required:
             - creator
             - deviceRef
@@ -586,6 +675,7 @@ spec:
             - image
             - bootInterface
             - targetDisks
+            - delivery
             x-kubernetes-validations:
             - rule: self == oldSelf
               message: an operation spec is immutable after create

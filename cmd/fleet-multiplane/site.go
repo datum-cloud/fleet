@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -155,7 +157,38 @@ func redfishConfig() (redfishwork.Config, redfish.Enrollment, error) {
 	if err != nil {
 		return redfishwork.Config{}, redfish.Enrollment{}, err
 	}
-	return redfishwork.Config{ConsoleRoot: console, BootRoot: boot, Synced: enrollment.DHCP == redfish.DHCPSynced, DHCPInstances: enrollment.DHCPInstances}, enrollment, nil
+	work := redfishwork.Config{ConsoleRoot: console, BootRoot: boot, Synced: enrollment.DHCP == redfish.DHCPSynced, DHCPInstances: enrollment.DHCPInstances, Artifacts: artifacts}
+	// The site's trust for the central media service: its certificate in
+	// PEM, base64 encoded. A site without it cannot use virtual media.
+	if value := os.Getenv("FLEET_MEDIA_CA"); value != "" {
+		ca, err := base64.StdEncoding.DecodeString(value)
+		if err != nil {
+			return redfishwork.Config{}, redfish.Enrollment{}, errors.New("FLEET_MEDIA_CA must be a base64 PEM certificate")
+		}
+		work.MediaCA = ca
+	}
+	// Where the media service sees this site's installed servers report
+	// from: IPv4 or IPv6 prefixes, comma separated.
+	for _, value := range strings.Split(os.Getenv("FLEET_MEDIA_REPORT_FROM"), ",") {
+		if value = strings.TrimSpace(value); value == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return redfishwork.Config{}, redfish.Enrollment{}, errors.New("FLEET_MEDIA_REPORT_FROM must list address prefixes")
+		}
+		work.ReportFrom = append(work.ReportFrom, prefix.Masked())
+	}
+	// How this site's installed servers reach the media service, when not
+	// at its recorded endpoint.
+	if value := os.Getenv("FLEET_MEDIA_REPORT_ORIGIN"); value != "" {
+		origin, err := redfish.ParseEndpoint(value)
+		if err != nil || !strings.HasPrefix(origin, "https://") {
+			return redfishwork.Config{}, redfish.Enrollment{}, errors.New("FLEET_MEDIA_REPORT_ORIGIN must be https://IP:port")
+		}
+		work.ReportOrigin = origin
+	}
+	return work, enrollment, nil
 }
 
 // siteRunner is the site runner for this cell's mode. A Redfish worker reads
@@ -191,7 +224,13 @@ func siteRunner(_ context.Context, config *rest.Config, cell string, store *site
 	for _, target := range enrollment.Targets {
 		targets[target.Device] = target
 	}
-	runner.Access = site.RedfishAccess{Credentials: site.SecretCredentials{Reader: reader, Namespace: namespace, Project: project}, Targets: targets}
+	access := site.RedfishAccess{Credentials: site.SecretCredentials{Reader: reader, Namespace: namespace, Project: project}, Targets: targets}
+	// The site worker's media service identity is its own Secret, read under
+	// a grant of its own, never part of a Device's BMC credential.
+	if identity := os.Getenv("FLEET_SITE_WORKER_IDENTITY_NAMESPACE"); identity != "" {
+		access.MediaIdentity = site.SecretWorkerIdentity{Reader: reader, Namespace: identity}
+	}
+	runner.Access = access
 	runner.Kinds = map[string]site.Kind{"DeviceInstallation": redfishwork.Installation{Config: work}, "DeviceWipe": redfishwork.Wipe{Config: work}}
 	return runner, nil
 }
@@ -265,4 +304,30 @@ func boot(command, origin, extraMAC, syncToken, tlsCert, tlsKey string) error {
 	}
 	// Emulated firmware takes minutes to fetch the installer.
 	return serveBoot(vm.BootHandler(store), vmwork.DefaultBootWindow)
+}
+
+// mediaStale probes the site store for a delayed worker: below the Device's
+// stored fence it can neither open a media window nor journal a media step.
+// Both attempts are refused, so the probe writes nothing.
+func mediaStale(device string) error {
+	store, err := openStore()
+	if err != nil {
+		return err
+	}
+	fence, _, err := store.Peek(device)
+	if err != nil {
+		return err
+	}
+	if fence < 2 {
+		return fmt.Errorf("media-stale: the Device has no fence above the first")
+	}
+	stale := fence - 1
+	if err := store.PutRecord(device, stale, "media", "stale-probe", map[string]any{"operation": "stale-probe", "fence": stale}); !errors.Is(err, site.ErrStaleFence) {
+		return fmt.Errorf("media-stale: a media window at fence %d was not refused: %v", stale, err)
+	}
+	if _, _, err := store.IntendWithPayload(device, stale, "stale-probe", "media-insert-boot", nil); !errors.Is(err, site.ErrStaleFence) {
+		return fmt.Errorf("media-stale: a media step at fence %d was not refused: %v", stale, err)
+	}
+	fmt.Printf("PASS at stored fence %d, a worker at fence %d was refused a media window and the media-insert-boot step\n", fence, stale)
+	return nil
 }

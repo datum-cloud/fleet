@@ -22,6 +22,27 @@ patches:
                 volumeMounts:
                   - {name: state, mountPath: /var/lib/fleet-lab/disks, subPath: lab-disks}
                   - {name: state, mountPath: /var/lib/fleet-lab-console, subPath: lab-console}
+                  # The lab BMC's fetched virtual media, attached to guests
+                  # as CD-ROMs at the path the BMC wrote them.
+                  - {name: state, mountPath: /var/lib/fleet-lab-media, subPath: lab-media, readOnly: true}
+              # Lab guests post their first-boot reports to this relay on the
+              # lab bridge, the one address they reach besides the boot
+              # Service. The path to the workstation's central media service
+              # rewrites their addresses, so the relay names each guest's own
+              # address in a PROXY header on the service's relay listener.
+              - name: report-relay
+                image: "${FLEET_SITE_IMAGE}"
+                imagePullPolicy: IfNotPresent
+                command: [fleet-multiplane, report-relay, --listen, "192.168.77.1:28443", --upstream, "192.168.5.2:28444"]
+                securityContext:
+                  runAsUser: 65534
+                  runAsNonRoot: true
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities: {drop: [ALL]}
+                resources:
+                  requests: {cpu: 10m, memory: 16Mi}
+                  limits: {memory: 64Mi}
   - target: {kind: Deployment, name: fleet-site-boot}
     patch: |-
       apiVersion: apps/v1

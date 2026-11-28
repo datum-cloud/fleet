@@ -1,0 +1,10 @@
+#!/bin/busybox sh
+# udhcpc event script for the installed lab OS: apply the lease's address
+# and default route on the data network.
+case "$1" in
+ bound|renew)
+  /bin/busybox ip addr flush dev "$interface"
+  /bin/busybox ip addr add "$ip/$mask" dev "$interface"
+  [ -z "$router" ] || /bin/busybox ip route add default via "${router%% *}" dev "$interface"
+  ;;
+esac

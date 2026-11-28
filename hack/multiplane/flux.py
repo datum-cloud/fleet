@@ -101,6 +101,9 @@ if PROVIDER == 'redfish':
 LAB_DHCP = os.environ.get('FLEET_LAB_DHCP', 'static')
 if LAB_DHCP not in ('static', 'synced') or (LAB_DHCP == 'synced' and PROVIDER != 'redfish'):
     raise SystemExit('FLEET_LAB_DHCP=synced needs the Redfish provider')
+# IPAM runs with synchronized DHCP, and in the virtual media suite for each
+# install's report address (run.sh sets FLEET_LAB_IPAM).
+LAB_IPAM = LAB_DHCP == 'synced' or os.environ.get('FLEET_LAB_IPAM') == '1'
 SYNCED_OBJECTS = ['fleet-site_fleet-site-dhcp-base__ConfigMap', 'fleet-site_fleet-site-dhcp-feed__Service', 'fleet-site_fleet-site-redfish-enrollment__ConfigMap'] if LAB_DHCP == 'synced' else []
 if LAB_DHCP == 'synced':
     SHARED.update({('configmaps', SITE, 'fleet-site-dhcp-base'): 'fleet-site-services', ('services', SITE, 'fleet-site-dhcp-feed'): 'fleet-site-services',
@@ -119,10 +122,12 @@ PLATFORM_LAYER_INVENTORY = {
     'flux-system/ipam-apiserver': sorted(['ipam-system_ipam-apiserver__ServiceAccount', '_ipam-apiserver_rbac.authorization.k8s.io_ClusterRole',
                                           'ipam-system_ipam-apiserver-auth-reader_rbac.authorization.k8s.io_RoleBinding',
                                           '_ipam-apiserver_rbac.authorization.k8s.io_ClusterRoleBinding',
-                                          '_ipam-apiserver:system:auth-delegator_rbac.authorization.k8s.io_ClusterRoleBinding',
+                                          # Flux's inventory writes each colon in a name as two
+                                          # underscores.
+                                          '_ipam-apiserver__system__auth-delegator_rbac.authorization.k8s.io_ClusterRoleBinding',
                                           'ipam-system_ipam-apiserver__Service', 'ipam-system_ipam-apiserver_apps_Deployment',
                                           'ipam-system_ipam-apiserver_policy_PodDisruptionBudget', 'ipam-system_ipam-apiserver_networking.k8s.io_NetworkPolicy']),
-} if LAB_DHCP == 'synced' else {}
+} if LAB_IPAM else {}
 EXPECTED['platform'] += list(PLATFORM_LAYER_INVENTORY)
 LAYER_INVENTORY = {
     'flux-system/fleet-site-services': sorted(['fleet-site_fleet-site-boot__Service', 'fleet-site_fleet-site-worker-policy__ConfigMap',
@@ -287,7 +292,7 @@ def stage(args):
         data = {'FLEET_CELL': env['cell'], 'FLEET_CELL_ENDPOINT': env['cellEndpoint'], 'FLEET_SOURCE_MARKER': marker}
         maps = []
         patches = []
-        if cluster == 'platform' and LAB_DHCP == 'synced':
+        if cluster == 'platform' and LAB_IPAM:
             resources.insert(2, '../../config/multiplane/clusters/platform-ipam')
         if cluster == 'hub':
             # Karmada-API Kustomizations live beside their kubeconfig Secret.
@@ -305,7 +310,10 @@ def stage(args):
             if args.site != 'absent':
                 resources.insert(2, '../../config/multiplane/clusters/cell-site')
                 data.update(FLEET_SITE_IMAGE=env['siteImage'], FLEET_BOOT_SERVICE_IP=BOOT_SERVICE_IP,
-                            FLEET_SITE_DISPATCH='true' if args.site == 'dispatch' else 'false')
+                            FLEET_SITE_DISPATCH='true' if args.site == 'dispatch' else 'false',
+                            # The central media service's certificate (public), so
+                            # Redfish workers verify it; empty where none runs.
+                            FLEET_MEDIA_CA=env.get('mediaCA', ''))
             if args.bad_kro_chart:
                 patches.append(child_patch('kro', [{'target': {'kind': 'OCIRepository', 'name': 'kro-chart'},
                                                     'patch': '- op: replace\n  path: /spec/ref/digest\n  value: %s\n' % MISSING_DIGEST}]))
@@ -421,6 +429,15 @@ def kustomizations(state, cluster):
     return {i['metadata']['namespace'] + '/' + i['metadata']['name']: i for i in kget(state, cluster, 'get', 'kustomizations.kustomize.toolkit.fluxcd.io', '-A')['items']}
 
 
+def at_revision(name, applied, revision):
+    """Whether a Kustomization applied what this run expects: the pushed
+    revision, or for IPAM's apiserver layer, which reconciles IPAM's own
+    published manifests, their pinned digest."""
+    if name == 'flux-system/ipam-apiserver':
+        return str(applied or '').endswith(IPAM_KUSTOMIZE_DIGEST)
+    return applied == revision
+
+
 def wait_cluster(state, cluster, timeout, names=None, revision=None, skip=(), observe_also=()):
     """All named (default: every) Kustomizations Ready, current generation, at the pushed revision.
 
@@ -456,7 +473,7 @@ def wait_cluster(state, cluster, timeout, names=None, revision=None, skip=(), ob
                 except SystemExit:
                     pass  # an unreachable cluster is sampled on the next poll
         if ready(source) and source.get('status', {}).get('lastHandledReconcileAt') == source_token and source.get('status', {}).get('artifact', {}).get('revision') == revision and all(
-                v['ready'] and v['revision'] == revision and v['requestedAt'] is not None and v['lastHandledReconcileAt'] == v['requestedAt'] for v in last.values()):
+                v['ready'] and at_revision(n, v['revision'], revision) and v['requestedAt'] is not None and v['lastHandledReconcileAt'] == v['requestedAt'] for n, v in last.items()):
             path = pathlib.Path(state) / 'evidence' / 'flux-reconciles.json'
             records = json.loads(path.read_text()) if path.exists() else []
             records.append({'cluster': cluster, 'revision': revision, 'observedAt': now(), 'sourceRequestedAt': source_token, 'sourceLastHandledReconcileAt': source['status']['lastHandledReconcileAt'], 'kustomizations': last,
@@ -671,7 +688,7 @@ def verify(args):
             problems.append('%s source at %s, pushed %s' % (cluster, src.get('artifactRevision'), rev['fluxRevision']))
         for n in ['flux-system/fleet-cluster'] + EXPECTED[cluster] + (SITE_LAYERS if cluster == 'cell' else []):
             k = snap['kustomizations'].get(n)
-            if not k or ['Ready', 'True', 'ReconciliationSucceeded'] not in k['conditions'] or k['generation'] != k['observedGeneration'] or k['lastAppliedRevision'] != rev['fluxRevision']:
+            if not k or ['Ready', 'True', 'ReconciliationSucceeded'] not in k['conditions'] or k['generation'] != k['observedGeneration'] or not at_revision(n, k['lastAppliedRevision'], rev['fluxRevision']):
                 problems.append('%s %s not Ready at the pushed revision: %s' % (cluster, n, k and (k['conditions'], k['lastAppliedRevision'])))
         for n in HELMRELEASES.get(cluster, []):
             h = snap['helmReleases'].get(n)
@@ -738,9 +755,9 @@ def verify(args):
     # apply is a dependency re-reconciling at the same revision (for example on
     # a fresh request) and is recorded, not counted as either evidence or fault.
     gated = [o for o in events if o['revision'] == first and not o['lastAppliedRevision'] and not o['inventoryEntries']]
-    regated = [o for o in events if o['revision'] == first and o['lastAppliedRevision'] == first]
+    regated = [o for o in events if o['revision'] == first and o['lastAppliedRevision'] and at_revision(o['kustomization'], o['lastAppliedRevision'], first)]
     for o in events:
-        if o['revision'] == first and o['lastAppliedRevision'] not in (None, first):
+        if o['revision'] == first and o['lastAppliedRevision'] and not at_revision(o['kustomization'], o['lastAppliedRevision'], first):
             problems.append('dependent applied another revision during bootstrap: %s' % o)
         elif o['revision'] == first and not o['lastAppliedRevision'] and o['inventoryEntries']:
             problems.append('dependent has an inventory before applying while its dependency is not Ready: %s' % o)

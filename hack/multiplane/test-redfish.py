@@ -113,7 +113,7 @@ synced_services = build(root / 'config/site/redfish/synced/services')
 synced_deployments = {d['metadata']['name']: d for d in synced_services if d.get('kind') == 'Deployment'}
 pod = lambda n: synced_deployments.get(n, {}).get('spec', {}).get('template', {}).get('spec', {})
 runtime_containers = {c['name']: c for c in pod('fleet-site-runtime').get('containers', [])}
-check('synced runtime adds Kea and the synchronizer beside libvirt', sorted(runtime_containers) == ['dhcp-sync', 'kea', 'libvirt'], str(sorted(runtime_containers)))
+check('synced runtime adds Kea and the synchronizer beside libvirt and the report relay', sorted(runtime_containers) == ['dhcp-sync', 'kea', 'libvirt', 'report-relay'], str(sorted(runtime_containers)))
 check('Kea and the synchronizer are not privileged and add only the network capabilities Kea needs',
       not any(runtime_containers.get(n, {}).get('securityContext', {}).get('privileged') for n in ('kea', 'dhcp-sync'))
       and runtime_containers.get('kea', {}).get('securityContext', {}).get('capabilities') == {'drop': ['ALL'], 'add': ['NET_BIND_SERVICE', 'NET_RAW']}
@@ -152,6 +152,10 @@ check('synced platform waits for both IPAM layers', flux.EXPECTED['platform'][-2
 ipam_layer = build(root / 'config/multiplane/ipam')
 ipam_ids = sorted('%s_%s_%s_%s' % (d['metadata'].get('namespace', ''), d['metadata']['name'], d['apiVersion'].rpartition('/')[0], d['kind']) for d in ipam_layer)
 check('IPAM layer inventory is exact', ipam_ids == flux.PLATFORM_LAYER_INVENTORY['flux-system/ipam-system'], str(ipam_ids))
+# Flux writes each colon in an inventory name as two underscores, so no
+# expected inventory ID may hold one.
+colons = [i for ids in list(flux.PLATFORM_LAYER_INVENTORY.values()) + list(flux.LAYER_INVENTORY.values()) for i in ids if ':' in i]
+check('expected inventory IDs use Flux\'s escaping', not colons, str(colons))
 check('no Secret in the IPAM layer', not any(d.get('kind') == 'Secret' for d in ipam_layer))
 postgres = next((d for d in ipam_layer if d.get('kind') == 'StatefulSet'), {}).get('spec', {}).get('template', {}).get('spec', {})
 check('IPAM PostgreSQL is pinned and reads its password from the enrolled Secret',

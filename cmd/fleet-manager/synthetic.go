@@ -65,7 +65,7 @@ func syntheticCustody(ctx context.Context, scheme *runtime.Scheme, providerConfi
 		return nil, nil, nil, err
 	}
 	namespace := flags.syntheticDeviceNamespace
-	sites := &delivery.Sites{Sites: map[string]delivery.Site{syntheticSite: remote}, Devices: map[string][]string{}}
+	sites := &delivery.Sites{Sites: map[string]delivery.Site{syntheticSite: remote}, Devices: map[string][]string{}, Methods: map[string][]custody.OfferedMethod{syntheticSite: custody.NetworkBootOnly}}
 	for device := range enrollment {
 		deviceNamespace, name, _ := strings.Cut(device, "/")
 		if deviceNamespace != namespace {
@@ -92,6 +92,7 @@ func syntheticCustody(ctx context.Context, scheme *runtime.Scheme, providerConfi
 		Cleaning: func(string) (string, error) { return custody.SpecDigest(syntheticCleaningPolicy) },
 		// The synthetic site enrolls one boot NIC and one disk per Device.
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
+		DeliveryMethods: custody.NetworkBootOnly,
 	}
 	// Synthetic staging has no BMC discovery. The manager writes fixture
 	// discovery for the synthetic site's Devices instead.

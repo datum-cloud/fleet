@@ -274,6 +274,23 @@ with tempfile.TemporaryDirectory() as tmp:
     for f in ('flux-tools', 'topology', 'flux-source', 'flux-bootstrap-$c', 'flux-platform', 'flux-milo', 'federation-enrollment', 'flux-site', 'flux-verify'):
         check('bootstrap phase present: ' + f, 'ph %s ' % f in run_sh or 'ph "%s" ' % f in run_sh)
     check('dispatch is a source revision', "--site dispatch" in steps and 'patch handoffdispatcher' not in steps)
+    steps_py = (root / 'hack/multiplane/media_steps.py').read_text()
+    # The stale-fence probe's opens must be well-formed, so only the fence
+    # decides the cell worker's answer: they send every field a window open
+    # takes.
+    server = (root / 'internal/site/redfishwork/mediaserver.go').read_text()
+    fields = re.findall(r'json:"([a-zA-Z0-9]+)', server[server.index('type OpenRequest struct'):server.index('}', server.index('type OpenRequest struct'))])
+    stale = steps_py[steps_py.index('def stale_fence'):steps_py.index('\ndef ', steps_py.index('def stale_fence') + 1)]
+    missing = [f for f in fields if "'%s'" % f not in stale]
+    check('the stale-fence probe sends every window open field', fields and not missing, str(missing))
+    arms = re.findall(r'^\s+arm\(([^,)]*)', steps_py, re.M)
+    check('every media lab fault is armed with the run state', arms and all(a == 's' for a in arms), str(arms))
+    graph = (root / 'config/site/redfish/graph/kustomization.yaml').read_text()
+    report_from = re.search(r'FLEET_MEDIA_REPORT_FROM, value: ([0-9./]+)', graph)
+    central = (root / 'hack/multiplane/media-central.sh').read_text()
+    clients = re.search(r'--clients "?(\S+?)"? ', central)
+    check('the central media service admits the site\'s report range as clients',
+          report_from is not None and clients is not None and report_from.group(1) in clients.group(1).split(','))
     check('fault injection suspends Flux first', 'suspend milo-consumer-a true' in steps and '"suspend":true' in (root / 'hack/multiplane/reflection-faults.py').read_text())
     check('RBAC revocation repaired by Flux, not the harness', "'apply'" not in (root / 'hack/multiplane/verify-rbac.py').read_text())
     for path in ('config/site/base/site.yaml', 'config/site/graph/rgd.yaml', 'config/site/instance/dispatcher.yaml', 'config/multiplane/coordination/crd.yaml',

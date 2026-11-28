@@ -25,6 +25,8 @@ spec:
       # Workers are created only after dispatch is enabled. The acceptance uses
       # this to prove delivery and retention before any effect can start.
       dispatch: boolean | default=false
+      # The central media service's certificate, for virtual media workers.
+      mediaCA: string | default=""
     status:
       bootOrigin: ${"http://" + bootService.spec.clusterIP + ":8080"}
       workerImage: ${hypervisor.spec.template.spec.containers[0].image}

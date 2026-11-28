@@ -125,7 +125,7 @@ func startEnvWith(t *testing.T, crds ...*apiextensionsv1.CustomResourceDefinitio
 	if err != nil {
 		t.Fatal(err)
 	}
-	sites := &delivery.Sites{Sites: map[string]delivery.Site{siteName: remote}, Devices: map[string][]string{}}
+	sites := &delivery.Sites{Sites: map[string]delivery.Site{siteName: remote}, Devices: map[string][]string{}, Methods: map[string][]custody.OfferedMethod{siteName: custody.NetworkBootOnly}}
 	coordinator := &custody.Coordinator{Client: admin, Registry: registry, Sites: sites, Config: custody.Config{Namespace: namespace, Principals: custody.Principals{
 		custody.CreatorMetalProvider: {{Username: providerUser}}, custody.CreatorReleaseController: {{Username: releaseUser}},
 	}}}
@@ -137,6 +137,7 @@ func startEnvWith(t *testing.T, crds ...*apiextensionsv1.CustomResourceDefinitio
 		Custody: coordinator, Namespace: namespace,
 		Cleaning:      func(string) (string, error) { return policyDigest, nil },
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
+		DeliveryMethods: custody.NetworkBootOnly,
 	}
 	e.class = &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "class-example"}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: "profile-example"}}}, Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: namespace, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "example"}}}}}}
 	e.create(e.class)

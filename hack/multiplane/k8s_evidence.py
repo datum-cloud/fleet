@@ -17,6 +17,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import harness  # noqa: E402  (site store layout)
 
 NS, SITE, CREDENTIALS = 'fleet-coordination', 'fleet-site', 'fleet-site-credentials'
+IDENTITY, IDENTITY_SECRET = 'fleet-site-worker-identity', 'fleet-site-worker-media'
+BMC_CREDENTIAL_KEYS = ['password', 'tlsPublicKeySHA256', 'username']
 LIBVIRT = 'qemu:///system?socket=/run/fleet-libvirt/libvirt-sock'
 REDFISH = os.environ.get('FLEET_SITE_PROVIDER') == 'redfish'
 CELL_LABEL, ROLE_LABEL = 'coordination.fleet.datumapis.com/cell', 'coordination.fleet.datumapis.com/role'
@@ -141,10 +143,28 @@ def worker_rbac(state, name):
         creds = get(state, '-n', CREDENTIALS, 'get', 'role', 'w-' + name)
         if creds['rules'] != [{'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': [spec['credential']], 'verbs': ['get']}]:
             raise SystemExit('Redfish worker credential Role is not get on its one Secret: %s' % creds['rules'])
-        record.update(ownCredentialReadable=True, credentialRoleRules=creds['rules'])
+        # The worker's media service identity is its own Secret: the worker
+        # gets exactly the site's, never another site's, and lists none. The
+        # BMC credential carries no client certificate.
+        own_identity = kubectl(state, '-n', IDENTITY, 'get', 'secret', IDENTITY_SECRET, '-o', 'name', check=False, config='worker-kubeconfig.json')
+        if own_identity.returncode:
+            raise SystemExit('Redfish worker cannot get the site worker identity Secret: ' + own_identity.stderr[:200])
+        for args in (('-n', IDENTITY, 'get', 'secret', IDENTITY_SECRET + '-another-cell'), ('-n', IDENTITY, 'get', 'secrets')):
+            r = kubectl(state, *args, check=False, config='worker-kubeconfig.json')
+            if r.returncode == 0 or 'forbidden' not in r.stderr.lower():
+                raise SystemExit('worker identity access allowed: ' + ' '.join(args[:4]) + ' ' + r.stderr[:200])
+            denied.append(args[1] + ' ' + ' '.join(args[2:4]))
+        identity_role = get(state, '-n', IDENTITY, 'get', 'role', 'w-' + name)
+        if identity_role['rules'] != [{'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': [IDENTITY_SECRET], 'verbs': ['get']}]:
+            raise SystemExit('Redfish worker identity Role is not get on the one identity Secret: %s' % identity_role['rules'])
+        keys = sorted(get(state, '-n', CREDENTIALS, 'get', 'secret', spec['credential']).get('data', {}))
+        if keys != BMC_CREDENTIAL_KEYS:
+            raise SystemExit('the BMC credential Secret holds more than BMC credentials: %s' % keys)
+        record.update(ownCredentialReadable=True, credentialRoleRules=creds['rules'], ownIdentityReadable=True, identityRoleRules=identity_role['rules'],
+                      bmcCredentialKeys=keys)
     write(s / 'k8s-worker-rbac.json', record)
     print('worker-rbac: per-operation ServiceAccount reads only its own handoff; list, other names, status, spec, Secrets and site writes forbidden'
-          + ("; it gets only its own Device's BMC credential Secret, never another's, and lists none" if REDFISH else ''))
+          + ("; it gets only its own Device's BMC credential Secret, never another's, and lists none; it gets the site worker identity Secret, never another site's; the BMC credential holds only BMC keys" if REDFISH else ''))
 
 
 def record_pod_interrupt(state, before, after):

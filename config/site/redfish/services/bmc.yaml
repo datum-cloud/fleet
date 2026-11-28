@@ -60,6 +60,10 @@ spec:
             - {name: state, mountPath: /var/lib/fleet-bmc, subPath: bmc-state}
             - {name: credentials, mountPath: /etc/fleet-bmc-credentials, readOnly: true}
             - {name: tls, mountPath: /etc/fleet-bmc-tls, readOnly: true}
+            # Virtual media the BMC fetched, verifying the media service
+            # against its CA.
+            - {name: state, mountPath: /var/lib/fleet-lab-media, subPath: lab-media}
+            - {name: media-ca, mountPath: /etc/fleet-bmc-media-ca, readOnly: true}
             - {name: tmp, mountPath: /tmp}
       volumes:
         - name: state
@@ -68,5 +72,7 @@ spec:
           secret: {secretName: fleet-site-bmc-credentials, defaultMode: 0400}
         - name: tls
           secret: {secretName: fleet-site-bmc-tls, defaultMode: 0400}
+        - name: media-ca
+          secret: {secretName: fleet-site-media-ca, defaultMode: 0400}
         - name: tmp
           emptyDir: {}

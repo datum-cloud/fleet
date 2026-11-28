@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -127,7 +128,12 @@ func ParseBootOrigin(value string) (string, error) {
 	return "http://" + ip.To4().String() + ":" + strconv.Itoa(port), nil
 }
 
-// VerifyArtifacts derives the admitted image from the exact two-artifact manifest.
+// Artifacts are the image's artifacts, in manifest order: the installer
+// kernel and initrd network boot serves, and the boot medium virtual media
+// mounts, which holds the same kernel and initrd.
+var Artifacts = []string{"kernel", "installer.gz", "boot.iso"}
+
+// VerifyArtifacts derives the admitted image from the exact artifact manifest.
 func VerifyArtifacts(dir string) (string, error) {
 	b, err := os.ReadFile(dir + "/SHA256SUMS")
 	if err != nil {
@@ -137,7 +143,7 @@ func VerifyArtifacts(dir string) (string, error) {
 	seen := map[string]bool{}
 	for _, line := range lines {
 		f := strings.Fields(line)
-		if len(lines) != 2 || len(f) != 2 || (f[1] != "kernel" && f[1] != "installer.gz") || seen[f[1]] {
+		if len(lines) != len(Artifacts) || len(f) != 2 || !slices.Contains(Artifacts, f[1]) || seen[f[1]] {
 			return "", errors.New("invalid artifact manifest")
 		}
 		seen[f[1]] = true

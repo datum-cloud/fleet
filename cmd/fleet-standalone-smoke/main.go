@@ -84,6 +84,8 @@ func main() {
 		Cleaning:  fixtureCleaning,
 		// The fixture Device's boot NIC and the simulator's one enrolled disk.
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
+		// The simulator site offers only network boot.
+		DeliveryMethods: custody.NetworkBootOnly,
 	}
 	must(standalone.Runner{Client: provider, Allocator: allocator, Options: options}.Run(ctx, phase))
 	fmt.Printf("standalone synthetic smoke phase %s completed\n", phase)
@@ -103,7 +105,7 @@ func coordinate(ctx context.Context, config *rest.Config, registry *custody.Regi
 	if err != nil {
 		return err
 	}
-	sites := &delivery.Sites{Sites: map[string]delivery.Site{siteName: remote}, Devices: map[string][]string{}}
+	sites := &delivery.Sites{Sites: map[string]delivery.Site{siteName: remote}, Devices: map[string][]string{}, Methods: map[string][]custody.OfferedMethod{siteName: custody.NetworkBootOnly}}
 	for _, device := range devices {
 		if device = strings.TrimSpace(device); device != "" {
 			sites.Devices[device] = []string{siteName}

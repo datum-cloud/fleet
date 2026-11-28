@@ -93,12 +93,19 @@ func checkNetworkBoot(ctx context.Context, admission *Admission, kind, bootInter
 	if network == nil {
 		return nil
 	}
+	return checkAddressClaim(ctx, admission, kind, *network)
+}
+
+// checkAddressClaim requires an operation's recorded address to still be
+// bound to the operation's own claim, through the check registered for the
+// claim's kind.
+func checkAddressClaim(ctx context.Context, admission *Admission, kind string, network ops.BootNetworkInput) *Refusal {
 	claim := network.AddressClaim
 	check := admission.Registry.BootAddressClaim(claim.APIGroup, claim.Kind)
 	if check == nil {
 		return refuse(ReasonBootAddressUnsupported, "boot address claims of kind %s/%s cannot be checked", claim.APIGroup, claim.Kind)
 	}
-	if err := check(ctx, admission.Reader, admission.Operation, kind, *network); errors.Is(err, bootaddress.ErrUnreachable) {
+	if err := check(ctx, admission.Reader, admission.Operation, kind, network); errors.Is(err, bootaddress.ErrUnreachable) {
 		// Fail closed without deciding: the claim may still hold the address.
 		refusal := refuse(ReasonBootAddress, "waiting: the boot address claim %s could not be read", claim.Name)
 		refusal.Retry = true
@@ -160,7 +167,10 @@ func DeviceInstallationKind() Kind {
 		Name: func(operation ops.Operation) string {
 			return InstallationName(allocationName(operation), operation.(*ops.DeviceInstallation).Spec.RequestUID)
 		},
-		Deadline:      InstallationDeadline,
+		Deadline: InstallationDeadline,
+		DeadlineOf: func(operation ops.Operation) time.Duration {
+			return DeliveryDeadline(operation.(*ops.DeviceInstallation).Spec.Delivery)
+		},
 		Effectful:     true,
 		BootInterface: func(operation ops.Operation) string { return operation.(*ops.DeviceInstallation).Spec.BootInterface },
 		Check: func(ctx context.Context, admission *Admission) *Refusal {
@@ -169,10 +179,22 @@ func DeviceInstallationKind() Kind {
 			if installation.Spec.Bootstrap != nil {
 				return refuse(ReasonBootstrapUnsupported, "bootstrap payloads need the sealed store, which is not implemented")
 			}
-			return checkNetworkBoot(ctx, admission, "DeviceInstallation", installation.Spec.BootInterface, installation.Spec.BootNetwork)
+			if refusal := checkDelivery(admission, &installation.Spec); refusal != nil {
+				return refusal
+			}
+			if refusal := checkNetworkBoot(ctx, admission, "DeviceInstallation", installation.Spec.BootInterface, installation.Spec.BootNetwork); refusal != nil {
+				return refusal
+			}
+			if report := installation.Spec.Delivery.ReportAddress; report != nil {
+				return checkAddressClaim(ctx, admission, "DeviceInstallation", *report)
+			}
+			return nil
+		},
+		SnapshotExtra: func(admission *Admission) map[string]string {
+			return map[string]string{ExtraDeliveryMethod: string(admission.Operation.(*ops.DeviceInstallation).Spec.Delivery.Method)}
 		},
 		Settles: []SettleRule{{Held: "DeviceInstallation"}},
-		Reasons: append(append([]Reason{{Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}}, networkBootReasons...), workerReasons...),
+		Reasons: append(append(append([]Reason{{Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}}, networkBootReasons...), workerReasons...), deliveryReasons...),
 		Evidence: StrictEvidence(evidenceLimit, func(_ ops.Operation, evidence *ops.InstallationEvidence) error {
 			return validateSteps(evidence.Steps)
 		}),
@@ -200,13 +222,16 @@ func DeviceWipeKind() Kind {
 		BootInterface: func(operation ops.Operation) string { return operation.(*ops.DeviceWipe).Spec.BootInterface },
 		Check: func(ctx context.Context, admission *Admission) *Refusal {
 			wipe := admission.Operation.(*ops.DeviceWipe)
+			if refusal := checkWipeDelivery(admission); refusal != nil {
+				return refusal
+			}
 			return checkNetworkBoot(ctx, admission, "DeviceWipe", wipe.Spec.BootInterface, wipe.Spec.BootNetwork)
 		},
 		// A wipe after release settles an installation hold. A held wipe is
 		// settled by a later wipe only after a DeviceRecovery with Retry.
 		Settles:   []SettleRule{{Held: "DeviceInstallation"}, {Held: "DeviceWipe", RequiresRetry: true}},
 		Retryable: true,
-		Reasons:   append(append([]Reason{}, networkBootReasons...), workerReasons...),
+		Reasons:   append(append([]Reason{{Name: ReasonDeliveryMismatch, RaisedBy: RaisedByCoordinator}}, networkBootReasons...), workerReasons...),
 		Evidence: StrictEvidence(evidenceLimit, func(_ ops.Operation, evidence *ops.WipeEvidence) error {
 			if len(evidence.WipedDisks) > 16 {
 				return errors.New("evidence records at most 16 disks")

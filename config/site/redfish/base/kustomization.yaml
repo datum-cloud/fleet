@@ -7,6 +7,7 @@ resources:
   - ../../base
   - bmc.yaml
   - credentials.yaml
+  - identity.yaml
 patches:
   - target: {kind: ValidatingAdmissionPolicy, name: fleet-site-kro-worker-jobs}
     patch: |-
@@ -28,8 +29,9 @@ patches:
             !c.env.exists(e, e.name == 'FLEET_LIBVIRT_URI'))
           message: a Redfish worker Job must select the Redfish provider and carry no libvirt URI
   # kro may create, in fleet-site-credentials, only a per-operation Role
-  # that gets one named credential Secret, bound to that operation's own
-  # ServiceAccount.
+  # that gets one named credential Secret, and in fleet-site-worker-identity
+  # only one that gets the site worker identity Secret, each bound to that
+  # operation's own ServiceAccount.
   - target: {kind: ValidatingAdmissionPolicy, name: fleet-site-kro-worker-identity}
     patch: |-
       - op: test
@@ -37,7 +39,7 @@ patches:
         value: a worker Role may grant only get on its own handoff
       - op: replace
         path: /spec/matchConstraints/namespaceSelector/matchExpressions/0/values
-        value: [fleet-site, fleet-coordination, fleet-site-credentials]
+        value: [fleet-site, fleet-coordination, fleet-site-credentials, fleet-site-worker-identity]
       - op: replace
         path: /spec/validations/2
         value:
@@ -46,7 +48,10 @@ patches:
             (has(object.rules) && size(object.rules) == 1 && object.rules.all(r, r.apiGroups == [''] &&
             r.resources == ['secrets'] && r.verbs == ['get'] && has(r.resourceNames) && size(r.resourceNames) == 1 &&
             r.resourceNames.all(n, n.matches('^bmc-[a-f0-9]{20}$')))) :
+            request.namespace == 'fleet-site-worker-identity' ?
+            (has(object.rules) && size(object.rules) == 1 && object.rules.all(r, r.apiGroups == [''] &&
+            r.resources == ['secrets'] && r.verbs == ['get'] && has(r.resourceNames) && r.resourceNames == ['fleet-site-worker-media'])) :
             (has(object.rules) && size(object.rules) == 1 && object.rules.all(r, r.apiGroups == ['coordination.fleet.datumapis.com'] &&
             r.resources == ['machineallocationhandoffs'] && r.verbs == ['get'] &&
             has(r.resourceNames) && r.resourceNames == [variables.handoff])))
-          message: a worker Role may grant only get on its own handoff, or get on one named BMC credential
+          message: a worker Role may grant only get on its own handoff, get on one named BMC credential, or get on the site worker identity

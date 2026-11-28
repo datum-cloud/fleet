@@ -140,6 +140,38 @@ type Allocator struct {
 	// through them, by claim kind, until no operation names their kind.
 	// IPAM's claimer always takes part as the default.
 	PreviousBootAddresses []bootaddress.Source
+	// DeliveryMethods is the site's declared boot delivery methods, in its
+	// order of preference. It is the same declaration the coordinator
+	// admits against. Each installation records the method selected from
+	// it.
+	DeliveryMethods []custody.OfferedMethod
+}
+
+// ErrNoReportAddress means the site has no address source that claims a
+// Machine's address without a boot attachment, so a virtual media install
+// could not record the address its report must come from.
+var ErrNoReportAddress = errors.New("allocation: virtual media needs an address source that claims the Machine's address")
+
+// ErrNoDeliveryMethod means the site offers no delivery method the server
+// is qualified for, so nothing can install it.
+var ErrNoDeliveryMethod = errors.New("allocation: the site offers no delivery method the server is qualified for")
+
+// selectDelivery reads the Device and its custody and selects the method an
+// installation records.
+func (a *Allocator) selectDelivery(ctx context.Context, allocation *fleetv1.MachineAllocation) (ops.DeliveryInput, error) {
+	key := client.ObjectKey{Namespace: a.Namespace, Name: allocation.Spec.DeviceRef.Name}
+	device, state := &inventory.Device{}, &ops.DeviceCustody{}
+	if err := a.Provider.Get(ctx, key, device); err != nil {
+		return ops.DeliveryInput{}, err
+	}
+	if err := a.Provider.Get(ctx, key, state); err != nil {
+		return ops.DeliveryInput{}, err
+	}
+	input, ok := custody.SelectMethod(a.DeliveryMethods, custody.QualifiedMethods(device), state)
+	if !ok {
+		return ops.DeliveryInput{}, ErrNoDeliveryMethod
+	}
+	return input, nil
 }
 
 // Get returns the Machine's allocation, or nil.
@@ -376,9 +408,28 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 	} else if !apierrors.IsNotFound(err) {
 		return nil, err
 	}
-	network, err := a.bootNetwork(ctx, a.installClaims(), allocation, "DeviceInstallation", name)
+	delivery, err := a.selectDelivery(ctx, allocation)
 	if err != nil {
 		return nil, err
+	}
+	// Network boot needs a provisioning address. Virtual media needs the
+	// Machine's address instead, which its installed OS reports from; it
+	// is claimed, recorded and released the same way, with no boot
+	// attachment.
+	var network *ops.BootNetworkInput
+	switch delivery.Method {
+	case ops.DeliveryNetworkBoot:
+		if network, err = a.bootNetwork(ctx, a.installClaims(), allocation, "DeviceInstallation", name); err != nil {
+			return nil, err
+		}
+	case ops.DeliveryVirtualMedia:
+		source := a.installClaims()
+		if _, attaching := source.(attaches); source == nil || attaching {
+			return nil, ErrNoReportAddress
+		}
+		if delivery.ReportAddress, err = a.bootNetwork(ctx, source, allocation, "DeviceInstallation", name); err != nil {
+			return nil, err
+		}
 	}
 	operation := &ops.DeviceInstallation{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: a.Namespace},
@@ -389,6 +440,7 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 			BootInterface:     allocation.Spec.BootInterface,
 			TargetDisks:       slices.Clone(allocation.Spec.TargetDisks),
 			BootNetwork:       network,
+			Delivery:          delivery,
 		},
 	}
 	return operation, a.createOnce(ctx, a.Provider, operation, &ops.DeviceInstallation{})

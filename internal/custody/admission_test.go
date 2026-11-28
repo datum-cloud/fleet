@@ -270,12 +270,12 @@ func TestAdmissionPreconditions(t *testing.T) {
 		fence := e.custody(device.Name).Spec.Fence
 		operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName("alloc-boot", "request-1"), Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
 			OperationEnvelope: envelope(device, providerUser, allocated("alloc-boot")), RequestUID: "request-1",
-			Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, Bootstrap: &ops.SealedInput{Ref: "sealed-example", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"},
+			Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, Bootstrap: &ops.SealedInput{Ref: "sealed-example", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"}, Delivery: ops.DeliveryInput{Method: ops.DeliveryNetworkBoot},
 		}}
 		e.create(operation)
 		missing := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName("alloc-boot", "request-2"), Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
 			OperationEnvelope: envelope(device, providerUser, allocated("alloc-boot")), RequestUID: "request-2",
-			Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "absent", TargetDisks: []string{"disk-0"},
+			Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "absent", TargetDisks: []string{"disk-0"}, Delivery: ops.DeliveryInput{Method: ops.DeliveryNetworkBoot},
 		}}
 		e.create(missing)
 		e.settle(device.Name)
@@ -301,7 +301,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		withAddress := func(request string, input *ops.BootNetworkInput) *ops.DeviceInstallation {
 			operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: name(request), Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
 				OperationEnvelope: envelope(device, providerUser, allocated("alloc-net")), RequestUID: request,
-				Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"}, BootNetwork: input,
+				Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"}, Delivery: ops.DeliveryInput{Method: ops.DeliveryNetworkBoot}, BootNetwork: input,
 			}}
 			e.create(operation)
 			return operation
@@ -382,7 +382,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		e.ipClaim(bootaddress.ClaimName(name), name, "DeviceInstallation", "Bound", "198.51.100.20")
 		operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
 			OperationEnvelope: envelope(device, providerUser, allocated("alloc-kind")), RequestUID: "request-1",
-			Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"},
+			Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"}, Delivery: ops.DeliveryInput{Method: ops.DeliveryNetworkBoot},
 			BootNetwork: &ops.BootNetworkInput{AddressClaim: fleetv1.TypedReference{APIGroup: "networking.example.com", Kind: "AddressLease", Name: bootaddress.ClaimName(name)}, Address: "198.51.100.20"},
 		}}
 		e.create(operation)
