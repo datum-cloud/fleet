@@ -341,40 +341,8 @@ func (c *Client) Identify(ctx context.Context, t Target) (System, error) {
 	if err := json.Unmarshal(s.RawData, &raw); err != nil {
 		return System{}, classify(err)
 	}
-	reset := raw.Actions.Reset
-	target, err := cleanPath(reset.Target)
-	if err != nil || !strings.HasPrefix(target, sys.Path+"/") {
-		return System{}, fmt.Errorf("%w: ComputerSystem.Reset target not on the enrolled System", ErrUnsupported)
-	}
-	sys.ResetTarget = target
-	sys.ResetTypes = reset.Allowed
-	if len(sys.ResetTypes) == 0 && reset.Info != "" {
-		info, err := cleanPath(reset.Info)
-		if err != nil || !strings.HasPrefix(info, sys.Path+"/") {
-			return System{}, fmt.Errorf("%w: ActionInfo not on the enrolled System", ErrUnsupported)
-		}
-		// Not schemas.ActionInfo: its typed decode rejects the whole document
-		// for one off-schema property, as the DMTF emulator's string
-		// "Required": "true". Only the ResetType values are read.
-		resp, err := api.Get(info)
-		var ai struct {
-			Parameters []struct {
-				Name, DataType  string
-				AllowableValues []string
-			}
-		}
-		if err == nil {
-			err = json.NewDecoder(resp.Body).Decode(&ai)
-		}
-		schemas.DeferredCleanupHTTPResponse(resp)
-		if err != nil {
-			return System{}, classify(err)
-		}
-		for _, p := range ai.Parameters {
-			if p.Name == "ResetType" && (p.DataType == "" || p.DataType == "String") {
-				sys.ResetTypes = p.AllowableValues
-			}
-		}
+	if sys.ResetTarget, sys.ResetTypes, err = resetTypes(api, sys.Path, raw); err != nil {
+		return System{}, err
 	}
 	for _, b := range s.Boot.AllowableBootSourceOverrideTargetValues {
 		sys.BootTargets = append(sys.BootTargets, string(b))

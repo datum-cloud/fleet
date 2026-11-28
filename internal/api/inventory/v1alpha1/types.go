@@ -256,7 +256,8 @@ type ObservedManager struct {
 }
 
 // ObservedSystem is one Redfish ComputerSystem. PowerState is an observation
-// only; discovery never changes power.
+// only; discovery never changes power. ResetTypes are the ComputerSystem.Reset
+// types the BMC advertises for the System, read but never invoked.
 type ObservedSystem struct {
 	ID                string                     `json:"id"`
 	UUID              string                     `json:"uuid,omitempty"`
@@ -266,6 +267,7 @@ type ObservedSystem struct {
 	SKU               string                     `json:"sku,omitempty"`
 	PowerState        string                     `json:"powerState,omitempty"`
 	NetworkInterfaces []ObservedNetworkInterface `json:"networkInterfaces,omitempty"`
+	ResetTypes        []string                   `json:"resetTypes,omitempty"`
 }
 
 // ObservedNetworkInterface is one Redfish EthernetInterface.

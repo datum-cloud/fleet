@@ -273,6 +273,7 @@ status:
           serialNumber: SYNTHETIC-0001
           sku: TAG0001
           powerState: "On"
+          resetTypes: ["On", ForceOff, ForceRestart]
           networkInterfaces:
             - {id: NIC.1, macAddress: "00:00:5e:00:53:01", linkStatus: LinkUp, speedMbps: 25000}
   conditions: [...]
@@ -324,11 +325,20 @@ is `StaleObservation`.
 ## What is read
 
 Service root, then every Manager and every ComputerSystem (up to 16 of each),
-with each one's EthernetInterfaces (up to 32). Collections follow
-`Members@odata.nextLink` for up to 8 pages. Every member must sit under its
-collection. Documents are decoded leniently: only the named properties are
-read, so an off-schema vendor property elsewhere in a document does not fail
-the read.
+with each one's EthernetInterfaces (up to 32). For each System it records
+the `ComputerSystem.Reset` types the BMC advertises, inline or from the
+System's own ActionInfo, as `resetTypes`. It reads the action's description
+and never invokes it. A reset target or ActionInfo off the System, or an
+ActionInfo that cannot be read, records none and keeps the rest of the
+inventory. A rejected credential on the ActionInfo, such as a 403, fails the
+read like any other rejected credential. Nothing reads `resetTypes` yet: it is
+recorded for planned Device power operations, which will refuse an action the
+server does not offer.
+
+Collections follow `Members@odata.nextLink` for up to 8 pages. Every member
+must sit under its collection. Documents are decoded leniently: only the
+named properties are read, so an off-schema vendor property elsewhere in a
+document does not fail the read.
 
 Not read: `Chassis`, `NetworkAdapters` and their ports, firmware inventory,
 sessions. Basic authentication is used; no Redfish session is created.
