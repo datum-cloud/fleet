@@ -15,14 +15,15 @@ require_count() {
   fi
 }
 
-require_count 6 'runAsUser: 65532'
-require_count 6 'runAsGroup: 65532'
-require_count 6 'fsGroup: 65532'
-require_count 11 'defaultMode: 288'
-require_count 6 'imagePullPolicy: Never'
-require_count 4 'suspend: true'
+require_count 7 'runAsUser: 65532'
+require_count 7 'runAsGroup: 65532'
+require_count 7 'fsGroup: 65532'
+require_count 17 'defaultMode: 288'
+require_count 7 'imagePullPolicy: Never'
+require_count 5 'suspend: true'
 require_count 1 'name: fleet-smoke-reinstall'
 require_count 1 '--phase=reinstall'
+require_count 1 '--phase=commission'
 require_count 1 'fsGroupChangePolicy: OnRootMismatch'
 require_count 1 'mountPath: /var/lib/fleet'
 require_count 1 'volumeClaimTemplates:'

@@ -1,0 +1,29 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-capacity-projector
+  annotations:
+    kubernetes.io/display-name: Fleet Capacity Projector
+    kubernetes.io/description: The only writer of MachineCapacity status. Derives Prepared, Healthy, Available and the hardware from commissioning, discovery and custody evidence.
+spec:
+  launchStage: Alpha
+  includedPermissions:
+    - metal.datumapis.com/machinecapacities.get
+    - metal.datumapis.com/machinecapacities.list
+    - metal.datumapis.com/machinecapacities.watch
+    - metal.datumapis.com/machinecapacities.updateStatus
+    - fleet.datumapis.com/devices.get
+    - fleet.datumapis.com/devices.list
+    - fleet.datumapis.com/devices.watch
+    - fleet.datumapis.com/devicecustodies.get
+    - fleet.datumapis.com/devicecustodies.list
+    - fleet.datumapis.com/devicecustodies.watch
+    - fleet.datumapis.com/devicecommissionings.get
+    - fleet.datumapis.com/devicecommissionings.list
+    - fleet.datumapis.com/devicecommissionings.watch
+    - fleet.datumapis.com/devicecommissioningplans.get
+    - fleet.datumapis.com/devicecommissioningplans.list
+    - fleet.datumapis.com/devicecommissioningplans.watch
+    - fleet.datumapis.com/devicecommissioningplanapprovals.get
+    - fleet.datumapis.com/devicecommissioningplanapprovals.list
+    - fleet.datumapis.com/devicecommissioningplanapprovals.watch

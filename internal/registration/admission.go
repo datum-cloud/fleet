@@ -14,8 +14,6 @@ package registration
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -73,25 +71,6 @@ type Handler struct {
 	Projects  []string
 	Resolve   func(context.Context, string) (Project, error)
 	Authorize func(context.Context, Project, authenticationv1.UserInfo, string, string, string) error
-}
-
-// Aliases returns the normalized hardware identifiers of a Device: serial,
-// system UUID and, when present, the provider host reference. Two Devices
-// sharing any alias may be the same machine.
-func Aliases(device *inventory.Device) []string {
-	var result []string
-	pairs := [][2]string{{"serial", strings.ToLower(strings.TrimSpace(device.Spec.Identity.Serial))}, {"uuid", strings.ToLower(strings.TrimSpace(device.Spec.Identity.SystemUUID))}}
-	if reference := device.Spec.ProviderHostRef; reference != nil {
-		encoded, _ := json.Marshal([]string{strings.ToLower(strings.TrimSpace(reference.System)), strings.ToLower(strings.TrimSpace(reference.Type)), strings.ToLower(strings.TrimSpace(reference.ID))})
-		pairs = append(pairs, [2]string{"provider", string(encoded)})
-	}
-	for _, pair := range pairs {
-		if pair[1] != "" {
-			digest := sha256.Sum256([]byte(pair[0] + ":" + pair[1]))
-			result = append(result, pair[0]+":"+hex.EncodeToString(digest[:]))
-		}
-	}
-	return result
 }
 
 var systemUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -291,7 +270,7 @@ func (handler *Handler) evaluate(ctx context.Context, name string, request admis
 // provider scope. It is a point-in-time read: see the stage-1 contract for the
 // race with a concurrently created duplicate Device.
 func (handler *Handler) scan(ctx context.Context, selectedProject string, selected *inventory.Device) error {
-	selectedAliases := Aliases(selected)
+	selectedAliases := inventory.Aliases(selected)
 	for _, name := range handler.Projects {
 		project, err := handler.Resolve(ctx, name)
 		if err != nil {
@@ -310,7 +289,7 @@ func (handler *Handler) scan(ctx context.Context, selectedProject string, select
 			if name == selectedProject && device.UID == selected.UID {
 				continue
 			}
-			if overlaps(Aliases(device), selectedAliases) {
+			if overlaps(inventory.Aliases(device), selectedAliases) {
 				return fmt.Errorf("another Device (%s) shares recorded hardware identity; resolve the duplicate before registration", describe(name, selectedProject, device.Namespace, device.Name))
 			}
 		}
@@ -329,7 +308,7 @@ func (handler *Handler) scan(ctx context.Context, selectedProject string, select
 			if matched == nil || inventory.CapacityBackingError(matched) != nil {
 				return fmt.Errorf("capacity %s has unresolved physical identity; registration cannot establish non-conflict", describe(name, selectedProject, capacity.Namespace, capacity.Name))
 			}
-			if overlaps(Aliases(matched), selectedAliases) {
+			if overlaps(inventory.Aliases(matched), selectedAliases) {
 				return fmt.Errorf("capacity %s is backed by a Device sharing recorded hardware identity", describe(name, selectedProject, capacity.Namespace, capacity.Name))
 			}
 		}

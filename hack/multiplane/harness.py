@@ -34,7 +34,7 @@ class Interrupted(Exception):
     pass
 DEBIAN = 'debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc'
 # Subcommands and errors the live harness depends on. A missing one blocks before any resource exists.
-REQUIRED_SOURCE_MARKERS = tuple('"%s"' % c for c in ('seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse',
+REQUIRED_SOURCE_MARKERS = tuple('"%s"' % c for c in ('seed', 'commission', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse',
                                                      'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer',
                                                      'admit-install-b', 'recovery-mismatch', 'probe-unallocatable', 'tenant-isolation')) + ('multiplane.ErrLocationNotServed',)
 READINESS_PACKAGES = ('./internal/coordination', './internal/custody', './internal/site/...', './internal/multiplane', './cmd/fleet-multiplane')
@@ -361,13 +361,23 @@ def provider_key(item):
     return operation_key(item['kind'], item['metadata']['name'], item.get('status', {}).get('fence', 0))
 
 
+def is_commissioning(operation):
+    """Whether a site key is a DeviceCommissioning's. The commission phase
+    runs before any allocation and records its own evidence, so the install
+    and wipe evidence leaves it out."""
+    return operation.startswith('devicecommissioning.')
+
+
 def sanitized_operations(store, results=(), redfish=None):
-    """Each journaled operation in admission order: its site key, fence, kind
-    (from its step names), steps with their states, and its stored result
-    phase. Step payloads are never read out."""
+    """Each journaled install or wipe in admission order: its site key, fence,
+    kind (from its step names), steps with their states, and its stored
+    result phase. Step payloads are never read out. Commissionings are left
+    out; commissionings() returns them."""
     redfish = PROVIDER == 'redfish' if redfish is None else redfish
     ops = {}
     for e in (store or {}).get('journal') or []:
+        if is_commissioning(e['operation']):
+            continue
         o = ops.setdefault(e['operation'], {'operation': e['operation'], 'fence': e['fence'], 'steps': []})
         o['steps'].append([e['step'], e['state']])
     phases = {(operation_key(r['result']['operation']['kind'], r['result']['operation']['name'], r['result']['fence']), r['result']['fence']): r['result'].get('phase') for r in results}
@@ -379,6 +389,16 @@ def sanitized_operations(store, results=(), redfish=None):
                  phase=phases.get((o['operation'], o['fence'])), domain=LAB_DOMAIN if redfish else domain_name(o['operation']))
         out.append(o)
     return out
+
+
+def commissionings(store):
+    """Each journaled commissioning: its site key, fence and steps."""
+    ops = {}
+    for e in (store or {}).get('journal') or []:
+        if is_commissioning(e['operation']):
+            o = ops.setdefault(e['operation'], {'operation': e['operation'], 'fence': e['fence'], 'steps': []})
+            o['steps'].append([e['step'], e['state']])
+    return list(ops.values())
 
 
 def past_installer(op):

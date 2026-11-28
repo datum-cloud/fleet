@@ -120,6 +120,7 @@ func main() {
 	}
 	require(mountsSecret(manager.Spec.Template.Spec, "/var/run/fleet/coordinator", "fleet-custody-coordinator-client-cert"), "the coordinator's client certificate must resolve to its external Secret")
 	require(mountsSecret(manager.Spec.Template.Spec, "/var/run/fleet/release", "fleet-release-controller-client-cert"), "the release controller's client certificate must resolve to its external Secret")
+	require(has(m.Args, "--synthetic-projector-client-cert-dir=/var/run/fleet/projector") && mountsSecret(manager.Spec.Template.Spec, "/var/run/fleet/projector", "fleet-capacity-projector-client-cert"), "the capacity projector needs its own Milo client certificate")
 	var enrollment core.ConfigMap
 	read("ConfigMap/fleet-synthetic-site-enrollment", &enrollment)
 	for _, pod := range []core.PodSpec{manager.Spec.Template.Spec, provider.Spec.Template.Spec} {

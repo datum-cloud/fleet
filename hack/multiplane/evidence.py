@@ -287,7 +287,11 @@ def redfish_provider():
         for name in ('boot.ipxe', 'kernel', 'installer.gz'):
             if 'write-complete ' + name + ' bytes=' not in written:
                 fail('missing completed boot delivery of %s for %s' % (name, o['kind']))
-    if expected != sorted(expected) or sum(1 for l in console if l.startswith('FLEET-')) != len(expected):
+    # The commissioning's one burn-in receipt came before every operation's.
+    burnin = [i for i, l in enumerate(console) if l.startswith('FLEET-BURNIN:')]
+    if len(burnin) != 1 or not console[burnin[0]].endswith(':passed') or (expected and burnin[0] > min(expected)):
+        fail('expected exactly one passed burn-in receipt before the first operation receipt')
+    if expected != sorted(expected) or sum(1 for l in console if l.startswith('FLEET-') and not l.startswith('FLEET-BURNIN:')) != len(expected):
         fail('console receipts are out of order or include another operation')
     if sum(1 for l in console if l.startswith('+ sfdisk /dev/vda')) != 1:
         fail('the installer partitioned the target disk other than once for the one finished install')
@@ -298,12 +302,19 @@ def redfish_provider():
     order = ['network' if network(b) else 'disk' for b in blocks]
     starts = {'targetA': order, 'targetB': (raw / 'libvirt-qemu' / 'fleet-lab-target-b.log').read_text(errors='replace').count(': starting up ')
               if (raw / 'libvirt-qemu' / 'fleet-lab-target-b.log').exists() else 0}
-    # A install (network, disk), A wipe, B's held install (its network boot
-    # was withheld by the lab boot hook), B wipe.
-    if order != ['network', 'disk', 'network', 'network', 'network'] or starts['targetB']:
-        fail('expected target A boots network, disk, network, network, network and no target B start; got %s' % starts)
+    # The commissioning's burn-in, A install (network, disk), A wipe, B's held
+    # install (its network boot was withheld by the lab boot hook), B wipe.
+    if order != ['network', 'network', 'disk', 'network', 'network', 'network'] or starts['targetB']:
+        fail('expected target A boots network (burn-in), network, disk, network, network, network and no target B start; got %s' % starts)
     audit = [json.loads(l) for l in (ev / 'redfish-audit.jsonl').read_text().splitlines()]
-    effects = [e for e in audit if e['method'] not in ('GET', 'HEAD')]
+    # The commission phase's effects were checked at its mark; these are the
+    # operations' after it.
+    commission = json.loads((s / 'redfish' / 'commission.json').read_text())
+    if commission['onRequestsToTargetA'] != 1:
+        fail('the commissioning did not boot target A exactly once')
+    if any('/System-1' not in e['path'] for e in audit if e['method'] not in ('GET', 'HEAD')):
+        fail('a target other than System-1 received an effect')
+    effects = [e for e in audit[commission['auditEntries']:] if e['method'] not in ('GET', 'HEAD')]
     ons = [e for e in effects if e.get('resetType') == 'On']
     if len(ons) != 5 or any(not e.get('effect', '').startswith('started') for e in ons) or any('/System-1' not in e['path'] for e in effects):
         fail('expected exactly five effective On requests, all to System-1, and no other target effect')
@@ -350,19 +361,25 @@ worker_jobs = []
 for job in jobs:
     handoff = job['metadata']['labels']['fleet.datumapis.com/handoff']
     conditions = sorted([c['type'], c['status'], c.get('reason', '')] for c in job['status'].get('conditions', []))
-    if ['Complete', 'True', 'CompletionsReached'] not in conditions:
-        fail('worker Job not Complete: ' + job['metadata']['name'])
     job_pods = kget('-n', 'fleet-site', 'get', 'pods', '-l', 'batch.kubernetes.io/controller-uid=' + job['metadata']['uid'])['items']
     exits = [next((c['state']['terminated']['exitCode'] for c in p['status'].get('containerStatuses', []) if 'terminated' in c.get('state', {})), None) for p in job_pods]
-    if exits.count(0) != 1:
-        fail('worker Job without exactly one successful Pod: ' + job['metadata']['name'])
     operation = handoffs[handoff]['operation']
+    # Dispatch was disabled after the commission phase and enabled again, and
+    # the graph lifecycle recreates every worker, so kro recreated the
+    # finished commissioning's Job. It replays a verified no-op, or, once a
+    # newer operation raised the Device's fence, the site refuses it at exit
+    # 65 before reading anything, and the Job fails without a retry.
+    fenced = operation['kind'] == 'DeviceCommissioning' and ['Failed', 'True', 'PodFailurePolicy'] in conditions and exits and set(exits) == {65}
+    if not fenced and ['Complete', 'True', 'CompletionsReached'] not in conditions:
+        fail('worker Job not Complete: ' + job['metadata']['name'])
+    if not fenced and exits.count(0) != 1:
+        fail('worker Job without exactly one successful Pod: ' + job['metadata']['name'])
     worker_jobs.append({'job': job['metadata']['name'], 'uid': job['metadata']['uid'], 'operationID': harness.operation_key(operation['kind'], operation['name'], handoffs[handoff]['fence']), 'kind': operation['kind'], 'name': operation['name'],
                         'fence': handoffs[handoff]['fence'], 'conditions': conditions, 'succeeded': job['status'].get('succeeded', 0), 'failed': job['status'].get('failed', 0),
                         'pods': [{'uid': p['metadata']['uid'], 'phase': p['status'].get('phase'), 'exitCode': e} for p, e in zip(job_pods, exits)],
                         'serviceAccount': job['spec']['template']['spec']['serviceAccountName'], 'podReplacementPolicy': job['spec'].get('podReplacementPolicy'),
                         'podFailurePolicy': job['spec'].get('podFailurePolicy'), 'backoffLimit': job['spec'].get('backoffLimit'),
-                        'activeDeadlineSeconds': job['spec'].get('activeDeadlineSeconds'), 'createdBy': job['metadata']['labels'].get('kro.run/node-id')})
+                        'activeDeadlineSeconds': job['spec'].get('activeDeadlineSeconds'), 'createdBy': job['metadata']['labels'].get('kro.run/node-id'), 'fencedReplay': bool(fenced)})
 if REDFISH:
     # Every Redfish worker that ran: Redfish provider, no hypervisor path.
     for job in jobs:
@@ -373,9 +390,13 @@ if REDFISH:
         if env.get('FLEET_SITE_PROVIDER') != 'redfish' or 'FLEET_LIBVIRT_URI' in env or any('libvirt' in m or 'lab-disks' in m for m in mounts) or any('hostPath' in v for v in pod.get('volumes', [])):
             fail('a Redfish worker Job had a hypervisor path: ' + job['metadata']['name'])
 # One kro-created worker Job per admitted operation, at that operation's
-# fence, including the installation held at its deadline.
+# fence, including the installation held at its deadline, and one for the
+# commission phase's commissioning.
 held_job = (json.loads((s / 'deadline-install.json').read_text())['key'], json.loads((s / 'deadline-hold.json').read_text())['fence'])
-if sorted((j['operationID'], j['fence']) for j in worker_jobs) != sorted([(o['operation'], o['fence']) for o in ops] + [held_job]) or any(j['createdBy'] != 'workers' for j in worker_jobs):
+if [j['kind'] for j in worker_jobs].count('DeviceCommissioning') != 1:
+    fail('expected one worker Job for the commissioning, got %s' % [(j['kind'], j['name'], j['fence']) for j in worker_jobs])
+operation_jobs = [j for j in worker_jobs if j['kind'] != 'DeviceCommissioning']
+if sorted((j['operationID'], j['fence']) for j in operation_jobs) != sorted([(o['operation'], o['fence']) for o in ops] + [held_job]) or any(j['createdBy'] != 'workers' for j in worker_jobs):
     fail('expected one kro-created worker Job per operation at its fence, got %s' % [(j['kind'], j['name'], j['fence'], j['createdBy']) for j in worker_jobs])
 pvc = kget('-n', 'fleet-site', 'get', 'pvc', 'fleet-site-state')
 pv = kget('get', 'pv', pvc['spec']['volumeName'])

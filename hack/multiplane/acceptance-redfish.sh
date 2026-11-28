@@ -19,6 +19,10 @@ step import-inert 300
 step staff-access 120
 rf baseline 300
 rf discovery-faults 600
+step commission-dispatch 900
+ph commission 1500 "$host" commission --config "$state/acceptance.json"
+rf commission-mark 120
+step commission-settle 900
 ph allocate 900 "$host" allocate --config "$state/acceptance.json"
 step verify-contention 120
 step tenant-isolation 300

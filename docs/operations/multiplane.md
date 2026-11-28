@@ -237,7 +237,15 @@ The phases are then:
    Redfish mode the BMC audit must hold no effect. `staff-access` requires
    the staff identity to read custody and list recoveries, and to be
    forbidden Secrets, every other operation, allocations and custody writes.
-   Staff hold no consumer-project or hub credential.
+   Staff hold no consumer-project or hub credential. `commission-dispatch`
+   publishes a source revision that enables dispatch, `commission` then
+   commissions the Device as three people, a plan author, an approver and an
+   operator, and waits until the capacity projector offers its capacity, and
+   `commission-settle` publishes the next revision, which disables dispatch
+   again so the install is delivered before any worker Job. The site boots
+   the site image once in burn-in mode. In Redfish mode
+   `redfish-commission-mark` requires that burn-in to be target A's one
+   effective `On`, with one passed receipt and no effect on target B.
 2. **Contention.** Two consumers request one provider capacity. Custody grants one
    allocation; `verify-contention` independently reads Bound for A and
    Pending/InsufficientCapacity for B, and requires custody to name the one

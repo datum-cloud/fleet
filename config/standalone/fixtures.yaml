@@ -22,7 +22,10 @@ spec:
 # its fixture discovery writes the Device's status.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Device
-metadata: {name: synthetic-device-central-01, namespace: fleet-provider}
+metadata:
+  name: synthetic-device-central-01
+  namespace: fleet-provider
+  labels: {fleet.datumapis.com/hardware-model: synthetic}
 spec:
   claimRef: {name: synthetic-claim-central-01}
   identity: {model: synthetic, serial: synthetic-serial-central-01, systemUUID: 00000000-0000-4000-8000-000000000021}

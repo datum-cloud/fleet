@@ -328,7 +328,8 @@ def lost_response(s):
             break
         time.sleep(2)
     ops = installs(s)
-    ons = [e for e in mutating(audit(s), TARGET_A['system']) if e.get('resetType') == 'On' and e.get('effect', '').startswith('started')]
+    # The commissioning's burn-in boot came before this install.
+    ons = [e for e in mutating(commission_audit(s), TARGET_A['system']) if e.get('resetType') == 'On' and e.get('effect', '').startswith('started')]
     journaled = power_ons(ops[0]) if len(ops) == 1 else {}
     if len(ops) != 1 or not done(ops[0], 'disk-power-on') or len(ons) != 2 or journaled != {'installer': 'Done', 'disk': 'Done'}:
         die('recovery after the lost response repeated or did not observe the boot: %d effective On requests, journaled power-on %s' % (len(ons), journaled))
@@ -397,6 +398,30 @@ def isolation(s):
     print('redfish-isolation: target B never started, never received a Redfish effect and its disk is unchanged; target A disk independently hashes as all zeroes after the final cleanup')
 
 
+def commission_mark(s):
+    """After the commission phase: the commissioning booted lab target A once
+    over Redfish, its burn-in printed one passed receipt, and no other target
+    received an effect. Later counts start at this mark."""
+    base = json.loads((s / 'redfish-baseline.json').read_text())
+    entries = audit(s)
+    window = mutating(entries[base['auditEntries']:])
+    ons = [e for e in window if e.get('resetType') == 'On' and e.get('effect', '').startswith('started')]
+    other = [e for e in window if not e['path'].rstrip('/').startswith('/redfish/v1/Systems/' + TARGET_A['system'])]
+    burnin = [l.rsplit(':', 1)[1] for l in console_lines(s, 'target-a.log') if l.startswith('FLEET-BURNIN:')]
+    record = {'observedAt': now(), 'auditEntries': len(entries), 'onRequestsToTargetA': len(ons), 'otherTargetEffects': len(other),
+              'qemuStartsTargetA': qemu_starts(s, TARGET_A['domain']), 'qemuStartsTargetB': qemu_starts(s, TARGET_B['domain']), 'burnInResults': burnin}
+    if len(ons) != 1 or other or record['qemuStartsTargetA'] != 1 or record['qemuStartsTargetB'] or burnin != ['passed']:
+        die('the commissioning did not boot target A exactly once with one passed burn-in: %s' % record)
+    write(s / 'redfish' / 'commission.json', record)
+    write(s / 'evidence' / 'redfish-commission.json', record)
+    print('redfish-commission: the commissioning booted lab target A once over the emulator and its burn-in passed; target B untouched')
+
+
+def commission_audit(s):
+    """The BMC audit after the commission phase."""
+    return audit(s)[json.loads((s / 'redfish' / 'commission.json').read_text())['auditEntries']:]
+
+
 def audit_mark(s):
     """Record the BMC audit's length for a later audit-unchanged."""
     (s / 'redfish' / 'audit-mark').write_text('%d\n' % len(audit(s)))
@@ -414,4 +439,4 @@ if __name__ == '__main__':
     step, state = sys.argv[1], pathlib.Path(sys.argv[2])
     {'enroll': enroll, 'baseline': baseline, 'discovery-faults': discovery_faults, 'arm-lost-response': arm_lost_response,
      'lost-response': lost_response, 'bmc-interrupt': bmc_interrupt, 'isolation': isolation,
-     'audit-mark': audit_mark, 'audit-unchanged': audit_unchanged}[step](state)
+     'audit-mark': audit_mark, 'audit-unchanged': audit_unchanged, 'commission-mark': commission_mark}[step](state)

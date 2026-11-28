@@ -32,8 +32,20 @@ wait_api() {
  echo "API did not recover: $(basename "$1")" >&2; return 1
 }
 assignments=coordination.fleet.datumapis.com/role=assignment
+# Delivered assignments other than the commission phase's commissioning,
+# which stays delivered for the rest of the run: one "name phase" line each,
+# with the result phase the observer published, if any.
+operation_handoffs() {
+ cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o json | python3 -c '
+import json,sys
+for h in json.load(sys.stdin)["items"]:
+    if json.loads(h["spec"]["assignmentJSON"])["operation"]["kind"] != "DeviceCommissioning":
+        print(h["metadata"]["name"], ((h.get("status") or {}).get("observation") or {}).get("result", {}).get("phase", ""))'
+}
 # The site results the observer publishes: only it writes handoff status.
-local_phase() { cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o jsonpath='{.items[*].status.observation.result.phase}'; }
+local_phase() { operation_handoffs | awk '{print $2}' | tr -s '\n' ' ' | sed 's/^ *//;s/ *$//'; }
+# The next Flux source revision number.
+next_revision() { python3 -c 'import json,sys; print(max(r["revision"] for r in json.load(open(sys.argv[1]))) + 1)' "$state/flux-revisions.json"; }
 # Provider-project custody digest: the spec, phase and fence of every custody
 # record, operation and allocation; the records never leave memory.
 custody_digest() { "${harness[@]}" custody-digest --state "$state"; }
@@ -104,7 +116,7 @@ case "$step" in
   audit_mark
   "$host" tenant-isolation --config "$state/acceptance.json"
   [[ $before == "$(journal_digest)" ]] || { echo 'site store changed for an unheld tenant' >&2; exit 1; }
-  [[ -z $(cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o name) ]] || { echo 'an assignment was delivered for an unheld tenant' >&2; exit 1; }
+  [[ -z $(operation_handoffs) ]] || { echo 'an assignment was delivered for an unheld tenant' >&2; exit 1; }
   audit_unchanged
   ;;
  import-inert)
@@ -184,9 +196,31 @@ JSON
   site_restore fleet-site-observer
   scenario rebuild-verified "$state"
   ;;
+ commission-dispatch)
+  # The commission phase needs a site worker before any allocation exists, so
+  # one source revision enables dispatch for it and the next disables it
+  # again: the install below is still delivered before any worker Job.
+  flux publish "$state" --revision "$(next_revision)" --site dispatch --purpose 'enable dispatch for commissioning' --cluster cell --cluster hub --cluster platform --timeout 600 >/dev/null
+  [[ $(site get handoffdispatcher dispatcher -o jsonpath='{.spec.dispatch}') == true ]] || { echo 'commissioning dispatch revision not applied' >&2; exit 1; }
+  printf 'commission-dispatch: cell Flux enabled dispatch for the commissioning before any allocation\n'
+  ;;
+ commission-settle)
+  # Disable dispatch again. kro prunes the commissioning's finished worker
+  # Job; its delivered handoff stays, answered, for the rest of the run.
+  flux publish "$state" --revision "$(next_revision)" --site off --purpose 'disable dispatch after commissioning' --cluster cell --cluster hub --cluster platform --timeout 600 >/dev/null
+  [[ $(site get handoffdispatcher dispatcher -o jsonpath='{.spec.dispatch}') == false ]] || { echo 'dispatch-off revision not applied' >&2; exit 1; }
+  for _ in $(seq 1 180); do [[ -z $(site get jobs -o name) ]] && break; sleep 1; done
+  [[ -z $(site get jobs -o name) ]] || { echo 'kro did not prune the commissioning worker Job' >&2; exit 1; }
+  [[ -z $(operation_handoffs) ]] || { echo 'an assignment other than the commissioning was delivered before any allocation' >&2; exit 1; }
+  cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o json | python3 -c '
+import json,sys
+kinds=[json.loads(h["spec"]["assignmentJSON"])["operation"]["kind"] for h in json.load(sys.stdin)["items"]]
+if kinds != ["DeviceCommissioning"]: raise SystemExit("expected the one delivered commissioning, got %s" % kinds)'
+  printf 'commission-settle: dispatch disabled again; kro pruned the commissioning worker Job; only the commissioning was delivered\n'
+  ;;
  await-delivery)
   for _ in $(seq 1 120); do
-   names=$(cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o jsonpath='{.items[*].metadata.name}')
+   names=$(operation_handoffs | awk '{print $1}')
    [[ -z $names ]] || break
    sleep 1
   done
@@ -194,7 +228,9 @@ JSON
   [[ $(wc -w <<<"$names") -eq 1 ]] || { echo 'more than one delivered assignment' >&2; exit 1; }
   printf '%s\n' "$names" > "$state/install-handoff"
   [[ -z $(local_phase) ]] || { echo 'cell status existed before any worker started' >&2; exit 1; }
-  site wait --for=jsonpath='{.status.deliveredHandoffs}'=1 handoffdispatcher/dispatcher --timeout=120s >/dev/null
+  # kro also counts the commission phase's delivered commissioning.
+  delivered=$(cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o name | wc -l | tr -d ' ')
+  site wait --for=jsonpath='{.status.deliveredHandoffs}'="$delivered" handoffdispatcher/dispatcher --timeout=120s >/dev/null
   [[ -z $(site get jobs -o name) ]] || { echo 'worker Job exists before dispatch' >&2; exit 1; }
   printf 'delivery: Karmada delivered exactly one retained assignment; kro observed it; no worker Job before dispatch\n'
   ;;
@@ -210,7 +246,7 @@ JSON
  dispatch)
   # Dispatch is a source revision, reconciled by the cell's own Flux from the
   # registry while the hub is paused; kro then creates per-operation RBAC and the Job.
-  flux publish "$state" --revision 3 --site dispatch --purpose 'enable dispatch' --cluster cell --timeout 600 >/dev/null
+  flux publish "$state" --revision "$(next_revision)" --site dispatch --purpose 'enable dispatch' --cluster cell --timeout 600 >/dev/null
   [[ $(site get handoffdispatcher dispatcher -o jsonpath='{.spec.dispatch}') == true ]] || { echo 'dispatch revision not applied' >&2; exit 1; }
   name=$(cat "$state/install-handoff")
   for _ in $(seq 1 120); do site get job "w-$name" >/dev/null 2>&1 && break; sleep 1; done

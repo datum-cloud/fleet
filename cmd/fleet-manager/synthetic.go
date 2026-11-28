@@ -18,6 +18,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"go.datum.net/fleet/internal/allocation"
+	"go.datum.net/fleet/internal/capacity"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/delivery"
 	"go.datum.net/fleet/internal/site/fixture"
@@ -49,14 +50,18 @@ func syntheticCustody(ctx context.Context, scheme *runtime.Scheme, providerConfi
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("release controller credential: %w", err)
 	}
-	clients := make([]ctrlclient.Client, 3)
-	for index, config := range []*rest.Config{providerConfig, coordinatorConfig, releaseConfig} {
+	projectorConfig, err := withClientCert(providerConfig, flags.syntheticProjectorCertDir)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("capacity projector credential: %w", err)
+	}
+	clients := make([]ctrlclient.Client, 4)
+	for index, config := range []*rest.Config{providerConfig, coordinatorConfig, releaseConfig, projectorConfig} {
 		// Decisions read through to the API server, never a cache.
 		if clients[index], err = ctrlclient.New(config, ctrlclient.Options{Scheme: scheme}); err != nil {
 			return nil, nil, nil, err
 		}
 	}
-	provider, coordinatorClient, releaseClient := clients[0], clients[1], clients[2]
+	provider, coordinatorClient, releaseClient, projectorClient := clients[0], clients[1], clients[2], clients[3]
 	providerCreator, err := allocation.Creator(ctx, providerConfig)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("identify the Metal provider: %w", err)
@@ -91,7 +96,9 @@ func syntheticCustody(ctx context.Context, scheme *runtime.Scheme, providerConfi
 	}
 	coordinator := &custody.Coordinator{Client: coordinatorClient, Registry: registry, Sites: sites, Config: custody.Config{Namespace: namespace, Principals: principals}}
 	log := ctrl.Log.WithName("custody")
-	loop := &delivery.Loop{Client: coordinatorClient, Coordinator: coordinator, Namespace: namespace,
+	cleaning := func(context.Context, string) (string, error) { return custody.SpecDigest(syntheticCleaningPolicy) }
+	projector := &capacity.Projector{Reader: projectorClient, Writer: projectorClient, Namespace: namespace, Cleaning: cleaning}
+	loop := &delivery.Loop{Client: coordinatorClient, Coordinator: coordinator, Namespace: namespace, Capacity: projector,
 		Courier: &delivery.Courier{Client: coordinatorClient, Registry: registry, Coordinator: coordinator, Sites: sites, Namespace: namespace},
 		OnError: func(err error) { log.Info("coordinator pass incomplete", "error", err.Error()) }}
 	allocator := &allocation.Allocator{
@@ -99,6 +106,7 @@ func syntheticCustody(ctx context.Context, scheme *runtime.Scheme, providerConfi
 		Releaser: releaseClient, ReleaseCreator: releaseCreator,
 		Custody: coordinator, Namespace: namespace,
 		Cleaning: func(string) (string, error) { return custody.SpecDigest(syntheticCleaningPolicy) },
+		Capacity: &capacity.Projector{Reader: provider, Namespace: namespace, Cleaning: cleaning},
 		// The synthetic site enrolls one boot NIC and one disk per Device.
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
 	}
