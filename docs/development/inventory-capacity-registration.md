@@ -736,10 +736,14 @@ webhook refuses to enable the old capacity for it, and the projector reports
 the capacity not `Prepared` (`DeviceReplaced`), so the allocator never offers
 it. The allocator also skips such capacity when it reads the Device after the
 offer, and withdraws an allocation that has not claimed its Device once the
-Device is no longer the incarnation the allocation names. The name carries the raw UID rather than a hash of it, as stage 1 named
-it; it is deterministic and holds one capacity per incarnation. Changing the
-naming scheme belongs to the change that applies the no-UIDs-in-spec rule to
-the existing kinds.
+Device is no longer the incarnation the allocation names. A Device recreated
+after that last check is still not claimed: the custody claim takes the
+incarnation from the allocation's `device-uid` label and refuses unless both
+the live Device and custody name it, so the allocation is withdrawn and the
+allocator selects again (`TestADeviceRecreatedAfterTheLastCheckIsNotClaimed`).
+The name carries the raw UID rather than a hash of it, as stage 1 named it; it
+is deterministic and holds one capacity per incarnation. The no-UIDs-in-spec
+rule allows a UID in a name, so the naming stays.
 
 ### Status writes
 

@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	fleetcapacity "go.datum.net/fleet/internal/capacity"
 	"go.datum.net/fleet/internal/custody"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -180,5 +183,86 @@ func TestCapacityRegisteredForAnotherIncarnationIsSkipped(t *testing.T) {
 	}
 	if holder := e.custody(device.Name).Spec.Holder; holder.Type != ops.HolderNone {
 		t.Fatalf("custody was claimed: %+v", holder)
+	}
+}
+
+// afterCheckRecreatingProvider recreates the allocation's Device right after
+// the allocator's last check read it, before the custody claim, and verifies
+// custody for the new Device as an operator's resolve would. The check sees
+// the incarnation the allocation names, so only the claim can refuse.
+type afterCheckRecreatingProvider struct {
+	client.Client
+	e                *env
+	armed, recreated bool
+}
+
+func (p *afterCheckRecreatingProvider) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {
+	if err := p.Client.Create(ctx, object, options...); err != nil {
+		return err
+	}
+	if _, ok := object.(*fleetv1.MachineAllocation); ok {
+		p.armed = true
+	}
+	return nil
+}
+
+func (p *afterCheckRecreatingProvider) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+	if err := p.Client.Get(ctx, key, object, options...); err != nil {
+		return err
+	}
+	device, ok := object.(*inventory.Device)
+	if !ok || !p.armed || p.recreated {
+		return nil
+	}
+	p.recreated = true
+	e := p.e
+	stored := device.DeepCopyObject().(*inventory.Device)
+	stored.Finalizers = nil
+	if err := e.admin.Update(ctx, stored); err != nil {
+		return err
+	}
+	if err := e.admin.Delete(ctx, stored); err != nil {
+		return err
+	}
+	again := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: stored.Name, Namespace: namespace, Labels: stored.Labels}, Spec: stored.Spec}
+	for {
+		if err := e.admin.Create(ctx, again); err == nil {
+			break
+		} else if !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	state := e.custody(stored.Name)
+	state.Labels[ops.LabelDeviceUID] = string(again.UID)
+	return e.admin.Update(ctx, state)
+}
+
+// TestADeviceRecreatedAfterTheLastCheckIsNotClaimed recreates the selected
+// Device after the allocator's last check and before its custody claim. The
+// claim takes the incarnation from the allocation's device-uid label and
+// refuses, so the allocation is withdrawn and the allocator selects again.
+func TestADeviceRecreatedAfterTheLastCheckIsNotClaimed(t *testing.T) {
+	e := startEnv(t)
+	original := e.server(1)
+	e.server(2)
+	provider := &afterCheckRecreatingProvider{Client: e.admin, e: e}
+	e.allocator.Provider = provider
+	allocation, err := e.allocator.Allocate(e.ctx, e.request(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !provider.recreated {
+		t.Fatal("the Device was not recreated after the last check")
+	}
+	live := &inventory.Device{}
+	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: namespace, Name: allocation.Spec.DeviceRef.Name}, live); err != nil {
+		t.Fatal(err)
+	}
+	if got := allocation.Labels[fleetv1.LabelDeviceUID]; got != string(live.UID) {
+		t.Fatalf("custody of %s was claimed for an allocation made against Device %s, the live Device is %s", live.Name, got, live.UID)
+	}
+	if holder := e.custody(original.Name).Spec.Holder; holder.Type != ops.HolderNone {
+		t.Fatalf("the recreated Device was claimed: %+v", holder)
 	}
 }
