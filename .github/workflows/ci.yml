@@ -116,6 +116,8 @@ jobs:
     - run: ./hack/validate-synthetic-staging-render.sh
     - run: ./hack/validate-overlay-isolation.sh
     - run: ./hack/test-overlay-isolation.sh
+    - run: ./hack/validate-bmc-credential-namespace.sh
+    - run: ./hack/test-bmc-credential-namespace.sh
     - run: ./hack/validate-standalone-render.sh
     - run: ./hack/test-standalone-source-id.sh
     - run: ./hack/test-standalone-preflight.sh

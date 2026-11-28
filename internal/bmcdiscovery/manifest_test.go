@@ -3,9 +3,12 @@ package bmcdiscovery
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"sigs.k8s.io/yaml"
 )
 
@@ -45,5 +48,31 @@ func TestDeploymentIsSingleUnprivilegedReplica(t *testing.T) {
 	if sc == nil || sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem || sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation ||
 		sc.Privileged != nil || sc.Capabilities == nil || len(sc.Capabilities.Add) != 0 || len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != "ALL" {
 		t.Fatalf("container security context = %+v", sc)
+	}
+}
+
+// Discovery reads Secrets only through its label-selected cache and --once's
+// list, so its Role grants list and watch on Secrets and nothing else.
+func TestCredentialRoleListsAndWatchesSecretsOnly(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(baseDir, "rbac.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var role *rbacv1.Role
+	for _, doc := range strings.Split(string(data), "\n---\n") {
+		var r rbacv1.Role
+		if err := yaml.Unmarshal([]byte(doc), &r); err != nil {
+			t.Fatal(err)
+		}
+		if r.Kind == "Role" && r.Name == "fleet-bmc-discovery-credentials" {
+			role = &r
+		}
+	}
+	if role == nil {
+		t.Fatal("rbac.yaml has no fleet-bmc-discovery-credentials Role")
+	}
+	want := []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"list", "watch"}}}
+	if !reflect.DeepEqual(role.Rules, want) {
+		t.Fatalf("credential Role rules = %+v, want %+v", role.Rules, want)
 	}
 }

@@ -65,12 +65,7 @@ func NewManager(c Config, milo, local *rest.Config, scheme *runtime.Scheme, bmc 
 	if err != nil {
 		return nil, fmt.Errorf("build Milo project manager: %w", err)
 	}
-	selector := labels.SelectorFromSet(labels.Set{CredentialLabel: "true"})
-	secrets, err := cluster.New(local, func(o *cluster.Options) {
-		o.Scheme = scheme
-		o.Cache = cache.Options{DefaultNamespaces: map[string]cache.Config{c.CredentialNamespace: {}},
-			ByObject: map[client.Object]cache.ByObject{&corev1.Secret{}: {Label: selector}}, DefaultTransform: cache.TransformStripManagedFields()}
-	})
+	secrets, err := credentialCluster(c, local, scheme)
 	if err != nil {
 		return nil, fmt.Errorf("build credential Secret cache: %w", err)
 	}
@@ -151,6 +146,17 @@ func NewManager(c Config, milo, local *rest.Config, scheme *runtime.Scheme, bmc 
 		}
 	}
 	return mgr, nil
+}
+
+// credentialCluster reads only labelled Secrets in the credential namespace,
+// by list and watch; the Role in config/base/bmc-discovery grants no more.
+func credentialCluster(c Config, local *rest.Config, scheme *runtime.Scheme) (cluster.Cluster, error) {
+	selector := labels.SelectorFromSet(labels.Set{CredentialLabel: "true"})
+	return cluster.New(local, func(o *cluster.Options) {
+		o.Scheme = scheme
+		o.Cache = cache.Options{DefaultNamespaces: map[string]cache.Config{c.CredentialNamespace: {}},
+			ByObject: map[client.Object]cache.ByObject{&corev1.Secret{}: {Label: selector}}, DefaultTransform: cache.TransformStripManagedFields()}
+	})
 }
 
 // OnceResult is what --once would write for one Device.
