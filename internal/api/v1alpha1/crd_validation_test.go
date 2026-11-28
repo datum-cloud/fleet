@@ -164,6 +164,35 @@ func TestMachineRequestedHardwareIsPinnedOnceAccepted(t *testing.T) {
 	}
 }
 
+func machineWithCreator(creator map[string]any) map[string]any {
+	machine := machineWithStatus(map[string]any{})
+	if creator != nil {
+		machine["spec"].(map[string]any)["creator"] = creator
+	}
+	return machine
+}
+
+// The creator rule holds even if the admission webhooks are bypassed.
+func TestMachineCreatorIsImmutable(t *testing.T) {
+	crd := loadCRDs(t)["machines.metal.datumapis.com"]
+	creator := map[string]any{"username": "customer-example", "uid": "customer-example-uid"}
+	if errs := validateObject(t, crd, machineWithCreator(creator), machineWithCreator(creator)); len(errs) > 0 {
+		t.Fatalf("unchanged creator rejected: %v", errs.ToAggregate())
+	}
+	for name, test := range map[string]struct{ next, old map[string]any }{
+		"changed username": {machineWithCreator(map[string]any{"username": "other", "uid": "customer-example-uid"}), machineWithCreator(creator)},
+		"changed UID":      {machineWithCreator(map[string]any{"username": "customer-example", "uid": "other"}), machineWithCreator(creator)},
+		"removed":          {machineWithCreator(nil), machineWithCreator(creator)},
+		"added later":      {machineWithCreator(creator), machineWithCreator(nil)},
+		"empty username":   {machineWithCreator(map[string]any{"username": "", "uid": "customer-example-uid"}), nil},
+		"missing UID":      {machineWithCreator(map[string]any{"username": "customer-example"}), nil},
+	} {
+		if errs := validateObject(t, crd, test.next, test.old); len(errs) == 0 {
+			t.Errorf("%s creator was accepted", name)
+		}
+	}
+}
+
 func TestMachinePrinterColumnsShowRequestedHardware(t *testing.T) {
 	crd := loadCRDs(t)["machines.metal.datumapis.com"]
 	columns := map[string]extensionsv1.CustomResourceColumnDefinition{}

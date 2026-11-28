@@ -1,0 +1,47 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: fleet-machine-creator
+webhooks:
+  # Milo's root API server calls this webhook, because Milo does not evaluate
+  # admission policies stored in a project. On create it writes the
+  # authenticated caller into spec.creator, replacing any client value, and
+  # adds the Machine protection finalizer. It is fail-closed.
+  - name: creator.machines.metal.datumapis.com
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    reinvocationPolicy: Never
+    sideEffects: None
+    timeoutSeconds: 10
+    clientConfig:
+      url: https://fleet-registration.fleet-system.svc:9443/mutate-machine-creator
+    rules:
+      - apiGroups: [metal.datumapis.com]
+        apiVersions: [v1alpha1]
+        operations: [CREATE]
+        resources: [machines]
+        scope: Namespaced
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: fleet-machine-creator
+webhooks:
+  # Runs after every mutating webhook. It refuses a create whose creator is
+  # not the caller or that lacks the protection finalizer, and any change to
+  # the creator. Status writes are not routed.
+  - name: creator.machines.metal.datumapis.com
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    sideEffects: None
+    timeoutSeconds: 10
+    clientConfig:
+      url: https://fleet-registration.fleet-system.svc:9443/validate-machine-creator
+    rules:
+      - apiGroups: [metal.datumapis.com]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [machines]
+        scope: Namespaced

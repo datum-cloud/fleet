@@ -223,7 +223,18 @@ spec:
                  (has(self.networkInterfaces) && has(oldSelf.networkInterfaces) &&
                   self.networkInterfaces == oldSelf.networkInterfaces))
               message: allocation inputs are immutable
+            - rule: >-
+                (!has(self.creator) && !has(oldSelf.creator)) ||
+                (has(self.creator) && has(oldSelf.creator) && self.creator == oldSelf.creator)
+              message: creator is immutable
             properties:
+              creator:
+                type: object
+                description: The authenticated caller that created the Machine. Admission sets it; clients cannot choose it.
+                required: [username, uid]
+                properties:
+                  username: {type: string, minLength: 1}
+                  uid: {type: string, minLength: 1}
               machineClassRef: {type: object, required: [name], properties: {name: {type: string}}}
               machineProfileRef: {type: object, required: [name], properties: {name: {type: string}}}
               locationRef: {type: object, required: [name], properties: {name: {type: string}}}
