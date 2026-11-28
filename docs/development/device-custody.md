@@ -944,6 +944,14 @@ inputs, and nothing else writes them.
   Device's UID is the one registration recorded when it created the
   capacity. Capacity behind a Device recreated under the same name is not
   `Prepared` (`DeviceReplaced`), so the allocator never offers it.
+- **Hardware ID.** A Device without a hardware ID never backs capacity
+  ([#131](https://github.com/datum-cloud/fleet/issues/131)). The projector
+  calls `inventory.CapacityBackingError` on the Device it reads and, when it
+  fails, reads nothing else and leaves the capacity not `Prepared`
+  (`DeviceUnidentified`). The allocator makes the same check on the Device it
+  reads, whatever the evaluation offered.
+  `TestAServerWithoutAHardwareIDIsNeverOffered` and
+  `TestTheAllocatorNeverSelectsAServerWithoutAHardwareID` pin both.
 - **Plan pin.** `Prepared` needs the latest commissioning's evidence to name
   the current plan's name, generation, digest and approval name. The approval
   name is derived from the plan's UID, so evidence under a plan recreated with

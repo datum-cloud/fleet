@@ -50,7 +50,8 @@ func TestARecreatedDeviceInheritsNoRegisteredCapacity(t *testing.T) {
 		replaced bool
 	}{"the registered incarnation": {"old", false}, "a recreated Device": {"new", true}} {
 		t.Run(name, func(t *testing.T) {
-			device := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: "server", Namespace: "default", UID: types.UID(test.uid)}}
+			device := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: "server", Namespace: "default", UID: types.UID(test.uid)},
+				Spec: inventory.DeviceSpec{Identity: inventory.DeviceIdentity{Model: "example", Serial: "SERIAL-1", SystemUUID: "00000000-0000-4000-8000-000000000001"}}}
 			projector := &Projector{Reader: fake.NewClientBuilder().WithScheme(scheme).WithObjects(device).Build(), Namespace: "default",
 				Cleaning: Fixed(map[string]string{"tenant-reuse": "sha256:policy"})}
 			in, err := projector.inputs(context.Background(), capacity)
@@ -72,6 +73,51 @@ func TestARecreatedDeviceInheritsNoRegisteredCapacity(t *testing.T) {
 			}
 			if offered, _, err := projector.Offer(context.Background(), capacity); err != nil || offered {
 				t.Fatalf("the allocator was offered capacity of a recreated Device: %v %v", offered, err)
+			}
+		})
+	}
+}
+
+// TestAServerWithoutAHardwareIDIsNeverOffered points enabled capacity at a
+// Device recorded without a hardware ID, and at one whose identity is
+// missing altogether, and checks that neither is ever offered (#131).
+func TestAServerWithoutAHardwareIDIsNeverOffered(t *testing.T) {
+	scheme := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{inventory.AddToScheme, ops.AddToScheme, metal.AddToScheme} {
+		if err := add(scheme); err != nil {
+			t.Fatal(err)
+		}
+	}
+	capacity := &metal.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: "capacity-panel", Namespace: "default", Generation: 1},
+		Spec: metal.MachineCapacitySpec{DeviceRef: metal.LocalReference{Name: "panel"}, AllocationPolicy: "Enabled", CleaningPolicyRef: metal.LocalReference{Name: "tenant-reuse"}}}
+	for name, identity := range map[string]inventory.DeviceIdentity{
+		"recorded without a hardware ID": {Model: "patch-panel", Unidentified: true, UnidentifiedReason: "the equipment has no serial"},
+		"with no serial or system UUID":  {Model: "patch-panel"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			device := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: "panel", Namespace: "default", UID: "panel-uid"}, Spec: inventory.DeviceSpec{Identity: identity}}
+			// Free custody for the same incarnation, so only the identity
+			// check can withhold the offer.
+			state := &ops.DeviceCustody{ObjectMeta: metav1.ObjectMeta{Name: "panel", Namespace: "default", Labels: map[string]string{ops.LabelDeviceUID: "panel-uid"}},
+				Spec: ops.DeviceCustodySpec{DeviceRef: ops.DeviceReference{Name: "panel"}, State: ops.CustodyVerified, Holder: ops.Holder{Type: ops.HolderNone}}}
+			projector := &Projector{Reader: fake.NewClientBuilder().WithScheme(scheme).WithObjects(device, state).Build(), Namespace: "default",
+				Cleaning: Fixed(map[string]string{"tenant-reuse": "sha256:policy"})}
+			in, err := projector.inputs(context.Background(), capacity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !in.DeviceUnidentified || in.DeviceUID != "" || in.Custody != nil {
+				t.Fatalf("inputs read a Device without a hardware ID: %+v", in)
+			}
+			projection, err := projector.Evaluate(context.Background(), capacity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prepared := apiMeta.FindStatusCondition(projection.Conditions, "Prepared"); projection.Available() || prepared.Reason != "DeviceUnidentified" {
+				t.Fatalf("a Device without a hardware ID was projected: %+v", projection.Conditions)
+			}
+			if offered, _, err := projector.Offer(context.Background(), capacity); err != nil || offered {
+				t.Fatalf("the allocator was offered a Device without a hardware ID: %v %v", offered, err)
 			}
 		})
 	}

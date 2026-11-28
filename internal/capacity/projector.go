@@ -108,6 +108,12 @@ func (p *Projector) inputs(ctx context.Context, capacity *metal.MachineCapacity)
 		in.DeviceReplaced = true
 		return in, nil
 	}
+	if inventory.CapacityBackingError(device) != nil {
+		// A server without a hardware ID never backs capacity (#131), so
+		// nothing else about it is read.
+		in.DeviceUnidentified = true
+		return in, nil
+	}
 	in.DeviceUID = string(device.UID)
 	in.DeviceSerial, in.DeviceSystemUUID = device.Spec.Identity.Serial, device.Spec.Identity.SystemUUID
 	in.DeviceActive = inventory.LifecycleOf(device) == inventory.DeviceActive && device.DeletionTimestamp.IsZero()

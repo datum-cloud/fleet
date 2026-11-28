@@ -68,6 +68,10 @@ type CapacityInputs struct {
 	// DeviceSerial and DeviceSystemUUID are the Device's recorded identity.
 	DeviceSerial, DeviceSystemUUID string
 	DeviceActive                   bool
+	// DeviceUnidentified is true when the capacity's Device has no hardware
+	// ID (inventory.CapacityBackingError). Such a Device never backs
+	// capacity.
+	DeviceUnidentified bool
 	// DeviceReplaced is true when the Device under the capacity's name is
 	// another incarnation than the one the capacity was registered for.
 	DeviceReplaced bool
@@ -120,6 +124,8 @@ func ProjectCapacity(in CapacityInputs) CapacityProjection {
 	var prepared metav1.Condition
 	plan := in.CurrentPlan
 	switch {
+	case in.DeviceUnidentified:
+		prepared = no(ConditionPrepared, "DeviceUnidentified", "the Device has no hardware ID, so it cannot back capacity")
 	case in.DeviceReplaced:
 		prepared = no(ConditionPrepared, "DeviceReplaced", "the capacity was registered for another incarnation of its Device")
 	case latest == nil:

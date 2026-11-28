@@ -274,6 +274,11 @@ func (a *Allocator) candidate(ctx context.Context, request Request, tried map[st
 		} else if err != nil {
 			return nil, nil, fleetv1.Hardware{}, err
 		}
+		// A server without a hardware ID never backs capacity, whatever the
+		// evaluation said.
+		if inventory.CapacityBackingError(device) != nil {
+			continue
+		}
 		state := &ops.DeviceCustody{}
 		if err := a.Provider.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: device.Name}, state); apierrors.IsNotFound(err) {
 			continue

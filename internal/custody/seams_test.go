@@ -200,6 +200,7 @@ func TestCapacityProjection(t *testing.T) {
 		"never commissioned":  {func(in *CapacityInputs) { in.Commissioning = nil }, 0, "NotCommissioned", metav1.ConditionFalse},
 		"another incarnation": {func(in *CapacityInputs) { in.DeviceUID = "other" }, 0, "NotCommissioned", metav1.ConditionFalse},
 		"device replaced":     {func(in *CapacityInputs) { in.DeviceReplaced = true }, 0, "DeviceReplaced", metav1.ConditionFalse},
+		"no hardware ID":      {func(in *CapacityInputs) { in.DeviceUnidentified = true }, 0, "DeviceUnidentified", metav1.ConditionFalse},
 		"failed":              {func(in *CapacityInputs) { in.Commissioning.Evidence.Result = ops.CommissioningFailed }, 0, "CommissioningFailed", metav1.ConditionFalse},
 		"no plan":             {func(in *CapacityInputs) { in.CurrentPlan = CurrentPlanInput{Reason: ReasonNoCurrentPlan} }, 0, ReasonNoCurrentPlan, metav1.ConditionFalse},
 		"ambiguous":           {func(in *CapacityInputs) { in.CurrentPlan = CurrentPlanInput{Reason: ReasonPlanAmbiguous} }, 0, ReasonPlanAmbiguous, metav1.ConditionFalse},
