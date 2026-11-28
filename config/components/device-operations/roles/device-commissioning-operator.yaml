@@ -1,0 +1,13 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-device-commissioning-operator
+  annotations:
+    kubernetes.io/display-name: Fleet Device Commissioning Operator
+    kubernetes.io/description: Commission a Device that no customer holds, under its current qualified plan.
+spec:
+  launchStage: Alpha
+  inheritedRoles:
+    - name: fleet.datumapis.com-device-operations-viewer
+  includedPermissions:
+    - fleet.datumapis.com/devicecommissionings.create

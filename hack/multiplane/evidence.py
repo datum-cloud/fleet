@@ -73,7 +73,7 @@ if len(routing) != 2 or any(x['namespace'] != 'default' or x['watch'] != 'Added 
     fail('missing independent native project create/watch evidence')
 
 custody_rules = json.loads((ev / 'custody-crd-rules.json').read_text())
-if not custody_rules.get('objectsRemoved') or len(custody_rules.get('checks', [])) != 8 or not all(c.get('refused') for c in custody_rules['checks']):
+if not custody_rules.get('objectsRemoved') or len(custody_rules.get('checks', [])) != 19 or not all(c.get('refused') for c in custody_rules['checks']):
     fail('the provider project API did not refuse every forbidden custody write')
 
 phases = (s / 'phases.log').read_text()

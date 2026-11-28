@@ -51,7 +51,9 @@ spec:
       - apiGroups: [fleet.datumapis.com]
         apiVersions: ["*"]
         operations: [CREATE, UPDATE]
-        resources: [deviceinstallations, devicewipes, devicerecoveries]
+        # The same list as the packaged webhook; TestPackagedResourcesMatch
+        # keeps them in step.
+        resources: [deviceinstallations, devicewipes, devicerecoveries, devicecommissionings, devicecommissioningplans, devicecommissioningplanapprovals]
   validations:
     - expression: "request.operation != 'CREATE' || (object.spec.creator.username == request.userInfo.username && (has(object.spec.creator.uid) ? object.spec.creator.uid : '') == (has(request.userInfo.uid) ? request.userInfo.uid : ''))"
       message: spec.creator must be the authenticated caller's username, and UID when it has one

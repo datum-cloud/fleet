@@ -52,7 +52,7 @@ for crd in installations machineallocations machinecapacities machineclasses mac
     exit 1
   fi
 done
-for crd in devices devicecustodies deviceinstallations devicewipes devicerecoveries; do
+for crd in devices devicecustodies deviceinstallations devicewipes devicerecoveries devicecommissionings devicecommissioningplans devicecommissioningplanapprovals; do
   if kubectl --context "$context" get crd "$crd.fleet.datumapis.com" >/dev/null 2>&1; then
     echo "fixed Fleet CRD $crd already exists; use a fresh dedicated kind cluster" >&2
     exit 1
@@ -143,7 +143,7 @@ test "$(kubectl --context "$context" -n fleet-project-b get machine allocation -
 
 for project in fleet-project-a fleet-project-b; do
   subject="system:serviceaccount:$project:default"
-  for resource in devicecustodies deviceinstallations devicewipes devicerecoveries machineallocations; do
+  for resource in devicecustodies deviceinstallations devicewipes devicerecoveries devicecommissionings devicecommissioningplans devicecommissioningplanapprovals machineallocations; do
     for verb in get list watch create update patch delete; do
       if [ "$(kubectl --context "$context" auth can-i "$verb" "$resource" --as="$subject" -n fleet-provider)" != "no" ]; then
         echo "$subject unexpectedly has $verb access to $resource" >&2

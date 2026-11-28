@@ -13,7 +13,8 @@ import (
 // Config.Retention ago. An operation custody still names, as active or as
 // its recovery hold, is kept, and so is a succeeded retirement until
 // inventory retires the Device. Platform audit records keep the history after
-// that.
+// that. A kind that KeepsLatest keeps each existing Device's latest succeeded
+// operation.
 func (c *Coordinator) SweepRetention(ctx context.Context) (int, error) {
 	cfg := c.config()
 	cutoff := c.now().Add(-cfg.Retention)
@@ -38,9 +39,23 @@ func (c *Coordinator) SweepRetention(ctx context.Context) (int, error) {
 		if err := c.Client.List(ctx, list, client.InNamespace(cfg.Namespace)); err != nil {
 			return deleted, err
 		}
-		for _, operation := range kind.Items(list) {
+		operations := kind.Items(list)
+		latest := map[string]bool{}
+		if kind.KeepsLatest {
+			// Only the current incarnation's latest is evidence anyone reads.
+			for reference, operation := range LatestSucceeded(operations) {
+				device, err := c.device(ctx, reference.Name)
+				if err != nil {
+					return deleted, err
+				}
+				if device != nil && string(device.UID) == reference.UID {
+					latest[operation.GetName()] = true
+				}
+			}
+		}
+		for _, operation := range operations {
 			status := operation.OperationStatus()
-			if !status.Phase.Ended() || status.FinishedAt == nil || !status.FinishedAt.Time.Before(cutoff) || referenced[ops.OperationReference{Kind: kind.GVK.Kind, Name: operation.GetName()}] {
+			if !status.Phase.Ended() || status.FinishedAt == nil || !status.FinishedAt.Time.Before(cutoff) || referenced[ops.OperationReference{Kind: kind.GVK.Kind, Name: operation.GetName()}] || latest[operation.GetName()] {
 				continue
 			}
 			// A succeeded retirement is the only record of it until
@@ -62,4 +77,41 @@ func (c *Coordinator) SweepRetention(ctx context.Context) (int, error) {
 		}
 	}
 	return deleted, nil
+}
+
+// DeviceIncarnation is one Device incarnation: its name and the UID the
+// operation's ops.LabelDeviceUID label records.
+type DeviceIncarnation struct {
+	Name string
+	UID  string
+}
+
+// LatestSucceeded returns, for each Device incarnation, the succeeded
+// operation that finished last. Ties break on the higher fence, then the
+// name, so every reader picks the same one.
+func LatestSucceeded(operations []ops.Operation) map[DeviceIncarnation]ops.Operation {
+	out := map[DeviceIncarnation]ops.Operation{}
+	for _, operation := range operations {
+		status := operation.OperationStatus()
+		if status.Phase != ops.PhaseSucceeded || status.FinishedAt == nil {
+			continue
+		}
+		device := DeviceIncarnation{Name: operation.Envelope().DeviceRef.Name, UID: operation.GetLabels()[ops.LabelDeviceUID]}
+		current, ok := out[device]
+		if !ok || later(operation, current) {
+			out[device] = operation
+		}
+	}
+	return out
+}
+
+func later(a, b ops.Operation) bool {
+	at, bt := a.OperationStatus().FinishedAt.Time, b.OperationStatus().FinishedAt.Time
+	switch {
+	case !at.Equal(bt):
+		return at.After(bt)
+	case a.OperationStatus().Fence != b.OperationStatus().Fence:
+		return a.OperationStatus().Fence > b.OperationStatus().Fence
+	}
+	return a.GetName() > b.GetName()
 }

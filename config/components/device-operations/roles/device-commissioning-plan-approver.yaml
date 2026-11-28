@@ -1,0 +1,14 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-device-commissioning-plan-approver
+  annotations:
+    kubernetes.io/display-name: Fleet Device Commissioning Plan Approver
+    kubernetes.io/description: Approve another person's commissioning plan, or revoke an approval.
+spec:
+  launchStage: Alpha
+  inheritedRoles:
+    - name: fleet.datumapis.com-device-operations-viewer
+  includedPermissions:
+    - fleet.datumapis.com/devicecommissioningplanapprovals.create
+    - fleet.datumapis.com/devicecommissioningplanapprovals.delete

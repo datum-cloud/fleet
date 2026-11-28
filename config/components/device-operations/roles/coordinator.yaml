@@ -32,6 +32,18 @@ spec:
     - fleet.datumapis.com/devicerecoveries.delete
     - fleet.datumapis.com/devicerecoveries.updateStatus
     - fleet.datumapis.com/devicerecoveries/status.update
+    - fleet.datumapis.com/devicecommissionings.get
+    - fleet.datumapis.com/devicecommissionings.list
+    - fleet.datumapis.com/devicecommissionings.watch
+    - fleet.datumapis.com/devicecommissionings.delete
+    - fleet.datumapis.com/devicecommissionings.updateStatus
+    - fleet.datumapis.com/devicecommissionings/status.update
+    - fleet.datumapis.com/devicecommissioningplans.get
+    - fleet.datumapis.com/devicecommissioningplans.list
+    - fleet.datumapis.com/devicecommissioningplans.watch
+    - fleet.datumapis.com/devicecommissioningplanapprovals.get
+    - fleet.datumapis.com/devicecommissioningplanapprovals.list
+    - fleet.datumapis.com/devicecommissioningplanapprovals.watch
     - fleet.datumapis.com/devices.get
     - fleet.datumapis.com/devices.list
     - fleet.datumapis.com/devices.watch
