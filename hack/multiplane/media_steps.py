@@ -46,6 +46,7 @@ import base64
 import datetime
 import hashlib
 import json
+import os
 import pathlib
 import re
 import ssl
@@ -68,8 +69,12 @@ STRAY_SOURCE = '192.168.77.250'
 STORE_ROOT = '/var/lib/fleet-local/site'
 LOCAL = 'https://127.0.0.1:%d' % rf.MEDIA_PORT
 # The lab's virtual media phases, shorter than the 15 and 30 minute
-# defaults, as a site may set.
-FETCH, REPORT = '5m0s', '10m0s'
+# defaults, as a site may set. A faster runtime, such as a CI runner's
+# KVM guests, may shorten them further.
+FETCH = os.environ.get('FLEET_MULTIPLANE_MEDIA_FETCH') or '5m0s'
+REPORT = os.environ.get('FLEET_MULTIPLANE_MEDIA_REPORT') or '10m0s'
+if not all(re.fullmatch(r'[1-9][0-9]*m[0-9]+s|[1-9][0-9]*s', w) for w in (FETCH, REPORT)):
+    raise SystemExit('FLEET_MULTIPLANE_MEDIA_FETCH and FLEET_MULTIPLANE_MEDIA_REPORT must be durations such as 5m0s or 90s')
 
 
 def now():
@@ -139,6 +144,18 @@ def read_console(s):
     return [l.strip() for l in r.stdout.decode(errors='replace').splitlines()] if r.returncode == 0 else []
 
 
+def why(s, uid):
+    """What the lab saw of an install's report, for a failure message: the
+    installed OS's console outcomes (never a token), the window's report
+    outcomes, and the recent output of the report relay and the central
+    media service."""
+    console = [l for l in read_console(s) if l.startswith('fleet:')][-6:]
+    relay = rf.kubectl(s, '-n', rf.SITE, 'logs', 'deploy/fleet-site-runtime', '-c', 'report-relay', '--tail', '8', check=False).stdout.strip().splitlines()
+    log = s / 'media-central.log'
+    central = log.read_text(errors='replace').strip().splitlines()[-8:] if log.exists() else []
+    return '; console %s; report outcomes %s; relay %s; media service %s' % (console, outcomes(s, uid), relay, central)
+
+
 def steps_of(s, uid):
     return dict((n, st) for o in rf.journal(s) if o['operation'] == uid for n, st in o['steps'])
 
@@ -186,9 +203,9 @@ def stray_address(s):
         die('the install records no IPAM-bound report address: %s, claim holds %r' % (address, bound))
     refused = w.get('refused') or []
     if [(r['from'], r['tokenMatched']) for r in refused] != [(STRAY_SOURCE, True)]:
-        die('the media service did not refuse, and record, the right token from %s: %s' % (STRAY_SOURCE, refused))
+        die('the media service did not refuse, and record, the right token from %s: %s%s' % (STRAY_SOURCE, refused, why(s, uid)))
     if not w.get('report') or w['report'].get('from') != address['address']:
-        die('the media service took no report from the Machine\'s address %s: %s' % (address['address'], w.get('report')))
+        die('the media service took no report from the Machine\'s address %s: %s%s' % (address['address'], w.get('report'), why(s, uid)))
     if 'rejected-address' not in outcomes(s, uid) or len(media_effects(rf.audit(s), 'add-stray-source')) != 1:
         die('the stray-source fault did not fire exactly once, or no report was refused for its address')
     console = [l for l in read_console(s) if l.startswith('fleet: stray report') or l.startswith('fleet: first-boot report from')]
@@ -229,7 +246,7 @@ def held_report(s):
     uid = op['metadata']['uid']
     w = window_record(s, uid)
     if w.get('report') or w.get('duplicates') or w.get('rejected', 0) < 3:
-        die('the media service took a report or refused fewer than three: %s' % {k: w.get(k) for k in ('report', 'duplicates', 'rejected')})
+        die('the media service took a report or refused fewer than three: %s%s' % ({k: w.get(k) for k in ('report', 'duplicates', 'rejected')}, why(s, uid)))
     stray = json.loads((s / 'media-stray-reports.json').read_text())
     if stray['answers'] != {'outside-ranges-ipv4': 403, 'outside-ranges-ipv6': 403} or not {'rejected-source', 'rejected-token'} <= set(outcomes(s, uid)):
         die('the stray reports were not all refused for their source, or the guest\'s report was not refused for its token: %s %s' % (stray['answers'], outcomes(s, uid)))

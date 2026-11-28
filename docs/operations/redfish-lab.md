@@ -567,7 +567,9 @@ console is diagnostics only and never carries a token.
 
 The deadline is the sum of the fetch window, 15 minutes by default, and the
 report window, 30 minutes by default. A site may set shorter ones; the lab
-uses 5 and 10 minutes.
+uses 5 and 10 minutes. `FLEET_MULTIPLANE_MEDIA_FETCH` and
+`FLEET_MULTIPLANE_MEDIA_REPORT` shorten them for a faster runtime, such as
+a CI runner's KVM guests. Each held installation waits out both windows.
 
 ### What is real and what is stubbed
 

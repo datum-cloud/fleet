@@ -61,6 +61,7 @@ func relay(conn net.Conn, upstream string) {
 	if _, err := io.WriteString(out, redfishwork.ProxyHeader(source, destination)); err != nil {
 		return
 	}
+	fmt.Printf("report-relay: relaying a connection from %s\n", source.Addr())
 	done := make(chan struct{}, 2)
 	pipe := func(to, from net.Conn) {
 		_, _ = io.Copy(to, from)
