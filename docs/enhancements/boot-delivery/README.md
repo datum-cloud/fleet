@@ -131,12 +131,17 @@ and evidence handling are the same for every method.
   instance dropped a reservation is the network boot release step. The media
   service and the first-boot service run in the same central cluster.
 - **OS images and bootstrap data ([#184][images-pr]):** unchanged for the
-  customer. Three additions:
+  customer. Four additions, which #184 now carries:
   - an image needs a boot medium artifact to be offered on virtual media;
-  - under virtual media, the installed OS posts a first-boot report, so Fleet
-    trusts the provider image's first-boot step, which #184 does not yet; and
+  - under virtual media, success also depends on one first-boot report from
+    the provider image's first-boot step;
   - a BMC that does not verify the media certificate gets the bootstrap data
-    through the installed OS instead of on its media.
+    through the installed OS instead of on its media; and
+  - the first-boot service becomes a reader of sealed payloads, scoped as
+    [described below](#bmcs-that-do-not-verify-the-media-certificate).
+
+  Both proposals run the boot service centrally, with a certificate and
+  authorization for each site.
 - **Commissioning ([#185][commissioning-pr]):** commissioning gains a delivery
   phase, burn-in boots with any qualified method instead of only network boot,
   and burn-in reports over the network instead of the console. `Available`
@@ -352,9 +357,9 @@ posts its token and result from its provider address instead. See [Operations
 with no Machine](#operations-with-no-machine).
 
 The report comes from the provider-built image's first-boot step, before the
-customer's bootstrap runs, and the service accepts it only once. That trusts
-the provider image after install, which [#184][images-pr] does not do today,
-so that proposal must allow this proof for virtual media.
+customer's bootstrap runs, and the service accepts it only once.
+[#184][images-pr] allows this one exception to its rule that success never
+depends on the installed OS.
 
 Console output is optional diagnostics. It is never proof.
 
@@ -388,6 +393,10 @@ bootstrap data. Such a BMC can still install in a fallback mode:
   with the payload.
 - The fetch token is bound to the Machine's IPAM address and expires within
   the first-boot phase.
+- The first-boot service reads the operation's sealed payload by name only
+  after a fetch presents a matching token from that address, and only while
+  the first-boot phase is open. It cannot list, watch, or write payloads, and
+  keeps no copy after answering the fetch.
 - A second use of the fetch token ends the operation `OutcomeUnknown` and
   places a recovery hold, because someone else may hold the token.
 
