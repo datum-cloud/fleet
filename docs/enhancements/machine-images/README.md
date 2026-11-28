@@ -99,15 +99,16 @@ it as for any [Device operation](../device-operations/README.md#admission).
 This enhancement changes two parts of [Device
 custody](../device-operations/README.md):
 
-- **[Customer data](../device-operations/README.md#customer-data):** two
-  more identities can read a payload. The boot service, which runs centrally
-  with a separate identity for each site, can read one only while that
-  operation's boot is open. The first-boot service can read one only in the
-  virtual media fallback mode of [#227][boot-delivery-pr]. See [Sealed
-  bootstrap store](#sealed-bootstrap-store) for how each is scoped. The site controller that creates every worker can also get a
-  site payload by name, with no list, watch, or write; it grants no new
-  access, because that controller can already run a worker as any operation's
-  identity. See [Site delivery](#site-delivery).
+- **[Customer data](../device-operations/README.md#customer-data):** the
+  boot service, which runs centrally with a separate identity for each site,
+  holds a rendered payload only while that operation's boot is open. It never
+  reads the sealed store. The first-boot service can read a sealed payload
+  only in the virtual media fallback mode of [#227][boot-delivery-pr], scoped
+  as [Sealed bootstrap store](#sealed-bootstrap-store) describes. The site
+  controller that creates every worker can also get a site payload by name,
+  with no list, watch, or write; it grants no new access, because that
+  controller can already run a worker as any operation's identity. See [Site
+  delivery](#site-delivery).
 - **[Admission](../device-operations/README.md#admission):** DeviceInstallation
   adds one check of its own inputs.
 
@@ -376,12 +377,12 @@ operation name and the digest.
 | --- | --- |
 | Fleet provider for Metal | `create` only |
 | Fleet coordinator, which includes the federation courier | `get`, `list`, `watch`, `delete` |
-| Boot service, under one site's identity | `get` by name, only for an operation of that site whose boot admission is open |
 | First-boot service | `get` by name, only for a virtual media operation in fallback mode, only while its first-boot phase is open, and only after a fetch presents that operation's single-use token from the Machine's IPAM address |
 | Every staff role | Nothing |
 
-Neither service can list, watch, or write payloads. The first-boot service
-reads the payload once, to answer that one fetch, and keeps no copy.
+The first-boot service cannot list, watch, or write payloads. It reads the
+payload once, to answer that one fetch, and keeps no copy. The boot service has
+no access to SealedPayload.
 
 The provider never reads a payload back. Production must encrypt this kind at
 rest, and the audit policy must omit request and response bodies for it.
@@ -398,7 +399,7 @@ when one of these holds:
 
 - its operation has ended as `Succeeded`, `Failed`, `Cancelled`, or
   `OutcomeUnknown`;
-- its operation exists and references another payload; or
+- its operation exists and references another payload;
 - no operation has its name, and its allocation is no longer `Active`; or
 - no operation has its name 10 minutes after the payload was written.
 
@@ -423,22 +424,27 @@ payloads.
 The worker checks the payload against the operation's digest, and refuses with
 `InputMismatch` before it sends anything if they differ. It renders the payload
 in the image's bootstrap format and attaches it to the operation's boot
-admission. A boot admission is the site record that lets one server network
-boot once:
+admission. A boot admission is the record that lets one server network boot
+once:
 
 - it names the operation, the fence, and the boot interface's MAC address;
 - it carries a random 256-bit token, which appears only in the boot script the
-  site serves to that MAC address;
+  boot service serves to that MAC address;
 - it closes when the installer finishes, when its 10-minute window ends, or
   when a higher fence stops the worker.
 
 The boot service runs centrally, beside the central DHCP service, and no boot
 service runs at the site. It serves each site under a separate identity, with
 a certificate issued for that site and authorization for that site's
-operations only. While the admission is open, the boot service serves the
-rendered payload to requests that carry the token, so a firmware retry within
-the window works. Production serves it over HTTPS with the site's certificate,
-which the installer trusts. The installer writes it where the image's bootstrap format
+operations only. The worker sends the boot admission, with the rendered
+payload, to the boot service under its site's identity. The boot service
+holds them in memory and accepts an admission only for an operation of that
+site at the Device's stored fence.
+
+While the admission is open, the boot service serves the rendered payload to
+requests that carry the token, so a firmware retry within the window works.
+Production serves it over HTTPS with the site's certificate, which the
+installer trusts. The installer writes it where the image's bootstrap format
 reads it on first boot. The payload also carries the salt and the admitted
 data, so the installer reads them back from the target disk, recomputes the
 salted digest, and reports it. The worker reports success only when that
@@ -500,15 +506,16 @@ These tests are required and not implemented:
 - A payload is written, and its Installation is deleted before the operation
   is created. The payload is deleted 10 minutes after it was written, while
   the allocation is still `Active`.
-- A boot service identity for one site cannot read a payload or serve a boot
-  admission for another site's operation.
+- A boot service identity for one site cannot accept or serve a boot
+  admission for another site's operation, and cannot read SealedPayload.
 - The first-boot service cannot read a payload without a matching fetch
   token from the Machine's IPAM address, or after the first-boot phase ends.
 - No staff role can get, list, or watch a SealedPayload, and no site identity
   other than the operation's worker and the site controller that creates
-  workers can read its delivered payload.
+  workers can read its delivered payload. The boot service holds only the
+  rendered copy for an open admission of its own site.
 - After the operation ends, no copy of the payload remains in the provider
-  project, the federation layer, or the site.
+  project, the federation layer, the site, or the boot service.
 
 ## Production readiness review questionnaire
 
@@ -557,8 +564,8 @@ one SealedPayload write and one delete.
 
 ## Infrastructure needed
 
-Testing needs one provider project, two consumer projects, one site, a
-central boot service, and an artifact registry. The local VM and Redfish lab modes can
+Testing needs one provider project, two consumer projects, one site, a central
+boot service, and an artifact registry. The local VM and Redfish lab modes can
 prove the install path without hardware.
 
 [pxe-pr]: https://github.com/datum-cloud/fleet/pull/59
