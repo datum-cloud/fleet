@@ -38,13 +38,21 @@ The one `fleet-manager` Deployment serves every Milo project that consumes the
 `metal` service; see [project discovery](#project-discovery).
 
 The separate `fleet-registration` Deployment serves inert inventory-backed
-capacity admission only. It keeps no state: each capacity create is checked
-against live Devices and capacities in the provider projects. Its TLS trust,
-read/SAR credentials and webhook serving CA are environment-owned; it has no
-host RBAC and mounts no service account token. Read the
+capacity admission, the operation creator webhook, and the Machine power
+webhook. `config/components/machine-power-admission` admits a change to a
+Machine's `status.power` only from the identity named by `fleet-registration`'s
+`--machine-power-writer` flag, the manager's Milo identity; unset, every power
+change is refused. `config/milo` includes it, and `config/standalone` enforces
+the same rule with a ValidatingAdmissionPolicy. See
+[Machine power](../docs/development/device-custody.md#machine-power).
+The service keeps no state: each capacity create is checked against live
+Devices and capacities in the provider projects. Its TLS trust, read/SAR
+credentials and webhook serving CA are environment-owned; it has no host RBAC
+and mounts no service account token. Read the
 [registration rollout contract](../docs/development/inventory-capacity-registration.md#production-packaging-and-rollout)
-before applying either root: an unavailable service blocks capacity writes
-globally, and nothing else. Pod TCP readiness is transport-only; it must not
+before applying either root: an unavailable service blocks capacity writes,
+operation creates and Machine power changes globally, and nothing else. Pod
+TCP readiness is transport-only; it must not
 enable UI registration. This does not enable production allocation or
 provisioning.
 

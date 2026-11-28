@@ -1,0 +1,33 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: fleet-machine-power
+webhooks:
+  # The manager's power projector is the only writer of a Machine's
+  # status.power. RBAC cannot hold that field to one writer: Milo authorizes a
+  # status write with the Machine's update and patch permissions, which the
+  # consumer roles hold. Milo's root API server calls this webhook, because
+  # Milo does not evaluate admission policies stored in a project. Only status
+  # writes that change status.power are routed, so an unavailable service
+  # blocks power changes and nothing else. It is fail-closed. The
+  # fleet-registration server serves it; its --machine-power-writer flag names
+  # the projector's identity, and without it every power change is refused.
+  - name: power.machines.metal.datumapis.com
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    sideEffects: None
+    timeoutSeconds: 10
+    clientConfig:
+      url: https://fleet-registration.fleet-system.svc:9443/validate-machine-power
+    rules:
+      - apiGroups: [metal.datumapis.com]
+        apiVersions: [v1alpha1]
+        operations: [UPDATE]
+        resources: [machines/status]
+        scope: Namespaced
+    matchConditions:
+      - name: power-changes
+        expression: >-
+          (has(object.status) && has(object.status.power)) != (has(oldObject.status) && has(oldObject.status.power))
+          || (has(object.status) && has(object.status.power) && object.status.power != oldObject.status.power)

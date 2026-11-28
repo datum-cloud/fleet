@@ -1,0 +1,29 @@
+# The power rule. Milo projects ignore admission policies, so Milo uses the
+# Machine power webhook; a plain cluster enforces the same rule with this
+# policy: only the power projector's identity changes a Machine's
+# status.power. Here that is the smoke runner, which runs the manager's
+# projector for its fixture Machines.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: fleet-machine-power}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [metal.datumapis.com]
+        apiVersions: ["*"]
+        operations: [UPDATE]
+        resources: [machines/status]
+  validations:
+    - expression: >-
+        request.userInfo.username == 'system:serviceaccount:fleet-system:fleet-standalone-smoke'
+        || ((has(object.status) && has(object.status.power)) == (has(oldObject.status) && has(oldObject.status.power))
+        && (!(has(object.status) && has(object.status.power)) || object.status.power == oldObject.status.power))
+      message: Only the power projector writes status.power.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: fleet-machine-power}
+spec:
+  policyName: fleet-machine-power
+  validationActions: [Deny]

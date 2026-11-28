@@ -12,6 +12,7 @@ resources:
   - rbac.yaml
   - fixtures.yaml
   - site.yaml
+  - machine-power.yaml
   - smoke-cronjobs.yaml
 images:
   - name: ghcr.io/datum-cloud/fleet-simulator
