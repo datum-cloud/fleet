@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="740" viewBox="0 0 1100 740" role="img" aria-labelledby="title description">
+  <title id="title">BMC hardware telemetry data flow</title>
+  <desc id="description">Fleet inventory supplies one snapshot of BMC addresses, telemetry accounts, and device identity to a renderer in the site BMC gateway pod. The renderer writes the exporter's per-host configuration and serves the scraper a target list with device labels. The exporter queries server BMCs over Redfish through the gateway VPN tunnel into the out-of-band network. The scraper in the site cell cluster scrapes the exporter and remote-writes to the platform metrics store for the operator view. Fleet publishes an allocation info series only while an allocation is active. A recording rule joins hardware series to it and adds the project label. An allowlist federation copies only joined series with allowed labels into the tenant metrics store, which tenants reach through the project-scoped query API or export to their own backend.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; }
+    .heading { font-size: 24px; font-weight: 700; }
+    .label { font-size: 20px; font-weight: 700; }
+    .detail { font-size: 17px; fill: #475569; }
+    .edge { font-size: 17px; fill: #334155; }
+    .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }
+  </style>
+  <rect width="1100" height="740" fill="white"/>
+  <rect x="20" y="16" width="200" height="700" rx="10" fill="#fff7ed" stroke="#e0b98f" stroke-width="1.5"/>
+  <text x="44" y="55" class="heading" text-anchor="start">Out-of-band</text>
+  <rect x="240" y="16" width="500" height="700" rx="10" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+  <text x="264" y="55" class="heading" text-anchor="start">Site cell cluster</text>
+  <rect x="780" y="16" width="300" height="700" rx="10" fill="#f0fdf4" stroke="#96bda1" stroke-width="1.5"/>
+  <text x="804" y="55" class="heading" text-anchor="start">Platform</text>
+  <rect x="260" y="190" width="460" height="260" rx="10" fill="#f8fbff" stroke="#93b4df" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="706" y="214" class="detail" text-anchor="end">BMC gateway pod</text>
+  <rect x="40" y="350" width="160" height="80" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="120.0" y="387.0" class="label" text-anchor="middle">Server BMCs</text>
+  <text x="120.0" y="412.0" class="detail" text-anchor="middle">Read-only accounts</text>
+  <rect x="270" y="80" width="200" height="64" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="370.0" y="109.0" class="label" text-anchor="middle">Fleet inventory</text>
+  <text x="370.0" y="134.0" class="detail" text-anchor="middle">One snapshot</text>
+  <rect x="270" y="240" width="170" height="60" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="355.0" y="277.0" class="label" text-anchor="middle">Renderer</text>
+  <rect x="540" y="240" width="150" height="60" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="615.0" y="277.0" class="label" text-anchor="middle">Exporter</text>
+  <rect x="280" y="360" width="150" height="60" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="355.0" y="397.0" class="label" text-anchor="middle">VPN tunnel</text>
+  <rect x="500" y="490" width="150" height="60" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="575.0" y="527.0" class="label" text-anchor="middle">Scraper</text>
+  <rect x="800" y="80" width="260" height="70" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="930.0" y="112.0" class="label" text-anchor="middle">Metrics store</text>
+  <text x="930.0" y="137.0" class="detail" text-anchor="middle">Operator view, all devices</text>
+  <rect x="800" y="190" width="260" height="70" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="930.0" y="222.0" class="label" text-anchor="middle">Allocation info</text>
+  <text x="930.0" y="247.0" class="detail" text-anchor="middle">Active allocations only</text>
+  <rect x="800" y="300" width="260" height="70" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="930.0" y="332.0" class="label" text-anchor="middle">Recording rule</text>
+  <text x="930.0" y="357.0" class="detail" text-anchor="middle">Joins and adds project</text>
+  <rect x="800" y="410" width="260" height="70" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="930.0" y="442.0" class="label" text-anchor="middle">Tenant metrics store</text>
+  <text x="930.0" y="467.0" class="detail" text-anchor="middle">Allowed labels, short retention</text>
+  <rect x="800" y="520" width="260" height="70" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="930.0" y="552.0" class="label" text-anchor="middle">Query API</text>
+  <text x="930.0" y="577.0" class="detail" text-anchor="middle">Project scoped</text>
+  <rect x="800" y="630" width="260" height="70" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="930.0" y="662.0" class="label" text-anchor="middle">Tenants</text>
+  <text x="930.0" y="687.0" class="detail" text-anchor="middle">Query or export</text>
+  <path d="M 370 144 L 370 240" class="line" stroke-dasharray="6 4"/>
+  <text x="382" y="172" class="edge" text-anchor="start">addresses, accounts, identity</text>
+  <path d="M 440 255 L 540 255" class="line"/>
+  <text x="490" y="243" class="edge" text-anchor="middle">config</text>
+  <path d="M 580 300 L 580 340 L 355 340 L 355 360" class="line"/>
+  <text x="500" y="330" class="edge" text-anchor="middle">Redfish queries</text>
+  <path d="M 280 390 L 200 390" class="line"/>
+  <text x="240" y="380" class="edge" text-anchor="middle">HTTPS</text>
+  <path d="M 620 490 L 620 300" class="line"/>
+  <text x="610" y="440" class="edge" text-anchor="end">scrape</text>
+  <path d="M 500 520 L 460 520 L 460 285 L 440 285" class="line"/>
+  <text x="450" y="508" class="edge" text-anchor="end">target list</text>
+  <path d="M 650 520 L 765 520 L 765 115 L 800 115" class="line"/>
+  <text x="708" y="508" class="edge" text-anchor="middle">remote write</text>
+  <path d="M 1060 115 L 1074 115 L 1074 335 L 1060 335" class="line"/>
+  <path d="M 930 260 L 930 300" class="line"/>
+  <path d="M 930 370 L 930 410" class="line"/>
+  <text x="918" y="386" class="edge" text-anchor="end">allowlist</text>
+  <text x="918" y="406" class="edge" text-anchor="end">federation</text>
+  <path d="M 930 480 L 930 520" class="line"/>
+  <path d="M 930 590 L 930 630" class="line"/>
+</svg>
