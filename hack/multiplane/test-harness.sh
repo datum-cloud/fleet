@@ -277,8 +277,9 @@ with tempfile.TemporaryDirectory() as tmp:
     graph = (root / 'config/site/redfish/graph/kustomization.yaml').read_text()
     report_from = re.search(r'FLEET_MEDIA_REPORT_FROM, value: ([0-9./]+)', graph)
     central = (root / 'hack/multiplane/media-central.sh').read_text()
+    clients = re.search(r'--clients "?(\S+?)"? ', central)
     check('the central media service admits the site\'s report range as clients',
-          report_from is not None and re.search(r'--clients \S*' + re.escape(report_from.group(1)), central) is not None)
+          report_from is not None and clients is not None and report_from.group(1) in clients.group(1).split(','))
     check('fault injection suspends Flux first', 'suspend milo-consumer-a true' in steps and '"suspend":true' in (root / 'hack/multiplane/reflection-faults.py').read_text())
     check('RBAC revocation repaired by Flux, not the harness', "'apply'" not in (root / 'hack/multiplane/verify-rbac.py').read_text())
     for path in ('config/site/base/site.yaml', 'config/site/graph/rgd.yaml', 'config/site/instance/dispatcher.yaml', 'config/multiplane/coordination/crd.yaml',
