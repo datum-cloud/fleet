@@ -131,14 +131,16 @@ and evidence handling are the same for every method.
   instance dropped a reservation is the network boot release step. The media
   service and the first-boot service run in the same central cluster.
 - **OS images and bootstrap data ([#184][images-pr]):** unchanged for the
-  customer. Four additions, which #184 now carries:
-  - an image needs a boot medium artifact to be offered on virtual media;
+  customer. #184 already allows two of this proposal's needs:
   - under virtual media, success also depends on one first-boot report from
-    the provider image's first-boot step;
-  - a BMC that does not verify the media certificate gets the bootstrap data
-    through the installed OS instead of on its media; and
-  - the first-boot service becomes a reader of sealed payloads, scoped as
+    the provider image's first-boot step; and
+  - the first-boot service is a reader of sealed payloads, scoped as
     [described below](#bmcs-that-do-not-verify-the-media-certificate).
+
+  This proposal adds two more to the image contract:
+  - an image needs a boot medium artifact to be offered on virtual media; and
+  - a BMC that does not verify the media certificate gets the bootstrap data
+    through the installed OS instead of on its media.
 
   Both proposals run the boot service centrally, with a certificate and
   authorization for each site.
