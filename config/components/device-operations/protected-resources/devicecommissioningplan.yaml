@@ -1,0 +1,15 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: ProtectedResource
+metadata:
+  name: fleet.datumapis.com-devicecommissioningplan
+spec:
+  serviceRef:
+    name: fleet.datumapis.com
+  kind: DeviceCommissioningPlan
+  plural: devicecommissioningplans
+  singular: devicecommissioningplan
+  # The spec is immutable after create, so no role grants update or patch.
+  permissions: [list, get, watch, create, update, patch, delete]
+  parentResources:
+    - apiGroup: resourcemanager.miloapis.com
+      kind: Project

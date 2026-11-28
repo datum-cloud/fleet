@@ -17,8 +17,11 @@ config = state / 'provider' / 'bootstrap-project.json'
 # creates no namespace, because a project API may not run a namespace
 # controller to finish deleting one.
 namespace = 'fleet-rules'
-objects = (('devicerecovery', 'rules-recovery'), ('devicecustody', 'server-example-001'))
-names = ('devicecustodies', 'deviceinstallations', 'devicewipes', 'devicerecoveries')
+objects = (('devicerecovery', 'rules-recovery'), ('devicecustody', 'server-example-001'), ('devicecommissioning', 'rules-commissioning'),
+           ('devicecommissioningplanapproval', 'rules-plan-0123456789abcdef'), ('devicecommissioningplan', 'rules-plan'))
+names = ('devicecustodies', 'deviceinstallations', 'devicewipes', 'devicerecoveries', 'devicecommissionings', 'devicecommissioningplans',
+         'devicecommissioningplanapprovals')
+DIGEST = 'sha256:' + '0' * 64
 
 
 def kubectl(*args, stdin=None, check=True):
@@ -41,6 +44,15 @@ def refused(what, *args, stdin=None):
     checks.append({'rule': what, 'refused': ok})
     if not ok:
         raise SystemExit('custody-crd-rules: the project API accepted a write that breaks: ' + what)
+
+
+def copy(obj, name=None, **spec):
+    """A deep copy of obj, renamed and with spec fields replaced."""
+    out = json.loads(json.dumps(obj))
+    if name:
+        out['metadata']['name'] = name
+    out['spec'].update(spec)
+    return out
 
 
 def status(kind, name, phase):
@@ -91,6 +103,50 @@ try:
     mismatch['metadata']['name'] = 'server-example-002'
     mismatch['metadata']['namespace'] = namespace
     refused('custody has the same name as its Device', 'create', '-f', '-', stdin=json.dumps(mismatch))
+
+    # Commissioning plans, their approvals and commissionings. The objects are
+    # synthetic; the coordinator never reads this namespace, so nothing
+    # qualifies the plan or admits the commissioning.
+    content = {'inspection': {'cpu': {'architecture': 'amd64', 'cores': 2}, 'memory': {'capacity': '2Gi'},
+                              'disks': {'count': 1, 'minCapacity': '1Gi'}, 'interfaces': {'count': 1}},
+               'burnIn': {'image': {'name': 'burn-in-example', 'digest': DIGEST}, 'duration': '10m'}}
+    plan = {'apiVersion': 'fleet.datumapis.com/v1alpha1', 'kind': 'DeviceCommissioningPlan',
+            'metadata': {'name': 'rules-plan', 'namespace': namespace},
+            'spec': {'creator': envelope['creator'], 'deviceSelector': {'matchLabels': {'example.com/model': 'example'}},
+                     'content': content, 'evidenceLifetime': '24h'}}
+    apply(plan)
+    refused('the spec is immutable after create', '-n', namespace, 'patch', 'devicecommissioningplan', 'rules-plan',
+            '--type=merge', '-p', json.dumps({'spec': {'evidenceLifetime': '48h'}}))
+    refused('a plan must select Devices', 'create', '-f', '-', stdin=json.dumps(copy(plan, 'rules-plan-unselective', deviceSelector={})))
+    refused('evidence stays current from 1 hour to 365 days', 'create', '-f', '-', stdin=json.dumps(copy(plan, 'rules-plan-lifetime', evidenceLifetime='30m')))
+    refused('burn-in runs from 1 minute to 24 hours', 'create', '-f', '-',
+            stdin=json.dumps(copy(plan, 'rules-plan-burn-in', content=dict(content, burnIn=dict(content['burnIn'], duration='25h')))))
+    refused("a plan's name leaves room for its approval's suffix", 'create', '-f', '-', stdin=json.dumps(copy(plan, 'p' * 237)))
+    approval = {'apiVersion': 'fleet.datumapis.com/v1alpha1', 'kind': 'DeviceCommissioningPlanApproval',
+                'metadata': {'name': 'rules-plan-0123456789abcdef', 'namespace': namespace},
+                'spec': {'creator': {'username': 'approver-example'}, 'planRef': {'name': 'rules-plan', 'generation': 1, 'digest': DIGEST}}}
+    apply(approval)
+    refused('the spec is immutable after create', '-n', namespace, 'patch', 'devicecommissioningplanapproval', 'rules-plan-0123456789abcdef',
+            '--type=merge', '-p', json.dumps({'spec': {'planRef': {'generation': 2}}}))
+    refused("an approval's name is its plan's name and a suffix", 'create', '-f', '-', stdin=json.dumps(copy(approval, 'rules-plan-short')))
+    commissioning = {'apiVersion': 'fleet.datumapis.com/v1alpha1', 'kind': 'DeviceCommissioning',
+                     'metadata': {'name': 'rules-commissioning', 'namespace': namespace},
+                     'spec': dict(envelope, plan={'name': 'rules-plan', 'generation': 1, 'digest': DIGEST,
+                                                  'approval': 'rules-plan-0123456789abcdef', 'content': content})}
+    apply(commissioning)
+    refused('an operation spec is immutable after create', '-n', namespace, 'patch', 'devicecommissioning', 'rules-commissioning',
+            '--type=merge', '-p', json.dumps({'spec': {'authority': {'serviceRequest': {'reason': 'changed'}}}}))
+    refused('burn-in runs from 1 minute to 24 hours', 'create', '-f', '-',
+            stdin=json.dumps(copy(commissioning, 'rules-commissioning-short', plan=dict(commissioning['spec']['plan'], content=dict(content, burnIn=dict(content['burnIn'], duration='30s'))))))
+    for phase in ('Pending', 'Admitted', 'Dispatched'):
+        if status('devicecommissioning', 'rules-commissioning', phase).returncode != 0:
+            raise SystemExit('custody-crd-rules: a forward commissioning phase change was refused')
+    refused('operation phases move forward only', '-n', namespace, 'patch', 'devicecommissioning', 'rules-commissioning', '--subresource=status',
+            '--type=merge', '-p', json.dumps({'status': {'phase': 'Pending'}}))
+    if status('devicecommissioning', 'rules-commissioning', 'Failed').returncode != 0:
+        raise SystemExit('custody-crd-rules: ending a commissioning Failed was refused')
+    refused('an ended phase is final', '-n', namespace, 'patch', 'devicecommissioning', 'rules-commissioning', '--subresource=status',
+            '--type=merge', '-p', json.dumps({'status': {'phase': 'Succeeded'}}))
 finally:
     # The rule-check custody carries no finalizer: nothing reconciles this
     # namespace, so it is deleted at once.

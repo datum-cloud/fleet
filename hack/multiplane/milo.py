@@ -91,10 +91,13 @@ for role in roles:
   # reads custody and Devices only to skip taken capacity.
   rules+=[{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch','create','delete']},{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations/status'],'verbs':['get','update']},
           {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations'],'verbs':['get','list','watch','create']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecustodies'],'verbs':['get','list','watch']}]
+  # The coordinator rules mirror config/components/device-operations/roles/
+  # coordinator.yaml: it lists and settles every registered operation kind.
   components={
    'coordinator':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list','watch']},{'apiGroups':['fleet.datumapis.com'],'resources':['devicecustodies'],'verbs':['get','list','watch','create','update','delete']},
-                  {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations','devicewipes','devicerecoveries'],'verbs':['get','list','watch','delete']},
-                  {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations/status','devicewipes/status','devicerecoveries/status'],'verbs':['get','update']},
+                  {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations','devicewipes','devicerecoveries','devicecommissionings'],'verbs':['get','list','watch','delete']},
+                  {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations/status','devicewipes/status','devicerecoveries/status','devicecommissionings/status'],'verbs':['get','update']},
+                  {'apiGroups':['fleet.datumapis.com'],'resources':['devicecommissioningplans','devicecommissioningplanapprovals'],'verbs':['get','list','watch']},
                   {'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch']}],
    'release':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicewipes'],'verbs':['get','create']}],
    'discovery':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices/status'],'verbs':['get','update']}],

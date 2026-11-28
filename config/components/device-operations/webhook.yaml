@@ -20,5 +20,7 @@ webhooks:
       - apiGroups: [fleet.datumapis.com]
         apiVersions: [v1alpha1]
         operations: [CREATE, UPDATE]
-        resources: [deviceinstallations, devicewipes, devicerecoveries]
+        # The same list as creatorwebhook.Resources and the standalone creator
+        # policy; TestPackagedResourcesMatch keeps them in step.
+        resources: [deviceinstallations, devicewipes, devicerecoveries, devicecommissionings, devicecommissioningplans, devicecommissioningplanapprovals]
         scope: Namespaced

@@ -27,7 +27,7 @@ import (
 const Path = "/validate-operation-creator"
 
 // Resources are the operation plurals whose creator the webhook governs.
-var Resources = []string{"deviceinstallations", "devicewipes", "devicerecoveries"}
+var Resources = []string{"deviceinstallations", "devicewipes", "devicerecoveries", "devicecommissionings", "devicecommissioningplans", "devicecommissioningplanapprovals"}
 
 // Handler admits creates whose creator is the caller and updates that leave
 // the creator unchanged.

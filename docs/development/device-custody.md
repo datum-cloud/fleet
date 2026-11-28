@@ -16,6 +16,7 @@ marked **implemented and verified**, **implemented and inert**, or
 | B: site execution | Per-Device fence store and journal, older-worker stop with a confirmation, deadlines, fenced typed results, per-Device credentials, pinned TLS, identity checks, the handoff payload, the site fence report, and the Redfish install and wipe phases behind the worker contract | **Implemented and verified.** Unit tested, including against TLS BMC stubs. Increment C delivers to it. |
 | C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the delivery loop, the simulator, local VM and Redfish sites, the creator webhook in the production Milo root, the manager's power projector, and deletion of the Secret-backed records and executors. See [Cutover](#cutover-increment-c). | **Implemented.** Verified by unit tests, tests against a real API server, the standalone smoke (`task standalone:test`), and both multi-plane runs, local VM and Redfish. |
 | D: end-to-end failure scenarios | Harness phases and evidence checks for the #174 acceptance tests, and the two site fixes they found. See [Failure scenarios](#failure-scenarios-increment-d). | **Implemented and verified** by unit tests and both multi-plane runs, local VM and Redfish. |
+| Commissioning, step 1 | `DeviceCommissioning`, `DeviceCommissioningPlan` and `DeviceCommissioningPlanApproval`: CRDs, ProtectedResources, roles, the creator webhook route, the kind and its rows, plan qualification and the current plan. See [Commissioning](#commissioning). | **Implemented and inert.** Verified by tests against a real API server. No site runs a commissioning worker yet, and no mode creates one. |
 
 ## What Increment A adds
 
@@ -817,17 +818,82 @@ these seams. Each is decided here.
 | 4 | The settle hook sees the hold's end time, its deadline and current Device status | The hold records when it ended (`Since`), the operation's deadline and its snapshot. The hook gets the Device as read when the recovery is admitted and again when it is applied. A hold that rebuild created has `Since` set to the rebuild time, and copies the deadline and snapshot from the operation's status, so both are absent for an operation whose status never recorded them. A hook checks for that. | Implemented and inert |
 | 5 | Kinds register their refusal reasons | Each reason is declared with where it is raised. The registry refuses a malformed name, a shared name, a duplicate, or a missing source. A coordinator refusal, or a site result, with an undeclared reason is recorded as `UndeclaredReason`. A recovery's refusal may carry the held kind's declared reason only when it comes from that kind's settle hook. The site framework's own reasons are shared, and the Redfish workers' reasons are declared on their kinds. | Implemented and inert |
 | 6 | A kind may settle no hold, and declares whether `Retry` applies | `Settles` may be empty. `Retryable` marks a kind whose holds a `Retry` may unblock: a wipe, and power, whose hold settles with `Settle` and fresh discovery evidence or with `Retry` and a later power operation. A hold counts the `Retry` decisions applied to it, and the operation created after a `Retry` is named from the held operation and that count, as [Retries](#admission) describes. | Implemented and inert |
-| 7 | End-to-end proof that Milo enforces the CRD rules | The `custody-crd-rules` phase of both local end-to-end runs installs only these CRDs into the provider project, requires the project API to refuse eight forbidden writes, and removes them. | Implemented and verified in the local end-to-end runs |
+| 7 | End-to-end proof that Milo enforces the CRD rules | The `custody-crd-rules` phase of both local end-to-end runs installs only these CRDs into the provider project, requires the project API to refuse 19 forbidden writes, eleven of them to the commissioning kinds, and removes them. | Implemented and verified in the local end-to-end runs |
 | 8 | Journal steps carry a kind's payload | A step records a payload of at most 1 KiB, such as the send time or the power state before, journaled before it is sent. Observation after a crash reads it back. | Implemented and inert |
 | 9 | Delivery carries the admission time, and kinds declare a start-by window | A kind that implements `StartBy` refuses as `Stale` when its worker starts later than the window after admission, with nothing sent. A worker resuming steps an earlier worker sent is not stale. | Implemented and inert |
 | 10 | The TLS and identity check is separate from install capabilities | The framework verifies the pin and the System only, through the Redfish client's identity walk. Each kind checks the capabilities it uses, such as the Pxe and Hdd boot targets, and drives the System through a connection bound to it. | Implemented and inert |
 | 11 | A worker refusal with nothing sent ends `Failed` | It ends `Failed` under the operation's fence and returns a `Service` holder to `None`. It never ends `OutcomeUnknown`. Whether anything was sent comes from the journal. | Implemented and inert |
 | 12 | The single writer of `Machine.status.power` | The manager's `PowerProjector` is the only writer. It reads the custody of the Machine's allocation: while a recovery hold exists, or custody is unverified, it reports power `Unknown`. Otherwise it reports the power state discovery last observed. A Machine with no active allocation has no power. The harness runners call the same projection. A power operation's evidence becomes a second source when the power kind exists. | Implemented and verified by the standalone smoke, which reads the projected state |
+| 13 | A deadline from the operation's inputs | `DeadlineFor` replaces the kind's fixed `Deadline` at admission. Commissioning uses its plan's burn-in duration plus one hour. | Implemented and verified by `TestCommissioning` |
+| 14 | Evidence kept past retention | `KeepsLatest` keeps each Device's latest succeeded operation of the kind. Commissioning uses it, because the capacity projector reads it. | Implemented and verified by `TestCommissioning` |
 
 Rows 1 to 11 keep the status recorded when Increment A added them. The
 install and wipe kinds use some of them, such as step payloads and the refusal
-rule. No power or commissioning kind exists yet, so no shipped kind uses the
-settle hook or `Supersedes`. None of these conflicts with #174.
+rule. No power kind exists yet, and commissioning uses neither, so no shipped
+kind uses the settle hook or `Supersedes`. None of these conflicts with #174.
+
+## Commissioning
+
+This implements the kinds of the [commissioning
+proposal](https://github.com/datum-cloud/fleet/pull/185). Step 1 is
+**implemented and inert**: custody admits, holds and settles commissioning,
+but no site runs its worker. Staff with the commissioning operator role can
+still create one. It then holds the Device as `Service` until its deadline
+and ends `OutcomeUnknown`, leaving a commissioning hold that only a later
+commissioning settles. Every mode's coordinator role can read the new kinds,
+which a test pins, because the coordinator lists every registered kind.
+
+- **Plans.** `DeviceCommissioningPlan` has an immutable spec with a creator, a
+  non-empty Device selector, plans it supersedes, the content the site runs,
+  and an evidence lifetime of 1 hour to 365 days. Burn-in runs 1 minute to 24
+  hours. No spec holds an object UID. An approval's name is the plan's name
+  and a suffix derived from the plan's UID (`custody.ApprovalName`), and its
+  spec names the plan's generation and the digest of its whole spec
+  (`custody.PlanDigest`). A commissioning names the plan the same way plus
+  the approval's name, which pins the plan incarnation. The creator webhook
+  governs all three, so each creator is the caller.
+- **Qualified.** An approval qualifies its plan when it has the plan's
+  approval name, names the plan's current generation and digest, and its
+  creator is someone else: both creators have a username and the usernames
+  differ ignoring case. A client certificate carries no UID, so UIDs are
+  compared only when both creators have one, and then they must differ. A plan re-created under the same name has
+  another approval name, so it inherits no approval, and no commissioning
+  under the old plan is admitted under it. No role both writes and approves
+  plans, which a test pins.
+- **Residual window.** Admission reads the plan and its approval before the
+  custody update, which re-checks only the Device. A plan revoked in between
+  can still be admitted once. No capacity projector reads commissioning yet,
+  so this increment makes nothing `Prepared`. The projector that does must
+  check the plan's qualification again when it reads a commissioning, so
+  that run cannot make a server `Prepared` under a revoked plan (O1).
+- **Current plan.** The qualified plans whose selector matches the Device's
+  labels, minus those another of them supersedes. One left is the current
+  plan. None left with none matching is `NoCurrentPlan`. More than one, or
+  none left because the matching plans supersede each other, is
+  `PlanAmbiguous`. A supersession reaches only Devices the superseding plan
+  selects, and revoking it restores the old plan. `supersedes` names plans,
+  so a plan re-created under a superseded name stays superseded. That fails
+  closed: the plan inherits no approval, only the supersession.
+- **Admission.** Two staff rows: from `None`, and from `Service` only to settle
+  a commissioning hold. The kind refuses a Device that is not `Active`, one
+  without a `primary` interface MAC (`BootInterfaceUnknown`), a plan that is
+  missing, re-created or not qualified (`PlanNotQualified`), a copied
+  content, generation or digest that differs from the plan (`PlanMismatch`), and a plan that is
+  not the Device's current plan (`PlanNotCurrent`).
+- **Results.** A proven verdict ends `Succeeded` with result `Passed` or
+  `Failed` in its evidence. A `Passed` result must record the serial number,
+  system UUID and BMC key the admission snapshot holds, hardware that meets
+  the plan, every firmware baseline at its version, and a passed burn-in at
+  least as long as the plan's. A `Failed` result must name the phase and what
+  failed. Other evidence proves nothing, and the operation ends
+  `OutcomeUnknown`. Evidence is limited to 16 KiB.
+- **Retention.** Each existing Device incarnation's latest succeeded
+  commissioning is kept past retention. Once the Device is deleted or
+  re-created, the old incarnation's record ages out normally.
+- **Holds.** A later commissioning that ends `Succeeded` settles a
+  commissioning hold. It needs no `Retry`.
+
+The boot interface is fixed at `primary`, like the allocator's in every mode.
 
 ## Points for a person
 
@@ -835,7 +901,12 @@ These need a decision before the increment that depends on them.
 
 - **O1: the interim source of `Prepared` and `Healthy`.** Still open after C.
   The projector stays unwired, so the synthetic fixtures write `Prepared`,
-  `Healthy` and `Available` themselves.
+  `Healthy` and `Available` themselves. When the projector reads
+  commissioning, it must check the plan's qualification again, which closes
+  the residual window of [Commissioning](#commissioning).
+- **Who approves commissioning plans.** No team holds the plan approver role
+  in any deployed environment yet, so no plan qualifies there. The roles keep
+  the author and the approver apart by username.
 - **O10: the sealed store for bootstrap payloads.** Bootstrap stays refused in
   every increment until a store is chosen.
 - **A second person for `DeviceRecovery`.** Not required yet. A person

@@ -220,11 +220,15 @@ The phases are then:
    it proves the narrowed grant and the admission policies on kro's writes
    ([trust model](site-execution.md#ownership-and-trust-model)).
    `custody-crd-rules` then installs only the [Device custody](../development/device-custody.md)
-   CRDs into the provider project. It requires the project API to refuse eight
+   CRDs into the provider project. It requires the project API to refuse 19
    writes their CEL rules forbid: changing an operation's spec or creator,
    moving a phase backward or out of an ended phase, setting both authorities,
    lowering a custody fence, leaving `Retired`, and naming custody after
-   another Device. It then removes the objects and the CRDs. Milo ignores
+   another Device; and for the commissioning kinds, changing a plan's,
+   approval's or commissioning's spec, a plan that selects nothing, an
+   evidence lifetime or burn-in outside its bounds, a plan name with no room
+   for its approval's suffix, an approval not named for its plan, and moving a
+   commissioning's phase backward or out of an ended phase. It then removes the objects and the CRDs. Milo ignores
    admission policies stored in a project, so this proves the rules hold
    there. It sends nothing to any server.
    `import-inert` then requires that importing the Devices admitted,
