@@ -274,6 +274,11 @@ with tempfile.TemporaryDirectory() as tmp:
     for f in ('flux-tools', 'topology', 'flux-source', 'flux-bootstrap-$c', 'flux-platform', 'flux-milo', 'federation-enrollment', 'flux-site', 'flux-verify'):
         check('bootstrap phase present: ' + f, 'ph %s ' % f in run_sh or 'ph "%s" ' % f in run_sh)
     check('dispatch is a source revision', "--site dispatch" in steps and 'patch handoffdispatcher' not in steps)
+    graph = (root / 'config/site/redfish/graph/kustomization.yaml').read_text()
+    report_from = re.search(r'FLEET_MEDIA_REPORT_FROM, value: ([0-9./]+)', graph)
+    central = (root / 'hack/multiplane/media-central.sh').read_text()
+    check('the central media service admits the site\'s report range as clients',
+          report_from is not None and re.search(r'--clients \S*' + re.escape(report_from.group(1)), central) is not None)
     check('fault injection suspends Flux first', 'suspend milo-consumer-a true' in steps and '"suspend":true' in (root / 'hack/multiplane/reflection-faults.py').read_text())
     check('RBAC revocation repaired by Flux, not the harness', "'apply'" not in (root / 'hack/multiplane/verify-rbac.py').read_text())
     for path in ('config/site/base/site.yaml', 'config/site/graph/rgd.yaml', 'config/site/instance/dispatcher.yaml', 'config/multiplane/coordination/crd.yaml',
