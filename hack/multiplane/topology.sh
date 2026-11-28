@@ -8,53 +8,55 @@ umask 077
 state=${1:?private state directory required}
 prefix=$(cat "$state/prefix")
 [[ $prefix =~ ^fleet-mp-[a-f0-9]{8}$ ]] || { echo "unexpected prefix" >&2; exit 1; }
-export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker
+export DOCKER_CONTEXT=${FLEET_MULTIPLANE_DOCKER_CONTEXT:-colima-fleet-acceptance-tcg} KIND_EXPERIMENTAL_PROVIDER=docker
 node='kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f'
 registry_image=$(python3 -c 'import sys; sys.path.insert(0, "hack/multiplane"); import flux; print(flux.REGISTRY_IMAGE)')
-free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'; }
+# kind resolves host ports before it starts a node, so a port can be taken in
+# between; kind_create.py retries only that failure with fresh ports.
+kind_create() { python3 hack/multiplane/kind_create.py --name "$1" --template "$2" --config "${2%.template}" --ports "$3" --kubeconfig "$4" --image "$node"; }
+port_of() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1" "$2"; }
 
 # The source and image registry: plain HTTP on the kind network (local seam).
-reg_port=$(free_port)
-docker run -d --name "$prefix-registry" --network kind --memory 128m --memory-swap 128m --cpus 0.5 \
- -p "127.0.0.1:$reg_port:5000" "$registry_image" >/dev/null
+# Its memory limit also counts the page cache of the layers it writes, so a
+# fast runner's push of the site image needs room beyond the process itself.
+# Docker assigns its host port as it binds it, so no other bind can take it.
+docker run -d --name "$prefix-registry" --network kind --memory 512m --memory-swap 512m --cpus 0.5 \
+ -p "127.0.0.1::5000" "$registry_image" >/dev/null
+reg_port=$(docker port "$prefix-registry" 5000/tcp | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' | head -1)
+[[ $reg_port =~ ^[0-9]+$ ]] || { echo 'registry has no published host port' >&2; exit 1; }
 for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:$reg_port/v2/" >/dev/null 2>&1 && break; sleep 1; done
 curl -fsS "http://127.0.0.1:$reg_port/v2/" >/dev/null || { echo 'registry did not start' >&2; exit 1; }
 
 # Platform: three Milo project APIs, each published on its own NodePort.
-api_port=$(free_port)
-{
- echo 'kind: Cluster'
- echo 'apiVersion: kind.x-k8s.io/v1alpha4'
- echo 'nodes:'
- echo '  - role: control-plane'
- echo '    extraPortMappings:'
-} > "$state/platform-kind.yaml"
-printf '{' > "$state/platform-ports.json"
-sep=
-for entry in provider:30441 consumer-a:30442 consumer-b:30443; do
- role=${entry%%:*} np=${entry##*:} hp=$(free_port)
- printf '      - {containerPort: %s, hostPort: %s, listenAddress: 127.0.0.1}\n' "$np" "$hp" >> "$state/platform-kind.yaml"
- printf '%s"%s": %s' "$sep" "$role" "$hp" >> "$state/platform-ports.json"; sep=', '
-done
-printf '}\n' >> "$state/platform-ports.json"
-kind create cluster --name "$prefix-platform" --config "$state/platform-kind.yaml" --kubeconfig "$state/platform-admin.yaml" --image "$node" --wait 180s
+cat > "$state/platform-kind.yaml.template" <<'YAML'
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - {containerPort: 30441, hostPort: @port:provider@, listenAddress: 127.0.0.1}
+      - {containerPort: 30442, hostPort: @port:consumer-a@, listenAddress: 127.0.0.1}
+      - {containerPort: 30443, hostPort: @port:consumer-b@, listenAddress: 127.0.0.1}
+YAML
+kind_create "$prefix-platform" "$state/platform-kind.yaml.template" "$state/platform-ports.json" "$state/platform-admin.yaml"
 docker update --memory 2300m --memory-swap 2300m --cpus 2 "$prefix-platform-control-plane" >/dev/null
 
-cat > "$state/hub-kind.yaml" <<YAML
+cat > "$state/hub-kind.yaml.template" <<'YAML'
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
   - role: control-plane
     extraPortMappings:
       - containerPort: 32443
-        hostPort: $api_port
+        hostPort: @port:karmada@
         listenAddress: 127.0.0.1
 YAML
-kind create cluster --name "$prefix-hub" --config "$state/hub-kind.yaml" --kubeconfig "$state/host.yaml" --image "$node" --wait 180s
+kind_create "$prefix-hub" "$state/hub-kind.yaml.template" "$state/hub-ports.json" "$state/host.yaml"
+api_port=$(port_of "$state/hub-ports.json" karmada)
 docker update --memory 2600m --memory-swap 2600m --cpus 2 "$prefix-hub-control-plane" >/dev/null
 
 # The cell pulls the site image by digest from the run registry.
-cat > "$state/cell-kind.yaml" <<'YAML'
+cat > "$state/cell-kind.yaml.template" <<'YAML'
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 containerdConfigPatches:
@@ -62,7 +64,7 @@ containerdConfigPatches:
     [plugins."io.containerd.grpc.v1.cri".registry]
       config_path = "/etc/containerd/certs.d"
 YAML
-kind create cluster --name "$prefix-cell" --config "$state/cell-kind.yaml" --kubeconfig "$state/cell-admin.yaml" --image "$node" --wait 180s
+kind_create "$prefix-cell" "$state/cell-kind.yaml.template" "$state/cell-ports.json" "$state/cell-admin.yaml"
 docker exec "$prefix-cell-control-plane" mkdir -p "/etc/containerd/certs.d/$prefix-registry:5000"
 printf '[host."http://%s-registry:5000"]\n  capabilities = ["pull", "resolve"]\n' "$prefix" |
  docker exec -i "$prefix-cell-control-plane" tee "/etc/containerd/certs.d/$prefix-registry:5000/hosts.toml" >/dev/null
