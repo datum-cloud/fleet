@@ -274,6 +274,9 @@ with tempfile.TemporaryDirectory() as tmp:
     for f in ('flux-tools', 'topology', 'flux-source', 'flux-bootstrap-$c', 'flux-platform', 'flux-milo', 'federation-enrollment', 'flux-site', 'flux-verify'):
         check('bootstrap phase present: ' + f, 'ph %s ' % f in run_sh or 'ph "%s" ' % f in run_sh)
     check('dispatch is a source revision', "--site dispatch" in steps and 'patch handoffdispatcher' not in steps)
+    steps_py = (root / 'hack/multiplane/media_steps.py').read_text()
+    arms = re.findall(r'^\s+arm\(([^,)]*)', steps_py, re.M)
+    check('every media lab fault is armed with the run state', arms and all(a == 's' for a in arms), str(arms))
     graph = (root / 'config/site/redfish/graph/kustomization.yaml').read_text()
     report_from = re.search(r'FLEET_MEDIA_REPORT_FROM, value: ([0-9./]+)', graph)
     central = (root / 'hack/multiplane/media-central.sh').read_text()
