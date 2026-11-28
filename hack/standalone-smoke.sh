@@ -106,6 +106,13 @@ run_phase() {
   kubectl --context "$context" -n fleet-system logs "job/$run"
 }
 
+# Commissioning, not a fixture, makes the server Prepared, Healthy and
+# Available. The projector is the only status writer.
+run_phase commission fleet-smoke-commission-run
+test "$(kubectl --context "$context" -n fleet-provider get devicecommissionings -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}')" = "Succeeded"
+test "$(kubectl --context "$context" -n fleet-provider get machinecapacity central1-baremetal-01 -o jsonpath='{.status.conditions[?(@.type=="Available")].status}')" = "True"
+test "$(kubectl --context "$context" auth can-i update machinecapacities/status --as=system:serviceaccount:fleet-system:fleet-standalone-smoke -n fleet-provider)" = "no"
+test "$(kubectl --context "$context" auth can-i create devicecommissioningplanapprovals --as=system:serviceaccount:fleet-system:fleet-plan-author -n fleet-provider)" = "no"
 run_phase allocate fleet-smoke-allocate-run
 kubectl --context "$context" get machines -A
 test "$(kubectl --context "$context" -n fleet-project-a get machine -o name)" = "machine.metal.datumapis.com/allocation"
@@ -151,7 +158,7 @@ for project in fleet-project-a fleet-project-b; do
       fi
     done
   done
-  for secret in fleet-simulator-runtime fleet-custody-coordinator-token fleet-release-controller-token; do
+  for secret in fleet-simulator-runtime fleet-custody-coordinator-token fleet-release-controller-token fleet-capacity-projector-token fleet-plan-author-token fleet-plan-approver-token fleet-commissioning-operator-token; do
     if [ "$(kubectl --context "$context" auth can-i get "secret/$secret" --as="$subject" -n fleet-system)" != "no" ]; then
       echo "$subject unexpectedly has access to $secret" >&2
       exit 1

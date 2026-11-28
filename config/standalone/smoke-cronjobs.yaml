@@ -1,3 +1,38 @@
+# The commissioning phase acts as three people: one writes the plan, another
+# approves it, and an operator commissions the Device.
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: fleet-smoke-commission, namespace: fleet-system}
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: fleet-standalone-smoke
+          restartPolicy: Never
+          securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+          containers:
+            - name: smoke
+              image: ghcr.io/datum-cloud/fleet-standalone-smoke:v0.0.0-dev
+              imagePullPolicy: Never
+              args: [--phase=commission, --coordinator-token-file=/var/run/fleet/coordinator/token, --release-token-file=/var/run/fleet/release/token, --plan-author-token-file=/var/run/fleet/author/token, --plan-approver-token-file=/var/run/fleet/approver/token, --operator-token-file=/var/run/fleet/operator/token]
+              securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
+              volumeMounts:
+                - {name: coordinator-token, mountPath: /var/run/fleet/coordinator, readOnly: true}
+                - {name: release-token, mountPath: /var/run/fleet/release, readOnly: true}
+                - {name: author-token, mountPath: /var/run/fleet/author, readOnly: true}
+                - {name: approver-token, mountPath: /var/run/fleet/approver, readOnly: true}
+                - {name: operator-token, mountPath: /var/run/fleet/operator, readOnly: true}
+          volumes:
+            - {name: coordinator-token, secret: {secretName: fleet-custody-coordinator-token, defaultMode: 0440, items: [{key: token, path: token}]}}
+            - {name: release-token, secret: {secretName: fleet-release-controller-token, defaultMode: 0440, items: [{key: token, path: token}]}}
+            - {name: author-token, secret: {secretName: fleet-plan-author-token, defaultMode: 0440, items: [{key: token, path: token}]}}
+            - {name: approver-token, secret: {secretName: fleet-plan-approver-token, defaultMode: 0440, items: [{key: token, path: token}]}}
+            - {name: operator-token, secret: {secretName: fleet-commissioning-operator-token, defaultMode: 0440, items: [{key: token, path: token}]}}
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata: {name: fleet-smoke-allocate, namespace: fleet-system}

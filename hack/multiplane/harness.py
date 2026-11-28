@@ -34,7 +34,7 @@ class Interrupted(Exception):
     pass
 DEBIAN = 'debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc'
 # Subcommands and errors the live harness depends on. A missing one blocks before any resource exists.
-REQUIRED_SOURCE_MARKERS = tuple('"%s"' % c for c in ('seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse',
+REQUIRED_SOURCE_MARKERS = tuple('"%s"' % c for c in ('seed', 'commission', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse',
                                                      'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer',
                                                      'admit-install-b', 'recovery-mismatch', 'probe-unallocatable', 'tenant-isolation')) + ('multiplane.ErrLocationNotServed',)
 READINESS_PACKAGES = ('./internal/coordination', './internal/custody', './internal/site/...', './internal/multiplane', './cmd/fleet-multiplane')
@@ -361,13 +361,23 @@ def provider_key(item):
     return operation_key(item['kind'], item['metadata']['name'], item.get('status', {}).get('fence', 0))
 
 
+def is_commissioning(operation):
+    """Whether a site key is a DeviceCommissioning's. The commission phase
+    runs before any allocation and records its own evidence, so the install
+    and wipe evidence leaves it out."""
+    return operation.startswith('devicecommissioning.')
+
+
 def sanitized_operations(store, results=(), redfish=None):
-    """Each journaled operation in admission order: its site key, fence, kind
-    (from its step names), steps with their states, and its stored result
-    phase. Step payloads are never read out."""
+    """Each journaled install or wipe in admission order: its site key, fence,
+    kind (from its step names), steps with their states, and its stored
+    result phase. Step payloads are never read out. Commissionings are left
+    out; commissionings() returns them."""
     redfish = PROVIDER == 'redfish' if redfish is None else redfish
     ops = {}
     for e in (store or {}).get('journal') or []:
+        if is_commissioning(e['operation']):
+            continue
         o = ops.setdefault(e['operation'], {'operation': e['operation'], 'fence': e['fence'], 'steps': []})
         o['steps'].append([e['step'], e['state']])
     phases = {(operation_key(r['result']['operation']['kind'], r['result']['operation']['name'], r['result']['fence']), r['result']['fence']): r['result'].get('phase') for r in results}
@@ -379,6 +389,57 @@ def sanitized_operations(store, results=(), redfish=None):
                  phase=phases.get((o['operation'], o['fence'])), domain=LAB_DOMAIN if redfish else domain_name(o['operation']))
         out.append(o)
     return out
+
+
+def commissionings(store):
+    """Each journaled commissioning: its site key, fence and steps."""
+    ops = {}
+    for e in (store or {}).get('journal') or []:
+        if is_commissioning(e['operation']):
+            o = ops.setdefault(e['operation'], {'operation': e['operation'], 'fence': e['fence'], 'steps': []})
+            o['steps'].append([e['step'], e['state']])
+    return list(ops.values())
+
+
+def commission_digest(store, boot):
+    """The one finished commissioning in a site store, with digests of its
+    journal entries (times and payloads included) and of its boot record,
+    or an error. boot(operation) returns the parsed boot record, or None. A
+    replay that sent anything would journal a step or touch the record."""
+    found = commissionings(store)
+    if len(found) != 1 or ['burnin-disk-removed', 'Done'] not in found[0]['steps']:
+        return None, 'expected one finished commissioning, got %s' % found
+    c = found[0]
+    entries = [e for e in (store or {}).get('journal') or [] if e['operation'] == c['operation']]
+    record = boot(c['operation'])
+    if not record:
+        return None, 'the commissioning has no boot record'
+    return dict(c, journalSHA256=hashlib.sha256(json.dumps(entries, sort_keys=True).encode()).hexdigest(),
+                bootRecordSHA256=hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()), None
+
+
+def boot_record_path(operation):
+    """Where the local VM site stores an operation's boot admission."""
+    return device_dir() + '/vmboot/' + key(operation) + '.json'
+
+
+def commission_mark(args):
+    """After the local VM commission phase: record the commissioning's journal
+    and boot record, so the evidence phase can prove the Job kro recreates
+    for it later changed neither."""
+    store, _ = site_store(args.state)
+
+    def boot(operation):
+        code, out, _ = runtime_exec(args.state, 'sh', '-c', "cat '%s' 2>/dev/null || true" % boot_record_path(operation))
+        return json.loads(out) if code == 0 and out.strip() else None
+    mark, error = commission_digest(store, boot)
+    if error:
+        print(json.dumps({'error': error}))
+        return EXIT_FAILED
+    write_json(pathlib.Path(args.state) / 'commission.json', mark)
+    write_json(evidence_dir(args.state) / 'commission.json', mark)
+    print('commission-mark: one finished commissioning; its journal and boot record are recorded')
+    return 0
 
 
 def past_installer(op):
@@ -544,6 +605,8 @@ def main():
     s.add_argument('--state', required=True)
     s = sub.add_parser('custody-digest')
     s.add_argument('--state', required=True)
+    s = sub.add_parser('commission-mark')
+    s.add_argument('--state', required=True)
     s = sub.add_parser('scan')
     s.add_argument('--state', required=True)
     s.add_argument('--extra', nargs='*')
@@ -557,7 +620,7 @@ def main():
         if not a.command or not re.match(r'^[a-z0-9-]+$', a.name):
             return EXIT_USAGE
     return {'preflight': preflight, 'phase': phase, 'wait-stage': wait_stage, 'journal': journal_cmd, 'custody-digest': custody_cmd,
-            'scan': scan, 'result': result}[a.cmd](a)
+            'commission-mark': commission_mark, 'scan': scan, 'result': result}[a.cmd](a)
 
 
 if __name__ == '__main__':
