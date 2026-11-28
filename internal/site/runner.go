@@ -234,6 +234,9 @@ type Runner struct {
 	// waiting, when set, is called each time a worker waits for the run
 	// lock. Tests use it to know a copy is waiting.
 	waiting func()
+	// watchStopped, when set, is called as a worker's fence watcher stops.
+	// Tests use it to know the watcher no longer reads the store.
+	watchStopped func()
 }
 
 func (r *Runner) now() time.Time {
@@ -366,8 +369,17 @@ func (r *Runner) Run(ctx context.Context, assignment Assignment) (custody.SiteRe
 	ctx, cancel := context.WithDeadlineCause(ctx, assignment.Deadline, errDeadline)
 	defer cancel()
 	ctx, stop := context.WithCancelCause(ctx)
-	defer stop(nil)
-	go r.watch(ctx, assignment, stop)
+	// Run waits for the watcher before it returns and before the run lock is
+	// released, so nothing this worker started touches the store after it.
+	watching := make(chan struct{})
+	go func() {
+		defer close(watching)
+		r.watch(ctx, assignment, stop)
+	}()
+	defer func() {
+		stop(nil)
+		<-watching
+	}()
 
 	work := &Work{Assignment: assignment, store: r.Store}
 	if work.sent, err = sent(); err != nil {
@@ -441,6 +453,9 @@ func sanitize(err error) string {
 
 // watch cancels the worker when a newer fence is stored for the Device.
 func (r *Runner) watch(ctx context.Context, assignment Assignment, stop context.CancelCauseFunc) {
+	if r.watchStopped != nil {
+		defer r.watchStopped()
+	}
 	ticker := time.NewTicker(r.poll())
 	defer ticker.Stop()
 	for {
