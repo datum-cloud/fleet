@@ -707,10 +707,11 @@ Device's registration atomic. Stage 2 makes the duplicate harmless instead.
   another Device records. A `Prepared` server is the one its record names.
 - Enabling, the projector's `Available`, and the allocator each refuse a
   Device with a duplicate, at the moment they act.
-- The window left is between the allocator's check and its custody claim. A
-  duplicate recorded in it does not change which server the customer gets.
-  The provider host tuple is not proven by the BMC; for that alias the
-  recheck is the only protection.
+- The window left is between the allocator's check and its custody claim.
+  Nothing catches a duplicate recorded in it, but that duplicate does not
+  change which server the customer gets, because commissioning proved the
+  serial number and system UUID over the BMC. The provider host tuple is not
+  proven by the BMC; for that alias the recheck is the only protection.
 
 To resolve a conflict, correct the wrong record's identity, or move it to
 `Decommissioning`, then `Retired`, and delete it.
@@ -741,6 +742,10 @@ after that last check is still not claimed: the custody claim takes the
 incarnation from the allocation's `device-uid` label and refuses unless both
 the live Device and custody name it, so the allocation is withdrawn and the
 allocator selects again (`TestADeviceRecreatedAfterTheLastCheckIsNotClaimed`).
+These checks land with stage 2 because enabling is what makes a recreated
+Device reachable: before it, registered capacity could not leave `Disabled`,
+so it was never offered. The custody claim's check of the live Device
+predates stage 2; stage 2 adds the test above, which fails without it.
 The name carries the raw UID rather than a hash of it, as stage 1 named it; it
 is deterministic and holds one capacity per incarnation. The no-UIDs-in-spec
 rule allows a UID in a name, so the naming stays.
