@@ -494,3 +494,27 @@ func TestAServerThatNeverPowersOffEndsTheStep(t *testing.T) {
 		t.Fatalf("result = %+v, %d power-ons after %s", result, l.onCount(), time.Since(started))
 	}
 }
+
+// The boot log records whole seconds, so a file logged at 10:00:05 may have
+// finished at any point up to 10:00:06. Burn-in is timed from the next whole
+// second after the last file, so the log's truncation can never shorten the
+// time an image must run.
+func TestDeliveryIsRoundedUpToTheNextSecond(t *testing.T) {
+	cfg := Config{BootRoot: t.TempDir()}
+	work := &site.Work{Assignment: site.Assignment{Device: "metal/server-a", Fence: 1}}
+	dir := BootDirectory(cfg.BootRoot, work.Key())
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	log := "2026-01-02T10:00:00Z admitted boot.ipxe bytes=1\n" +
+		"2026-01-02T10:00:00Z write-complete boot.ipxe bytes=1\n" +
+		"2026-01-02T10:00:05Z write-complete installer.gz bytes=1\n" +
+		"2026-01-02T10:00:03Z write-complete kernel bytes=1\n"
+	if err := os.WriteFile(filepath.Join(dir, "boot-delivery.log"), []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	at, ok := cfg.deliveredAt(work)
+	if want := time.Date(2026, 1, 2, 10, 0, 6, 0, time.UTC); !ok || !at.Equal(want) {
+		t.Fatalf("deliveredAt = %v, %v; want %v", at, ok, want)
+	}
+}
