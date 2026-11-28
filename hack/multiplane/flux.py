@@ -122,7 +122,9 @@ PLATFORM_LAYER_INVENTORY = {
     'flux-system/ipam-apiserver': sorted(['ipam-system_ipam-apiserver__ServiceAccount', '_ipam-apiserver_rbac.authorization.k8s.io_ClusterRole',
                                           'ipam-system_ipam-apiserver-auth-reader_rbac.authorization.k8s.io_RoleBinding',
                                           '_ipam-apiserver_rbac.authorization.k8s.io_ClusterRoleBinding',
-                                          '_ipam-apiserver:system:auth-delegator_rbac.authorization.k8s.io_ClusterRoleBinding',
+                                          # Flux's inventory writes each colon in a name as two
+                                          # underscores.
+                                          '_ipam-apiserver__system__auth-delegator_rbac.authorization.k8s.io_ClusterRoleBinding',
                                           'ipam-system_ipam-apiserver__Service', 'ipam-system_ipam-apiserver_apps_Deployment',
                                           'ipam-system_ipam-apiserver_policy_PodDisruptionBudget', 'ipam-system_ipam-apiserver_networking.k8s.io_NetworkPolicy']),
 } if LAB_IPAM else {}
@@ -753,9 +755,9 @@ def verify(args):
     # apply is a dependency re-reconciling at the same revision (for example on
     # a fresh request) and is recorded, not counted as either evidence or fault.
     gated = [o for o in events if o['revision'] == first and not o['lastAppliedRevision'] and not o['inventoryEntries']]
-    regated = [o for o in events if o['revision'] == first and o['lastAppliedRevision'] == first]
+    regated = [o for o in events if o['revision'] == first and o['lastAppliedRevision'] and at_revision(o['kustomization'], o['lastAppliedRevision'], first)]
     for o in events:
-        if o['revision'] == first and o['lastAppliedRevision'] not in (None, first):
+        if o['revision'] == first and o['lastAppliedRevision'] and not at_revision(o['kustomization'], o['lastAppliedRevision'], first):
             problems.append('dependent applied another revision during bootstrap: %s' % o)
         elif o['revision'] == first and not o['lastAppliedRevision'] and o['inventoryEntries']:
             problems.append('dependent has an inventory before applying while its dependency is not Ready: %s' % o)

@@ -152,6 +152,10 @@ check('synced platform waits for both IPAM layers', flux.EXPECTED['platform'][-2
 ipam_layer = build(root / 'config/multiplane/ipam')
 ipam_ids = sorted('%s_%s_%s_%s' % (d['metadata'].get('namespace', ''), d['metadata']['name'], d['apiVersion'].rpartition('/')[0], d['kind']) for d in ipam_layer)
 check('IPAM layer inventory is exact', ipam_ids == flux.PLATFORM_LAYER_INVENTORY['flux-system/ipam-system'], str(ipam_ids))
+# Flux writes each colon in an inventory name as two underscores, so no
+# expected inventory ID may hold one.
+colons = [i for ids in list(flux.PLATFORM_LAYER_INVENTORY.values()) + list(flux.LAYER_INVENTORY.values()) for i in ids if ':' in i]
+check('expected inventory IDs use Flux\'s escaping', not colons, str(colons))
 check('no Secret in the IPAM layer', not any(d.get('kind') == 'Secret' for d in ipam_layer))
 postgres = next((d for d in ipam_layer if d.get('kind') == 'StatefulSet'), {}).get('spec', {}).get('template', {}).get('spec', {})
 check('IPAM PostgreSQL is pinned and reads its password from the enrolled Secret',
