@@ -49,7 +49,7 @@ to GitHub release archives, Docker Hub and PyPI to build the lab BMC image.
 The 1.2.2 release was 14 months old at integration and is the newest release.
 The emulator tree is copied into the image **unmodified**. Configuration comes
 from Fleet files: `emulator-config.json`, an infragen `populate-config.json`
-with one chassis and two Systems, and `targets.json`. The image ID, its registry
+with one chassis and two Systems, `targets.json` and `firmware.json`. The image ID, its registry
 digest and the archive provenance are recorded in `evidence/image-id` and
 `evidence/redfish-upstream.json`.
 
@@ -82,7 +82,9 @@ does not fork or patch upstream files.
 | `ComputerSystem.Reset` with `On`, `ForceOff` and `ForceRestart` applied to one exact persistent libvirt domain per System | Adapter (replaces upstream's in-memory handler for the two lab Systems) |
 | `PowerState` read from libvirt on every System read | Adapter |
 | `Boot` source override (`Pxe` or `Hdd`, `Once`), persisted in NVRAM state on the site volume and consumed at power-on | Adapter |
-| `ResetType` and boot `AllowableValues` narrowed to what the adapter implements; System `UUID` set from the lab target | Adapter |
+| `ResetType` and boot `AllowableValues` narrowed to what the adapter implements; System `UUID` and `SerialNumber` set from the lab target | Adapter |
+| No `Storage` link on the lab Systems: upstream's sample `Storage` drives are not the target's disk, so commissioning reads the populated `SimpleStorage` device | Adapter |
+| A read-only `UpdateService` and `FirmwareInventory` from `firmware.json`, synthetic versions upstream does not serve, so a commissioning plan's firmware baseline can be checked | Adapter |
 | Definition of the lab domains and the provisioning network, re-created with the same identity if the runtime loses them | Adapter |
 | Append-only request audit: method, path, status, principal class, client User-Agent, ResetType, boot override, effect and fault. It never records bodies or credentials. | Adapter |
 | `DELETE /redfish/v1/reset` and non-Redfish paths | Refused by the adapter |

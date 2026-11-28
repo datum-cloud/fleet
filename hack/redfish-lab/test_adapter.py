@@ -42,6 +42,7 @@ class AdapterTest(unittest.TestCase):
         r = self.app.get('/redfish/v1/')
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json['Systems'], {'@odata.id': '/redfish/v1/Systems'})
+        self.assertEqual(r.json['UpdateService'], {'@odata.id': '/redfish/v1/UpdateService'})
         self.assertEqual(self.app.delete('/redfish/v1/reset/').status_code, 404)
 
     def test_2_authentication_is_enforced(self):
@@ -54,7 +55,22 @@ class AdapterTest(unittest.TestCase):
         s = self.app.get('/redfish/v1/Systems/System-1', headers=AUTH).json
         self.assertEqual(s['UUID'], '7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0a')
         self.assertEqual(s['PowerState'], 'Off')
+        # Commissioning reads the serial the Device records and the one
+        # populated disk, never the upstream sample drives.
+        self.assertEqual(s['SerialNumber'], 'serial-synthetic-device-central-01')
+        self.assertNotIn('Storage', s)
+        controllers = self.app.get(s['SimpleStorage']['@odata.id'], headers=AUTH).json['Members']
+        devices = [d for c in controllers for d in self.app.get(c['@odata.id'], headers=AUTH).json['Devices']]
+        self.assertEqual([d['CapacityBytes'] for d in devices], [2 * 1024 ** 3])
         self.assertEqual(s['Boot']['BootSourceOverrideTarget@Redfish.AllowableValues'], ['None', 'Pxe', 'Hdd'])
+        # Commissioning checks firmware against the lab's inventory, behind
+        # authentication and read-only.
+        self.assertEqual(self.app.get('/redfish/v1/UpdateService/FirmwareInventory').status_code, 401)
+        service = self.app.get(self.app.get('/redfish/v1/').json['UpdateService']['@odata.id'], headers=AUTH).json
+        members = self.app.get(service['FirmwareInventory']['@odata.id'], headers=AUTH).json['Members']
+        versions = {f['Id']: f['Version'] for f in (self.app.get(m['@odata.id'], headers=AUTH).json for m in members)}
+        self.assertEqual(versions, {'BMC': '1.2.2-fleet-lab.1', 'BIOS': 'lab-bios-1.0.0'})
+        self.assertEqual(self.app.patch(members[0]['@odata.id'], headers=AUTH, json={'Version': 'x'}).status_code, 405)
         info = self.app.get(s['Actions']['#ComputerSystem.Reset']['@Redfish.ActionInfo'], headers=AUTH).json
         self.assertEqual(info['Parameters'][0]['AllowableValues'], ['On', 'ForceOff', 'ForceRestart'])
 

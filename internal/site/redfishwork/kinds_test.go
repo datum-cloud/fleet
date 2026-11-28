@@ -55,6 +55,31 @@ type lab struct {
 	operation string
 	// silent keeps the server running with no console receipt.
 	silent bool
+	// Commissioning: the serial and firmware the BMC reports, a component
+	// to report unhealthy, the burn-in result, and every effectful request.
+	serial    string
+	bmcFW     string
+	unhealthy string
+	burnIn    string
+	effects   int
+	// noHealth omits Health from the memory module; both lists the drive
+	// under Storage as well as SimpleStorage; receipts is how many burn-in
+	// receipts one boot prints.
+	noHealth bool
+	both     bool
+	receipts int
+	// emptyStorage links a Storage collection that lists no drives, so the
+	// drive is only under SimpleStorage; disabledDIMM adds a Disabled memory
+	// module.
+	emptyStorage bool
+	disabledDIMM bool
+	// burnTime is how long a burn-in boot takes on the store's clock, and
+	// skew is how far that clock has moved ahead.
+	burnTime time.Duration
+	skew     time.Duration
+	// pxeTime is how long firmware start and the network boot take before
+	// the boot server delivers the image.
+	pxeTime time.Duration
 }
 
 func newLab(t *testing.T) *lab {
@@ -68,7 +93,7 @@ func newLab(t *testing.T) *lab {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l := &lab{t: t, power: "Off", enabled: "Disabled", target: "None", console: filepath.Join(t.TempDir(), "console.log"), bootRoot: t.TempDir()}
+	l := &lab{t: t, power: "Off", enabled: "Disabled", target: "None", console: filepath.Join(t.TempDir(), "console.log"), bootRoot: t.TempDir(), serial: "SERIAL-001", bmcFW: "1.0.0", burnIn: "passed", receipts: 1, burnTime: 2 * time.Minute}
 	l.server = httptest.NewUnstartedServer(l)
 	l.server.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
 	l.server.StartTLS()
@@ -86,6 +111,9 @@ func (l *lab) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := "/redfish/v1/Systems/A"
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if r.Method != http.MethodGet {
+		l.effects++
+	}
 	switch {
 	case r.Method == http.MethodPatch && r.URL.Path == path:
 		var body struct{ Boot map[string]string }
@@ -115,9 +143,27 @@ func (l *lab) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	docs := map[string]any{
-		"/redfish/v1":         map[string]any{"@odata.id": "/redfish/v1", "Systems": map[string]string{"@odata.id": "/redfish/v1/Systems"}},
-		"/redfish/v1/Systems": map[string]any{"Members": []any{map[string]string{"@odata.id": path}}},
-		path: map[string]any{"@odata.id": path, "Id": "A", "UUID": uuid, "PowerState": l.power,
+		"/redfish/v1":                                     map[string]any{"@odata.id": "/redfish/v1", "Systems": map[string]string{"@odata.id": "/redfish/v1/Systems"}, "UpdateService": map[string]string{"@odata.id": "/redfish/v1/UpdateService"}},
+		"/redfish/v1/UpdateService":                       map[string]any{"FirmwareInventory": map[string]string{"@odata.id": "/redfish/v1/UpdateService/FirmwareInventory"}},
+		"/redfish/v1/UpdateService/FirmwareInventory":     map[string]any{"Members": []any{map[string]string{"@odata.id": "/redfish/v1/UpdateService/FirmwareInventory/BMC"}}},
+		"/redfish/v1/UpdateService/FirmwareInventory/BMC": map[string]any{"Id": "BMC", "Name": "BMC firmware", "Version": l.bmcFW},
+		path + "/Processors":                              map[string]any{"Members": []any{map[string]string{"@odata.id": path + "/Processors/CPU0"}}},
+		path + "/Processors/CPU0":                         map[string]any{"Id": "CPU0", "Model": "Example CPU", "ProcessorArchitecture": "x86", "InstructionSet": "x86-64", "TotalCores": 2, "Status": l.health("CPU0")},
+		path + "/Memory":                                  map[string]any{"Members": l.dimms(path)},
+		path + "/Memory/DIMM0":                            map[string]any{"Id": "DIMM0", "CapacityMiB": 2048, "Status": l.health("DIMM0")},
+		path + "/Memory/DIMM1":                            map[string]any{"Id": "DIMM1", "CapacityMiB": 2048, "Status": map[string]string{"State": "Disabled", "Health": "OK"}},
+		path + "/Storage":                                 map[string]any{"Members": []any{map[string]string{"@odata.id": path + "/Storage/1"}}},
+		path + "/Storage/1":                               map[string]any{"Drives": l.drives()},
+		"/redfish/v1/Chassis/1/Drives/0":                  map[string]any{"Name": "disk-0", "CapacityBytes": diskBytes, "Status": l.health("disk-0")},
+		path + "/SimpleStorage":                           map[string]any{"Members": []any{map[string]string{"@odata.id": path + "/SimpleStorage/S0"}}},
+		path + "/SimpleStorage/S0":                        map[string]any{"Id": "S0", "Devices": []any{map[string]any{"Name": "disk-0", "CapacityBytes": diskBytes, "Status": l.health("disk-0")}}},
+		path + "/EthernetInterfaces":                      map[string]any{"Members": []any{map[string]string{"@odata.id": path + "/EthernetInterfaces/NIC0"}}},
+		path + "/EthernetInterfaces/NIC0":                 map[string]any{"Id": "NIC0", "MACAddress": mac, "SpeedMbps": 1000},
+		"/redfish/v1/Systems":                             map[string]any{"Members": []any{map[string]string{"@odata.id": path}}},
+		path: map[string]any{"@odata.id": path, "Id": "A", "UUID": uuid, "PowerState": l.power, "SerialNumber": l.serial, "Status": l.health("System"),
+			"Processors": map[string]string{"@odata.id": path + "/Processors"}, "Memory": map[string]string{"@odata.id": path + "/Memory"},
+			"SimpleStorage": map[string]string{"@odata.id": path + "/SimpleStorage"}, "EthernetInterfaces": map[string]string{"@odata.id": path + "/EthernetInterfaces"},
+			"Storage": l.storageLink(path),
 			"Boot":    map[string]any{"BootSourceOverrideEnabled": l.enabled, "BootSourceOverrideTarget": l.target, "BootSourceOverrideTarget@Redfish.AllowableValues": []string{"Pxe", "Hdd"}},
 			"Actions": map[string]any{"#ComputerSystem.Reset": map[string]any{"target": path + "/Actions/ComputerSystem.Reset", "ResetType@Redfish.AllowableValues": []string{"On", "ForceOff"}}}},
 	}
@@ -142,6 +188,19 @@ func (l *lab) boot(target string) {
 	}
 	var line string
 	switch {
+	case target == "Pxe" && boot.Mode == "burnin":
+		l.mu.Lock()
+		l.skew += l.pxeTime
+		l.mu.Unlock()
+		l.deliver()
+		l.mu.Lock()
+		result := l.burnIn
+		l.skew += l.burnTime
+		l.mu.Unlock()
+		line = fmt.Sprintf("FLEET-BURNIN:%s:%s", boot.Receipt, result)
+		for range l.receipts - 1 {
+			line += fmt.Sprintf("\nFLEET-BURNIN:%s:%s", boot.Receipt, result)
+		}
 	case target == "Pxe" && boot.Mode == "wipe":
 		l.deliver()
 		line = fmt.Sprintf("FLEET-WIPED:%s:%d", boot.Receipt, diskBytes)
@@ -161,12 +220,60 @@ func (l *lab) boot(target string) {
 	l.mu.Unlock()
 }
 
+func (l *lab) storageLink(path string) any {
+	if !l.both && !l.emptyStorage {
+		return nil
+	}
+	return map[string]string{"@odata.id": path + "/Storage"}
+}
+
+func (l *lab) drives() []any {
+	if l.emptyStorage {
+		return []any{}
+	}
+	return []any{map[string]string{"@odata.id": "/redfish/v1/Chassis/1/Drives/0"}, map[string]string{"@odata.id": "/redfish/v1/Chassis/1/Drives/0"}}
+}
+
+func (l *lab) dimms(path string) []any {
+	members := []any{map[string]string{"@odata.id": path + "/Memory/DIMM0"}}
+	if l.disabledDIMM {
+		members = append(members, map[string]string{"@odata.id": path + "/Memory/DIMM1"})
+	}
+	return members
+}
+
+func (l *lab) effectCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.effects
+}
+
+func (l *lab) setUnhealthy(component string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.unhealthy = component
+}
+
+func (l *lab) health(component string) map[string]string {
+	if component == "DIMM0" && l.noHealth {
+		return map[string]string{"State": "Enabled"}
+	}
+	if component == l.unhealthy {
+		return map[string]string{"State": "Enabled", "Health": "Critical"}
+	}
+	return map[string]string{"State": "Enabled", "Health": "OK"}
+}
+
 func (l *lab) deliver() {
 	dir := BootDirectory(l.bootRoot, l.operation)
 	os.MkdirAll(dir, 0o700)
-	log := "t admitted boot.ipxe bytes=1\n"
+	// The boot server logs on the site's clock, which the store shares.
+	l.mu.Lock()
+	at := time.Now().Add(l.skew).UTC().Format(time.RFC3339)
+	l.mu.Unlock()
+	log := at + " admitted boot.ipxe bytes=1\n"
 	for _, name := range []string{"boot.ipxe", "kernel", "installer.gz"} {
-		log += "t write-complete " + name + " bytes=1\n"
+		log += at + " write-complete " + name + " bytes=1\n"
 	}
 	os.WriteFile(filepath.Join(dir, "boot-delivery.log"), []byte(log), 0o600)
 }

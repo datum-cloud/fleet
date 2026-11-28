@@ -1,0 +1,4 @@
+[
+  {"Id": "BMC", "Name": "Fleet lab BMC firmware", "Version": "1.2.2-fleet-lab.1"},
+  {"Id": "BIOS", "Name": "Fleet lab system firmware", "Version": "lab-bios-1.0.0"}
+]
