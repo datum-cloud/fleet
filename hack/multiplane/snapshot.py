@@ -47,7 +47,11 @@ LONG = (re.compile(r'\b[A-Fa-f0-9]{32,}\b'), re.compile(r'[A-Za-z0-9+/_-]{40,}={
 # escaping or spacing. Short keys mask only when a value is assigned to
 # them, so the coordinator's own "pass incomplete" errors stay readable.
 REST = (re.compile(r'(?i)(password|passwd|passphrase|secret|token|credential|api[_-]?key|cookie|bearer|sshpass|client-key-data|private[_-]?key|authorization)(?!>).*$', re.M),
-        re.compile(r'(?i)\b(pass|pw|pwd|key|auth|bmc[_-]?pass\w*)(\\?["\']?\s*[:=]).*$', re.M))
+        re.compile(r'(?i)\b(pass|pw|pwd|key|auth|bmc[_-]?pass\w*|pass[_-]word)(\\?["\']?\s*[:=]).*$', re.M),
+        # Command-line credentials echoed by a tool: --pass, --pw, -p, -P and
+        # -u (curl's user:password), and an upper-case PASS keyword.
+        re.compile(r'(^|\s)(--?(?:pass|pw|pwd|passwd|password|user)|-[pPu])((?:\s+|=)).*$', re.M),
+        re.compile(r'\b(PASS)(\s+)\S.*$', re.M))
 KNOWN = re.compile(r'\b(?:AKIA|ASIA)[0-9A-Z]{16}\b')
 CONDITION = ('type', 'status', 'reason', 'message', 'lastTransitionTime')
 
@@ -59,7 +63,9 @@ def mask(text):
     for pattern in LONG:
         text = pattern.sub(lambda m: '<masked len=%d>' % len(m.group(0)), text)
     text = REST[0].sub(lambda m: m.group(1) + ' <masked>', text)
-    return REST[1].sub(lambda m: m.group(1) + m.group(2) + ' <masked>', text)
+    text = REST[1].sub(lambda m: m.group(1) + m.group(2) + ' <masked>', text)
+    text = REST[2].sub(lambda m: m.group(1) + m.group(2) + m.group(3) + '<masked>', text)
+    return REST[3].sub(lambda m: m.group(1) + ' <masked>', text)
 
 
 def text(value, limit=300):

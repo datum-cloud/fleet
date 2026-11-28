@@ -29,7 +29,10 @@ UNRETAINED = {'bmc_password=hunter2xx': 'hunter2xx', 'access_token: abcdef123456
               # value, and keys separated from their value by a space.
               'body="{\\"Password\\":\\"escjson71\\"}"': 'escjson71', 'password="a\\"b escquote72"': 'escquote72',
               'PASSWORD spaced73': 'spaced73', 'sshpass -p flagged74 ssh': 'flagged74', 'pw=short75': 'short75',
-              'Cookie: session=cookie76': 'cookie76', 'AKIAABCDEFGHIJKLMNOP': 'AKIAABCDEFGHIJKLMNOP'}
+              'Cookie: session=cookie76': 'cookie76', 'AKIAABCDEFGHIJKLMNOP': 'AKIAABCDEFGHIJKLMNOP',
+              # A tool echoing its own command line.
+              'tool --pass flagpass77 --host x': 'flagpass77', 'tool --pw flagpw78': 'flagpw78', 'ipmitool -P ipmipw79 -H x': 'ipmipw79',
+              'curl -u admin:curlpw80 http://x': 'curlpw80', 'PASS upperpass81': 'upperpass81', 'pass_word=under82': 'under82', 'Pass-word: dash83': 'dash83'}
 tmp = pathlib.Path(tempfile.mkdtemp())
 bin_dir = tmp / 'bin'
 bin_dir.mkdir()
