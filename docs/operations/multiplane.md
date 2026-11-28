@@ -269,6 +269,7 @@ mode-0700 `/tmp/fleet-multiplane.*` state directory (override the parent with
 | --- | --- |
 | `result.json` | Final status, exit code, failed phase, every phase record, retained containers, custody statement |
 | `phases.jsonl` | One record per bounded phase: name, status, exit code, bound, duration |
+| `failure-snapshot.json` | Failed or timed-out runs only: why the run stopped, recorded before its containers stop. It ships only if the secret scan passes |
 | `preflight.json` | Each prerequisite and readiness check |
 | `summary.json` | Written when the evidence checks pass, with `acceptance: evidence-verified`: allowlisted scenario evidence, operations, digests, receipt hashes, qualification flags. It does not say the run passed; `result.json` does |
 | `flux-verify.json`, `flux-initial.json`, `flux-rbac-restore.json`, `flux-drift.json`, `flux-graph-lifecycle.json`, `flux-restart.json`, `flux-fail-closed.json`, `flux-retention.json`, `flux-final.json`, `flux-ownership-final.json`, `flux-reconciles.json`, `flux-partition.json`, `flux-reflection-suspension.json`, `gitops-r<N>.SHA256SUMS` | Flux source revisions and digests, Ready/generation/revision of every Kustomization and HelmRelease, inventories and single-writer ownership, and each GitOps scenario ([details](gitops.md#acceptance-coverage)) |
@@ -278,6 +279,16 @@ mode-0700 `/tmp/fleet-multiplane.*` state directory (override the parent with
 | `interrupt.json`, `lifecycle.json`, `delivery-faults.json`, `wrong-location.json` | Scenario-specific observations, no secrets |
 | `import-inert.json`, `staff-access.json`, `contention.json`, `release-waits.json`, `deadline-hold.json`, `deadline-settled.json`, `rebuild.json` | The #174 failure scenarios ([coverage](../../test/acceptance/coverage.md#device-custody-and-operations)) |
 | `source-SHA256SUMS`, `binary-SHA256SUMS`, `image-id`, `sysctl.json`, `teardown.json` | Tested inputs and teardown record |
+
+A failure snapshot holds custody and each Device operation's phase, reason
+and fence, each handoff's reported result on the cell and the hub, Karmada's
+ResourceBinding and Work conditions, and the recent error lines of the
+coordinator, site workers and observer. It copies no spec, Secret or receipt.
+Every copied string is masked for credential shapes, including ones the run
+never retained, and cut to a bounded length. A section it cannot read records
+why. A run stopped by a signal gives it 8 seconds, so its containers still
+stop; any other failure gives it 60. Status: verified against a fake API
+only, until a real failed run produces one.
 
 Before reporting, the harness scans `evidence/` for every retained static token,
 ServiceAccount token (including the short-lived observer and worker probe
