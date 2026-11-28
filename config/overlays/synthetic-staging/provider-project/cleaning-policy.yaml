@@ -1,0 +1,18 @@
+# Operators apply this to the synthetic provider project, in the Device
+# namespace (--synthetic-device-namespace). It is not part of the overlay,
+# which renders into the management cluster. Synthetic staging allocates no
+# capacity until the policy its capacity names exists. The synthetic site
+# overwrites its one disk and reads it back, so the policy claims only Clear.
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: CleaningPolicy
+metadata:
+  name: synthetic-tenant-reuse-v1
+  namespace: default
+spec:
+  assurance: Clear
+  rules:
+    - name: nvme-ssd
+      match: {protocol: NVMe, mediaType: SSD}
+      methods: [Overwrite]
+      verify: {mode: Full}
+      timePerTiB: 1h

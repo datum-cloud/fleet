@@ -116,7 +116,7 @@ func newFixture(t *testing.T) *rig {
 
 func (f *rig) wipe(fence int64, uid string) site.Assignment {
 	spec := ops.DeviceWipeSpec{OperationEnvelope: ops.OperationEnvelope{Creator: ops.Creator{Username: "release", UID: "u"}, DeviceRef: ops.DeviceReference{Name: "server-example-001"}, Authority: ops.Authority{AllocationRef: &ops.LocalReference{Name: "alloc-example"}}},
-		Step: 1, CleaningPolicyDigest: "sha256:" + keyDigest, TargetDisks: []string{"disk-0"}}
+		Step: 1, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: "sha256:" + keyDigest}, TargetDisks: []string{"disk-0"}}
 	inputs, _ := json.Marshal(spec)
 	digest, _ := custody.SpecDigest(spec)
 	now := time.Now().UTC()

@@ -27,10 +27,6 @@ import (
 // syntheticSite is the synthetic provider: the simulator site.
 const syntheticSite = "synthetic-provider"
 
-// syntheticCleaningPolicy is the fixture cleaning policy record every
-// synthetic capacity names. Its digest is what each allocation pins.
-const syntheticCleaningPolicy = `{"method":"overwrite","disks":"all"}`
-
 // syntheticCustody builds the allocator, the custody coordinator loop and
 // fixture discovery for synthetic staging. The manager's own identity is the
 // Metal provider; the coordinator and the release controller authenticate
@@ -98,7 +94,6 @@ func syntheticCustody(ctx context.Context, scheme *runtime.Scheme, providerConfi
 		Provider: provider, ProviderCreator: providerCreator,
 		Releaser: releaseClient, ReleaseCreator: releaseCreator,
 		Custody: coordinator, Namespace: namespace,
-		Cleaning: func(string) (string, error) { return custody.SpecDigest(syntheticCleaningPolicy) },
 		// The synthetic site enrolls one boot NIC and one disk per Device.
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
 	}

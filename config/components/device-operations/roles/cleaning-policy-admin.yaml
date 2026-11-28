@@ -1,0 +1,15 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-cleaning-policy-admin
+  annotations:
+    kubernetes.io/display-name: Fleet Cleaning Policy Admin
+    kubernetes.io/description: Provider operators. Create and delete CleaningPolicies, which say how Fleet cleans a server between customers. A policy cannot be changed after creation.
+spec:
+  launchStage: Alpha
+  includedPermissions:
+    - fleet.datumapis.com/cleaningpolicies.create
+    - fleet.datumapis.com/cleaningpolicies.get
+    - fleet.datumapis.com/cleaningpolicies.list
+    - fleet.datumapis.com/cleaningpolicies.watch
+    - fleet.datumapis.com/cleaningpolicies.delete

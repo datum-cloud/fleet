@@ -407,7 +407,7 @@ func (k Installation) waitReceipt(ctx context.Context, work *site.Work, boot Boo
 
 func (k Installation) wipeSpec(work *site.Work) (ops.DeviceWipeSpec, *custody.Refusal) {
 	var spec ops.DeviceWipeSpec
-	if err := json.Unmarshal(work.Inputs, &spec); err != nil || spec.CleaningPolicyDigest == "" {
+	if err := json.Unmarshal(work.Inputs, &spec); err != nil || spec.Policy.Digest == "" {
 		return spec, &custody.Refusal{Reason: custody.ReasonInputsUnreadable, Message: "the admitted inputs are not a DeviceWipe spec"}
 	}
 	return spec, nil
@@ -473,5 +473,5 @@ func (k Wipe) Run(ctx context.Context, work *site.Work) (any, error) {
 		return nil, &custody.Refusal{Reason: site.ReasonStep, Message: "a disk remained after the wipe"}
 	}
 	at, _ := work.JournaledAt(step.Name)
-	return ops.WipeEvidence{Steps: []ops.StepEvidence{{Name: step.Name, CompletedAt: metav1.NewTime(at.UTC())}}, WipedDisks: spec.TargetDisks, PolicyDigest: spec.CleaningPolicyDigest}, nil
+	return ops.WipeEvidence{Steps: []ops.StepEvidence{{Name: step.Name, CompletedAt: metav1.NewTime(at.UTC())}}, WipedDisks: spec.TargetDisks, PolicyDigest: spec.Policy.Digest}, nil
 }

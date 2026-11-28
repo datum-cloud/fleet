@@ -22,3 +22,19 @@ webhooks:
         operations: [CREATE, UPDATE]
         resources: [deviceinstallations, devicewipes, devicerecoveries]
         scope: Namespaced
+  # Rejects a CleaningPolicy whose methods cannot reach its assurance, or
+  # that does not fit its drives. The CRD keeps the spec immutable.
+  - name: cleaningpolicies.fleet.datumapis.com
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    sideEffects: None
+    timeoutSeconds: 10
+    clientConfig:
+      url: https://fleet-registration.fleet-system.svc:9443/validate-cleaning-policy
+    rules:
+      - apiGroups: [fleet.datumapis.com]
+        apiVersions: [v1alpha1]
+        operations: [CREATE]
+        resources: [cleaningpolicies]
+        scope: Namespaced

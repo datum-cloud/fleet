@@ -178,10 +178,11 @@ A `MachineAllocation` holds the allocation's private facts (O8). It lives in the
 provider project, and only the Metal provider writes it.
 
 - **Spec (immutable).** The consumer as a typed reference, the Machine by
-  namespace and name, the capacity, the Device by name, the accepted class and profile pinned by
-  generation and spec digest, the CPU and memory, the hardware snapshot, the
-  admission authority, an optional quota claim, the pinned cleaning policy
-  digest, the boot interface and the target disks.
+  namespace and name, the capacity, the Device by name, the accepted class
+  and profile pinned by generation and spec digest, the CPU and memory, the
+  hardware snapshot, the admission authority, an optional quota claim, a copy
+  of the capacity's `CleaningPolicy` with its name, generation and digest, the
+  boot interface and the target disks.
 - **Labels.** `fleet.datumapis.com/machine-uid`,
   `fleet.datumapis.com/consumer-uid` and
   `fleet.datumapis.com/device-uid` record the incarnations the allocation was
@@ -647,10 +648,7 @@ remains.
 - **Boot interface (O12).** `bootInterface` resolves by name against the
   Device's interfaces, and the snapshot records its MAC. Target disks stay a
   site-local enrollment fact that the worker checks (Increment B).
-- **Cleaning policy (O11).** `DeviceWipe` requires the digest of the cleaning
-  policy record pinned at allocation. A resolver maps the capacity's cleaning
-  policy reference to that digest when the allocator creates the allocation. The
-  standalone, staging and multi-plane modes supply a fixture resolver.
+- **Cleaning policy (O11).** See [Cleaning policies](#cleaning-policies).
 - **Capacity (O1).** The projector stays a pure function. `Prepared` needs a
   succeeded commissioning under the current plan, `Healthy` needs current
   commissioning and discovery evidence, and `Available` also needs `Verified`
@@ -696,6 +694,44 @@ The site keys its journal, results and boot records by the admission, not by
 an object UID: `<lowercased kind>.<name>.<fence>`, with the name replaced by
 its digest if the key would exceed the site store's 128-character limit. A
 same-name operation admitted later has a higher fence and so another key.
+
+### Cleaning policies
+
+This section records how Fleet implements the [cleaning
+proposal](https://github.com/datum-cloud/fleet/pull/183) (#183). The first
+increment is **implemented and verified** with unit tests and tests against a
+real API server. The rest of #183 is **proposed**.
+
+- **Kind.** `CleaningPolicy` in `fleet.datumapis.com`, served only in provider
+  project control planes, with its ProtectedResource and a
+  `cleaning-policy-admin` role that can create and delete but not update. The
+  viewer role reads policies, and the Metal provider role can get one. The CRD
+  keeps the spec immutable.
+- **Validation.** `internal/cleaning` rejects a policy whose methods cannot
+  reach its assurance, that applies a method to the wrong protocol, that uses a
+  check a method does not allow, or that qualifies `CryptographicErase` for a
+  model that does not always encrypt. The `fleet-registration` server serves it
+  as a webhook at `/validate-cleaning-policy` in `config/milo`, for creates
+  only, because the spec cannot change. The synthetic Milo root and the
+  standalone cluster have no such webhook.
+- **Pinning.** The allocator reads the capacity's policy, validates it again,
+  and copies its name, generation, SHA-256 digest and spec into the
+  MachineAllocation. No spec holds the policy's UID: the copy and its digest
+  pin the content, so a policy deleted and recreated under the same name, even
+  at the same generation, changes no existing pin. Capacity whose policy is
+  missing or invalid is skipped, and nothing is claimed. If no capacity is
+  left, the error names the skipped policy. Each release `DeviceWipe` names
+  the pinned policy, so release does not need the policy to exist.
+- **Fixtures.** The standalone fixtures and the multi-plane seed create a
+  `Clear` policy that overwrites and reads back, the only method the sites run.
+  Synthetic staging ships a fixture policy that operators apply to the
+  provider project, because the manager writes no policies. No capacity is
+  allocated until it exists.
+
+Not implemented yet: drive inventory from Redfish and commissioning, the media
+manifest and pinned drive names, the per-drive plan in `DeviceWipe`, the
+in-band methods and their evidence, the evidence check and its reasons, and
+`DisposeDrive`. Until then, every site still wipes its one enrolled disk.
 
 ### Cutover decisions
 

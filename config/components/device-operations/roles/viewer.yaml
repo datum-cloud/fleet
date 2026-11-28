@@ -20,3 +20,6 @@ spec:
     - fleet.datumapis.com/devicerecoveries.get
     - fleet.datumapis.com/devicerecoveries.list
     - fleet.datumapis.com/devicerecoveries.watch
+    - fleet.datumapis.com/cleaningpolicies.get
+    - fleet.datumapis.com/cleaningpolicies.list
+    - fleet.datumapis.com/cleaningpolicies.watch

@@ -485,6 +485,9 @@ store persistence is covered by local tests. This remains synthetic API
 validation, not production provider qualification. The overlay needs imported
 records and two new credentials; see the [deployment and migration
 contract](../../config/README.md#moving-from-the-secret-backed-staging).
+Operators also apply the [fixture cleaning
+policy](../../config/overlays/synthetic-staging/provider-project/cleaning-policy.yaml)
+to the provider project. No capacity is allocated until it exists.
 
 
 `config/overlays/management-plane` now packages the manager Deployment so its

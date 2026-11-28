@@ -63,10 +63,11 @@ legacy management-cluster install and will be removed. See
 [Planning and registering physical devices](../docs/operations/physical-inventory.md).
 
 `config/components/device-operations` registers `DeviceCustody`, the Device
-operation kinds, their ProtectedResources, the coordinator, requester, viewer
-and recovery operator roles, and the creator webhook. `config/milo` includes all
-of it, and the `fleet-registration` server serves the webhook at
-`/validate-operation-creator`. `config/milo-synthetic` includes the kinds,
+operation kinds, `CleaningPolicy`, their ProtectedResources, the coordinator,
+requester, viewer, recovery operator and cleaning policy admin roles, and the
+creator and cleaning policy webhooks. `config/milo` includes all of it, and the
+`fleet-registration` server serves the webhooks at
+`/validate-operation-creator` and `/validate-cleaning-policy`. `config/milo-synthetic` includes the kinds,
 ProtectedResources and roles without the webhook, because it installs no
 registration webhook. `config/standalone` includes only the CRDs and enforces the
 creator rule with a ValidatingAdmissionPolicy. Including the kinds installs no

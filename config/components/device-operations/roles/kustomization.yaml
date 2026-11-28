@@ -6,3 +6,4 @@ resources:
   - recovery-operator.yaml
   - installation-requester.yaml
   - wipe-requester.yaml
+  - cleaning-policy-admin.yaml

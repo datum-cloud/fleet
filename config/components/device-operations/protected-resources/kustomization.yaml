@@ -5,3 +5,4 @@ resources:
   - deviceinstallation.yaml
   - devicewipe.yaml
   - devicerecovery.yaml
+  - cleaningpolicy.yaml

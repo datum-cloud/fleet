@@ -1,0 +1,16 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: ProtectedResource
+metadata:
+  name: fleet.datumapis.com-cleaningpolicy
+spec:
+  serviceRef:
+    name: fleet.datumapis.com
+  kind: CleaningPolicy
+  plural: cleaningpolicies
+  singular: cleaningpolicy
+  # The spec is immutable, so no role needs update or patch. A changed
+  # policy is a new policy.
+  permissions: [list, get, watch, create, update, patch, delete]
+  parentResources:
+    - apiGroup: resourcemanager.miloapis.com
+      kind: Project
