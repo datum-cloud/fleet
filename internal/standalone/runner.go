@@ -20,6 +20,7 @@ import (
 	"go.datum.net/fleet/internal/allocation"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/catalog"
 	"go.datum.net/fleet/internal/controller"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/manager"
@@ -44,6 +45,9 @@ type Options struct {
 	InstallationName   string
 	ReinstallationName string
 	LocationName       string
+	// ImageName is the provider image the allocate phase publishes into the
+	// first consumer namespace.
+	ImageName string
 	// Wait bounds how long a phase waits for the coordinator and the site.
 	Wait time.Duration
 }
@@ -55,7 +59,8 @@ func DefaultOptions() Options {
 		ClassName: "standard-metal", ProfileName: "general-purpose-24c-128g",
 		MachineName: "central1-baremetal-01", ClaimName: "allocation",
 		ReinstallationName: "debian-12-reinstall", InstallationName: "debian-12",
-		LocationName: "us-central-1", Wait: 3 * time.Minute,
+		LocationName: "us-central-1", ImageName: "debian-12",
+		Wait: 3 * time.Minute,
 	}
 }
 
@@ -111,6 +116,10 @@ func (r Runner) allocate(ctx context.Context) error {
 	first, err := r.prepareClaim(ctx, r.Options.FirstNamespace)
 	if err != nil {
 		return err
+	}
+	// The provider's publisher publishes its image to the first consumer.
+	if err := r.catalog().Publish(ctx, r.Client, r.consumerOf(first), r.Options.FirstNamespace, r.Options.ImageName); err != nil {
+		return fmt.Errorf("publish the image: %w", err)
 	}
 	second, err := r.prepareClaim(ctx, r.Options.SecondNamespace)
 	if err != nil {
@@ -169,7 +178,17 @@ func (r Runner) install(ctx context.Context, installationName string) error {
 		if err := r.Client.Status().Update(ctx, first.claim); err != nil {
 			return err
 		}
-		if operation, err = r.Allocator.Install(ctx, current, allocation.Installation{Installation: &installation, Current: previous}); err != nil {
+		image, err := r.catalog().Resolve(ctx, r.consumerOf(first), &installation)
+		if err == nil {
+			operation, err = r.Allocator.Install(ctx, current, allocation.Installation{Installation: &installation, Current: previous, Image: image})
+		}
+		if refusal := (*catalog.Refusal)(nil); errors.As(err, &refusal) {
+			apiMeta.SetStatusCondition(&installation.Status.Conditions, condition("Accepted", metav1.ConditionFalse, installation.Generation, refusal.Reason, refusal.Message))
+			if serr := r.Client.Status().Update(ctx, &installation); serr != nil {
+				return serr
+			}
+		}
+		if err != nil {
 			return fmt.Errorf("install synthetic image: %w", err)
 		}
 	} else if err != nil {
@@ -187,7 +206,7 @@ func (r Runner) install(ctx context.Context, installationName string) error {
 		return err
 	}
 	now := metav1.NewTime(r.Now().UTC())
-	installation.Status = fleetv1.InstallationStatus{Phase: "Ready", CompletedAt: &now, Conditions: []metav1.Condition{
+	installation.Status = fleetv1.InstallationStatus{Phase: "Ready", CompletedAt: &now, ResolvedImage: &fleetv1.ResolvedImage{Name: operation.Spec.Image.Name, Digest: operation.Spec.Image.Digest}, Conditions: []metav1.Condition{
 		condition("Accepted", metav1.ConditionTrue, installation.Generation, "SyntheticFixtureAccepted", "The standalone fixture admitted this request; this is not Milo authorization."),
 		condition("Executing", metav1.ConditionFalse, installation.Generation, "Completed", "The simulator site returned a verified result under the operation's fence."),
 		condition("Ready", metav1.ConditionTrue, installation.Generation, "Installed", "The simulator site verified the installation."),
@@ -299,7 +318,7 @@ func (r Runner) inputs(ctx context.Context) (*fleetv1.MachineClass, *fleetv1.Mac
 	if class.Spec.Capacity == nil || class.Spec.Capacity.MachineCapacities.Namespace != r.Options.ProviderNamespace {
 		return nil, nil, nil, errors.New("synthetic provider scope does not match configuration")
 	}
-	capacity.Status.Hardware = fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 24, Threads: 48, Sockets: 2}, Memory: fleetv1.HardwareMemory{Capacity: "128Gi"}}
+	capacity.Status.Hardware = fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 24, Threads: 48, Sockets: 2}, Firmware: &fleetv1.HardwareFirmware{BootMode: fleetv1.FirmwareUEFI}, Memory: fleetv1.HardwareMemory{Capacity: "128Gi"}}
 	capacity.Status.Conditions = []metav1.Condition{
 		condition("Prepared", metav1.ConditionTrue, capacity.Generation, "SyntheticEvidence", "Synthetic fixture evidence is current."),
 		condition("Healthy", metav1.ConditionTrue, capacity.Generation, "SyntheticEvidence", "Synthetic fixture evidence is current."),
@@ -309,6 +328,21 @@ func (r Runner) inputs(ctx context.Context) (*fleetv1.MachineClass, *fleetv1.Mac
 		return nil, nil, nil, err
 	}
 	return &class, &profile, &capacity, nil
+}
+
+// catalog resolves images in the provider namespace. Its authorizer is the
+// fixture's: every creator may use a published image. This is not Milo
+// authorization.
+func (r Runner) catalog() *catalog.Catalog {
+	return &catalog.Catalog{Provider: r.Client, Publisher: tenancy.Namespace(r.Options.ProviderNamespace), Namespace: r.Options.ProviderNamespace,
+		Authorize: func(context.Context, *fleetv1.Installation, *fleetv1.MachineImage, *fleetv1.MachineImage) error {
+			return nil
+		}}
+}
+
+// consumerOf is the consumer tenant: in standalone mode, the namespace.
+func (r Runner) consumerOf(c claim) tenancy.Consumer {
+	return tenancy.Consumer{Ref: c.machine.Consumer, UID: c.machine.ConsumerUID, Client: r.Client}
 }
 
 type claim struct {

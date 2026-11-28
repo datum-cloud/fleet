@@ -7,3 +7,5 @@ resources:
   - machinecapacity.yaml
   - machineallocation.yaml
   - installation.yaml
+  - machineimage.yaml
+  - machineimagepublication.yaml

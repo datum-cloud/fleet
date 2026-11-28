@@ -309,6 +309,9 @@ type DeviceInstallationSpec struct {
 type ImageInput struct {
 	Name   string `json:"name"`
 	Digest string `json:"digest"`
+	// FirmwareModes are the image's firmware modes. The worker reads the
+	// server's mode again before it sends anything.
+	FirmwareModes []string `json:"firmwareModes,omitempty"`
 }
 
 // SealedInput is an opaque reference into the sealed store and the digest of

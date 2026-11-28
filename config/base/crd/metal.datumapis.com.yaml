@@ -509,7 +509,143 @@ spec:
             type: object
             properties:
               phase: {type: string}
+              resolvedImage:
+                type: object
+                required: [name, digest]
+                properties:
+                  name: {type: string, minLength: 1}
+                  digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
               completedAt: {type: string, format: date-time}
               conditions:
                 type: array
                 items: {type: object, x-kubernetes-preserve-unknown-fields: true}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machineimages.metal.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: metal.datumapis.com
+  names: {kind: MachineImage, listKind: MachineImageList, plural: machineimages, singular: machineimage, shortNames: [mimg]}
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources: {status: {}}
+    additionalPrinterColumns:
+    - {name: Availability, type: string, jsonPath: .spec.availability}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion: {type: string}
+          kind: {type: string}
+          metadata: {type: object}
+          spec:
+            type: object
+            x-kubernetes-validations:
+            - rule: >-
+                (has(self.definition) && !has(self.source) && has(self.availability)) ||
+                (!has(self.definition) && has(self.source) && !has(self.availability))
+              message: an image is either a provider definition with an availability or a published source reference
+            - rule: >-
+                has(self.definition) == has(oldSelf.definition) &&
+                (!has(self.definition) || self.definition == oldSelf.definition) &&
+                (!has(self.source) || self.source == oldSelf.source)
+              message: an image's definition and source are immutable
+            properties:
+              definition:
+                type: object
+                required: [family, version, architecture, firmwareModes, digest]
+                properties:
+                  family: {type: string, minLength: 1, maxLength: 63}
+                  version: {type: string, minLength: 1, maxLength: 63}
+                  architecture: {type: string, minLength: 1, maxLength: 63}
+                  firmwareModes:
+                    type: array
+                    minItems: 1
+                    maxItems: 2
+                    x-kubernetes-list-type: set
+                    items: {type: string, enum: [UEFI, BIOS]}
+                  bootstrapFormats:
+                    type: array
+                    maxItems: 1
+                    x-kubernetes-list-type: set
+                    items: {type: string, enum: [NoCloud]}
+                  digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+              source:
+                type: object
+                required: [publisherRef, name]
+                properties:
+                  publisherRef:
+                    type: object
+                    required: [kind, name]
+                    x-kubernetes-validations:
+                    - rule: '(self.kind == "Project" && has(self.apiGroup) && self.apiGroup == "resourcemanager.miloapis.com") || (self.kind == "Namespace" && (!has(self.apiGroup) || self.apiGroup == ""))'
+                      message: a publisher is a Milo Project or a standalone Namespace
+                    properties:
+                      apiGroup: {type: string}
+                      kind: {type: string, minLength: 1}
+                      name: {type: string, minLength: 1}
+                  name: {type: string, minLength: 1}
+              availability: {type: string, enum: [Available, Withdrawn]}
+          status:
+            type: object
+            properties:
+              resolved: {type: object, x-kubernetes-preserve-unknown-fields: true}
+              conditions:
+                type: array
+                items: {type: object, x-kubernetes-preserve-unknown-fields: true}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machineimagepublications.metal.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: metal.datumapis.com
+  names: {kind: MachineImagePublication, listKind: MachineImagePublicationList, plural: machineimagepublications, singular: machineimagepublication}
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion: {type: string}
+          kind: {type: string}
+          metadata: {type: object}
+          spec:
+            type: object
+            x-kubernetes-validations:
+            - {rule: 'self == oldSelf', message: a publication record is immutable}
+            required: [consumerRef, image, source, digest]
+            properties:
+              consumerRef:
+                type: object
+                required: [kind, name]
+                x-kubernetes-validations:
+                - rule: '(self.kind == "Project" && has(self.apiGroup) && self.apiGroup == "resourcemanager.miloapis.com") || (self.kind == "Namespace" && (!has(self.apiGroup) || self.apiGroup == ""))'
+                  message: a consumer is a Milo Project or a standalone Namespace
+                properties:
+                  apiGroup: {type: string}
+                  kind: {type: string, minLength: 1}
+                  name: {type: string, minLength: 1}
+              image:
+                type: object
+                required: [namespace, name]
+                properties:
+                  namespace: {type: string, minLength: 1}
+                  name: {type: string, minLength: 1}
+              source:
+                type: object
+                required: [name]
+                properties:
+                  name: {type: string, minLength: 1}
+              digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}

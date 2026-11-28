@@ -58,11 +58,25 @@ func Seed(ctx context.Context, c Config) error {
 	}
 	// The capacity projector is not wired, so the fixture writes Prepared,
 	// Healthy and Available. Custody decides which Machine gets the Device.
-	capacity.Status.Hardware = fleet.Hardware{CPU: fleet.HardwareCPU{Architecture: "amd64", Cores: 2}, Memory: fleet.HardwareMemory{Capacity: "2Gi"}}
+	// Local guests and the Redfish lab VMs boot SeaBIOS.
+	capacity.Status.Hardware = fleet.Hardware{CPU: fleet.HardwareCPU{Architecture: "amd64", Cores: 2}, Firmware: &fleet.HardwareFirmware{BootMode: fleet.FirmwareBIOS}, Memory: fleet.HardwareMemory{Capacity: "2Gi"}}
 	for _, kind := range []string{"Available", "Prepared", "Healthy"} {
 		capacity.Status.Conditions = append(capacity.Status.Conditions, condition(kind, metav1.ConditionTrue, capacity.Generation, "SyntheticHardwareObservation"))
 	}
 	if err := provider.Status().Update(ctx, &capacity); err != nil {
+		return err
+	}
+	// The provider defines the one image the cell holds: the pinned
+	// installer manifest's digest.
+	imageName, imageDigest, ok := strings.Cut(c.Image, "@")
+	if !ok {
+		return errors.New("the cell image is not name@digest")
+	}
+	image := &fleet.MachineImage{ObjectMeta: metav1.ObjectMeta{Name: imageName, Namespace: DeviceNamespace}, Spec: fleet.MachineImageSpec{
+		Definition:   &fleet.ImageDefinition{Family: "fleet-local-linux", Version: "1", Architecture: "amd64", FirmwareModes: []string{fleet.FirmwareBIOS}, Digest: imageDigest},
+		Availability: fleet.ImageAvailable,
+	}}
+	if err := ensure(ctx, provider, image); err != nil {
 		return err
 	}
 	var routing []map[string]string
@@ -116,10 +130,6 @@ func Seed(ctx context.Context, c Config) error {
 			return ctx.Err()
 		}
 		w.Stop()
-		installation := &fleet.Installation{ObjectMeta: metav1.ObjectMeta{Name: "debian-pxe", Namespace: Namespace}, Spec: fleet.InstallationSpec{MachineRef: fleet.MachineReference{Name: machine.Name}, ExpectedPredecessor: fleet.InstallationPredecessor{Type: "None"}, ImageRef: fleet.LocalReference{Name: c.Image}}}
-		if err := ensure(ctx, user, installation); err != nil {
-			return err
-		}
 		var ns core.Namespace
 		if err := api.Get(ctx, client.ObjectKey{Name: Namespace}, &ns); err != nil {
 			return err
@@ -130,6 +140,14 @@ func Seed(ctx context.Context, c Config) error {
 		}
 		identity, err := manager.ResolveProjectIdentity(ctx, root, "local-milo", name)
 		if err != nil {
+			return err
+		}
+		// The provider's publisher publishes the image to the consumer.
+		if err := ImageCatalog(provider).Publish(ctx, provider, tenancy.Consumer{Ref: tenancy.Project(name), UID: identity.UID, Client: api}, Namespace, imageName); err != nil {
+			return err
+		}
+		installation := &fleet.Installation{ObjectMeta: metav1.ObjectMeta{Name: "debian-pxe", Namespace: Namespace}, Spec: fleet.InstallationSpec{MachineRef: fleet.MachineReference{Name: machine.Name}, ExpectedPredecessor: fleet.InstallationPredecessor{Type: "None"}, ImageRef: fleet.LocalReference{Name: imageName}}}
+		if err := ensure(ctx, user, installation); err != nil {
 			return err
 		}
 		routing = append(routing, map[string]string{"route": name, "namespace": Namespace, "namespaceUID": string(ns.UID), "projectUID": string(identity.UID), "machineUID": string(machine.UID), "watch": "Added exact UID"})

@@ -12,6 +12,7 @@ spec:
   includedPermissions:
     - metal.datumapis.com/machineclasses.use
     - metal.datumapis.com/machineprofiles.use
+    - metal.datumapis.com/machineimages.use
     - metal.datumapis.com/machines.create
     - metal.datumapis.com/machines.update
     - metal.datumapis.com/machines.patch

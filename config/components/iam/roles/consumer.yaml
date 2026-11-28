@@ -15,6 +15,7 @@ spec:
     - metal.datumapis.com/machineprofiles.patch
     - metal.datumapis.com/machineprofiles.delete
     - metal.datumapis.com/machineprofiles.use
+    - metal.datumapis.com/machineimages.use
     - metal.datumapis.com/machines.create
     - metal.datumapis.com/machines.update
     - metal.datumapis.com/machines.patch

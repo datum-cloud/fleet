@@ -20,3 +20,6 @@ spec:
     - metal.datumapis.com/installations.list
     - metal.datumapis.com/installations.get
     - metal.datumapis.com/installations.watch
+    - metal.datumapis.com/machineimages.list
+    - metal.datumapis.com/machineimages.get
+    - metal.datumapis.com/machineimages.watch

@@ -20,6 +20,8 @@ func TestAddToSchemeRegistersPublicKinds(t *testing.T) {
 		"Machine", "MachineList",
 		"MachineAllocation", "MachineAllocationList",
 		"Installation", "InstallationList",
+		"MachineImage", "MachineImageList",
+		"MachineImagePublication", "MachineImagePublicationList",
 	} {
 		gvk := GroupVersion.WithKind(kind)
 		if _, err := scheme.New(gvk); err != nil {

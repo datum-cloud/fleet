@@ -30,6 +30,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/catalog"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/tenancy"
 )
@@ -350,17 +351,10 @@ type Installation struct {
 	Installation *fleetv1.Installation
 	// Current is the Machine's current installation, or empty.
 	Current string
-}
-
-// ParseImage splits an image reference into its name and digest. Fleet
-// installs only images pinned by digest.
-func ParseImage(reference string) (ops.ImageInput, error) {
-	name, digest, ok := strings.Cut(reference, "@")
-	hexDigest, sha := strings.CutPrefix(digest, "sha256:")
-	if !ok || name == "" || !sha || len(hexDigest) != 64 || strings.Trim(hexDigest, "0123456789abcdef") != "" {
-		return ops.ImageInput{}, fmt.Errorf("%w: the image must be name@sha256:<64 hex>", ErrUnsupported)
-	}
-	return ops.ImageInput{Name: name, Digest: digest}, nil
+	// Image is the provider image the catalog resolved for the
+	// Installation. Install checks it against the allocation's hardware
+	// and retains its digest on the operation.
+	Image catalog.Image
 }
 
 // Install creates the DeviceInstallation for an Installation. It is
@@ -377,8 +371,11 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 	if (request.Current == "" && predecessor.Type != "None") || (request.Current != "" && (predecessor.Type != "Installation" || predecessor.Name != request.Current)) {
 		return nil, ErrPredecessor
 	}
-	image, err := ParseImage(installation.Spec.ImageRef.Name)
-	if err != nil {
+	image := request.Image
+	if image.Name == "" || image.Definition.Digest == "" {
+		return nil, fmt.Errorf("%w: the image is not resolved", ErrUnsupported)
+	}
+	if err := catalog.Compatible(image.Definition, allocation.Spec.Hardware, installation.Spec.BootstrapConfigRef != nil); err != nil {
 		return nil, err
 	}
 	labels := operationLabels(allocation)
@@ -387,7 +384,7 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 		ObjectMeta: metav1.ObjectMeta{Name: custody.InstallationName(allocation.Name, string(installation.UID)), Namespace: a.Namespace, Labels: labels},
 		Spec: ops.DeviceInstallationSpec{
 			OperationEnvelope: a.envelope(allocation, a.ProviderCreator),
-			Image:             image,
+			Image:             ops.ImageInput{Name: image.Name, Digest: image.Definition.Digest, FirmwareModes: slices.Clone(image.Definition.FirmwareModes)},
 			BootInterface:     allocation.Spec.BootInterface,
 			TargetDisks:       slices.Clone(allocation.Spec.TargetDisks),
 		},

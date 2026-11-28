@@ -24,6 +24,14 @@ spec:
     - metal.datumapis.com/machineprofiles.patch
     - metal.datumapis.com/machineprofiles.delete
     - metal.datumapis.com/machineprofiles.use
+    - metal.datumapis.com/machineimages.list
+    - metal.datumapis.com/machineimages.get
+    - metal.datumapis.com/machineimages.watch
+    - metal.datumapis.com/machineimages.create
+    - metal.datumapis.com/machineimages.update
+    - metal.datumapis.com/machineimages.patch
+    - metal.datumapis.com/machineimages.delete
+    - metal.datumapis.com/machineimages.use
     - metal.datumapis.com/machinecapacities.list
     - metal.datumapis.com/machinecapacities.get
     - metal.datumapis.com/machinecapacities.watch

@@ -26,3 +26,7 @@ spec:
     - metal.datumapis.com/machineallocations.patch
     - metal.datumapis.com/machineallocations.updateStatus
     - metal.datumapis.com/installations.updateStatus
+    # Admission resolves an image through its publication record.
+    - metal.datumapis.com/machineimagepublications.list
+    - metal.datumapis.com/machineimagepublications.get
+    - metal.datumapis.com/machineimagepublications.watch

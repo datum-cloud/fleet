@@ -192,3 +192,105 @@ func TestMachinePrinterColumnsShowRequestedHardware(t *testing.T) {
 		}
 	}
 }
+
+// TestMachineImageDefinitionAndSourceNeverChange proves the catalog is
+// immutable: a provider may only withdraw a definition, and a published
+// copy can never be pointed at another source.
+func TestMachineImageDefinitionAndSourceNeverChange(t *testing.T) {
+	crd := loadCRDs(t)["machineimages.metal.datumapis.com"]
+	digest := "sha256:" + strings.Repeat("ab", 32)
+	definition := func(version, availability string) map[string]any {
+		return map[string]any{"apiVersion": "metal.datumapis.com/v1alpha1", "kind": "MachineImage", "metadata": map[string]any{"name": "example-linux", "namespace": "default"}, "spec": map[string]any{
+			"definition":   map[string]any{"family": "example-linux", "version": version, "architecture": "amd64", "firmwareModes": []any{"UEFI"}, "bootstrapFormats": []any{"NoCloud"}, "digest": digest},
+			"availability": availability,
+		}}
+	}
+	publisher := func(group, kind, name string) map[string]any {
+		return map[string]any{"apiVersion": "metal.datumapis.com/v1alpha1", "kind": "MachineImage", "metadata": map[string]any{"name": "example-linux", "namespace": "default"}, "spec": map[string]any{
+			"source": map[string]any{"publisherRef": map[string]any{"apiGroup": group, "kind": kind, "name": name}, "name": "example-linux"},
+		}}
+	}
+	source := func(project string) map[string]any {
+		return publisher("resourcemanager.miloapis.com", "Project", project)
+	}
+	both := definition("1.2", "Available")
+	both["spec"].(map[string]any)["source"] = source("provider-example")["spec"].(map[string]any)["source"]
+	bareProject := publisher("resourcemanager.miloapis.com", "Project", "provider-example")
+	bareProject["spec"].(map[string]any)["source"] = map[string]any{"project": "provider-example", "name": "example-linux"}
+	noAvailability := definition("1.2", "Available")
+	delete(noAvailability["spec"].(map[string]any), "availability")
+	copyWithAvailability := source("provider-example")
+	copyWithAvailability["spec"].(map[string]any)["availability"] = "Available"
+	copyWithDefinition := source("provider-example")
+	copyWithDefinition["spec"].(map[string]any)["definition"] = definition("1.2", "Available")["spec"].(map[string]any)["definition"]
+	copyBecomesDefinition := source("provider-example")
+	delete(copyBecomesDefinition["spec"].(map[string]any), "source")
+	copyBecomesDefinition["spec"].(map[string]any)["definition"] = copyWithDefinition["spec"].(map[string]any)["definition"]
+	copyBecomesDefinition["spec"].(map[string]any)["availability"] = "Available"
+	badDigest := definition("1.2", "Available")
+	badDigest["spec"].(map[string]any)["definition"].(map[string]any)["digest"] = "sha256:short"
+	for _, test := range []struct {
+		name        string
+		object, old map[string]any
+		allowed     bool
+	}{
+		{"a definition", definition("1.2", "Available"), nil, true},
+		{"a published copy", source("provider-example"), nil, true},
+		{"both a definition and a source", both, nil, false},
+		{"a definition without an availability", noAvailability, nil, false},
+		{"a digest that is not sha256", badDigest, nil, false},
+		{"a published copy with an availability", copyWithAvailability, nil, false},
+		{"adding an availability to a published copy", copyWithAvailability, source("provider-example"), false},
+		{"adding a definition to a published copy", copyWithDefinition, source("provider-example"), false},
+		{"turning a published copy into a definition", copyBecomesDefinition, source("provider-example"), false},
+		{"withdrawing a definition", definition("1.2", "Withdrawn"), definition("1.2", "Available"), true},
+		// A provider may make a withdrawn release available again.
+		{"restoring a withdrawn definition", definition("1.2", "Available"), definition("1.2", "Withdrawn"), true},
+		{"changing a definition", definition("1.3", "Available"), definition("1.2", "Available"), false},
+		{"turning a definition into a copy", source("provider-example"), definition("1.2", "Available"), false},
+		{"repointing a published copy", source("provider-other"), source("provider-example"), false},
+		{"a standalone copy published from a Namespace", publisher("", "Namespace", "fleet-provider"), nil, true},
+		{"a publisher of another kind", publisher("resourcemanager.miloapis.com", "Organization", "provider-example"), nil, false},
+		{"a Project publisher in the core group", publisher("", "Project", "provider-example"), nil, false},
+		{"a Namespace publisher in another group", publisher("resourcemanager.miloapis.com", "Namespace", "fleet-provider"), nil, false},
+		{"a publisher without a name", publisher("resourcemanager.miloapis.com", "Project", ""), nil, false},
+		{"a bare project field", bareProject, nil, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if errs := validateObject(t, crd, test.object, test.old); (len(errs) == 0) != test.allowed {
+				t.Fatalf("allowed = %v, errors: %v", len(errs) == 0, errs)
+			}
+		})
+	}
+}
+
+// TestPublicationRecordsReferenceASupportedTenant: a publication record's
+// consumer is a typed reference to a Milo Project or a Namespace.
+func TestPublicationRecordsReferenceASupportedTenant(t *testing.T) {
+	crd := loadCRDs(t)["machineimagepublications.metal.datumapis.com"]
+	record := func(group, kind string) map[string]any {
+		return map[string]any{"apiVersion": "metal.datumapis.com/v1alpha1", "kind": "MachineImagePublication", "metadata": map[string]any{"name": "imgpub-example", "namespace": "fleet-provider"}, "spec": map[string]any{
+			"consumerRef": map[string]any{"apiGroup": group, "kind": kind, "name": "consumer-example"},
+			"image":       map[string]any{"namespace": "default", "name": "example-linux"},
+			"source":      map[string]any{"name": "example-linux"},
+			"digest":      "sha256:" + strings.Repeat("ab", 32),
+		}}
+	}
+	for _, test := range []struct {
+		name        string
+		group, kind string
+		allowed     bool
+	}{
+		{"a Milo Project", "resourcemanager.miloapis.com", "Project", true},
+		{"a standalone Namespace", "", "Namespace", true},
+		{"another kind", "resourcemanager.miloapis.com", "Organization", false},
+		{"a Project in the core group", "", "Project", false},
+		{"a Namespace in another group", "resourcemanager.miloapis.com", "Namespace", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if errs := validateObject(t, crd, record(test.group, test.kind), nil); (len(errs) == 0) != test.allowed {
+				t.Fatalf("allowed = %v, errors: %v", len(errs) == 0, errs)
+			}
+		})
+	}
+}
