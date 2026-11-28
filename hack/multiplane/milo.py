@@ -39,7 +39,7 @@ for role in roles:
  d=root/role;ns='milo-'+role
  if not d.exists():
   d.mkdir(mode=0o700)
-  who=('bootstrap','management','customer')+(('coordinator','release','discovery','staff') if role=='provider' else ())
+  who=('bootstrap','management','customer')+(('coordinator','release','discovery','staff','projector','plan-author','plan-approver','operator','capacity-operator') if role=='provider' else ())
   tokens={r:secrets.token_hex(32) for r in who}
   (d/'tokens.csv').write_text('\n'.join(f'{v},{k},{k},'+('system:masters' if k=='bootstrap' else 'fleet-local') for k,v in tokens.items())+'\n')
   run('openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(d/'tls.key'),'-out',str(d/'tls.crt'),'-days','2','-subj','/CN=fleet-local','-addext',f'subjectAltName=DNS:milo-apiserver.{ns}.svc,IP:127.0.0.1',stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -87,10 +87,12 @@ for role in roles:
   # coordinator's namespace. A project API runs no namespace controller, so
   # the namespace is never deleted.
   apply(config,{'apiVersion':'v1','kind':'Namespace','metadata':{'name':'fleet-rules'}})
-  # The Metal provider records allocations and creates installations; it
-  # reads custody and Devices only to skip taken capacity.
+  # The Metal provider records allocations and creates installations. It
+  # evaluates capacity from custody and commissioning evidence, and never
+  # writes capacity status.
   rules+=[{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch','create','delete']},{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations/status'],'verbs':['get','update']},
-          {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations'],'verbs':['get','list','watch','create']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecustodies'],'verbs':['get','list','watch']}]
+          {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations'],'verbs':['get','list','watch','create']},
+          {'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecustodies','devicecommissionings','devicecommissioningplans','devicecommissioningplanapprovals'],'verbs':['get','list','watch']}]
   # The coordinator rules mirror config/components/device-operations/roles/
   # coordinator.yaml: it lists and settles every registered operation kind.
   components={
@@ -100,6 +102,16 @@ for role in roles:
                   {'apiGroups':['fleet.datumapis.com'],'resources':['devicecommissioningplans','devicecommissioningplanapprovals'],'verbs':['get','list','watch']},
                   {'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch']}],
    'release':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicewipes'],'verbs':['get','create']}],
+   # The capacity projector is the only writer of capacity status.
+   'projector':[{'apiGroups':['metal.datumapis.com'],'resources':['machinecapacities'],'verbs':['get','list','watch']},{'apiGroups':['metal.datumapis.com'],'resources':['machinecapacities/status'],'verbs':['get','update']},
+                {'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecustodies','devicecommissionings','devicecommissioningplans','devicecommissioningplanapprovals'],'verbs':['get','list','watch']}],
+   # Three people commission a server: one writes the plan, another approves
+   # it, and an operator commissions the Device.
+   'plan-author':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicecommissioningplans'],'verbs':['get','create']}],
+   'plan-approver':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicecommissioningplans','devicecommissioningplanapprovals'],'verbs':['get','create']}],
+   'operator':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecommissioningplans'],'verbs':['get']},{'apiGroups':['fleet.datumapis.com'],'resources':['devicecommissionings'],'verbs':['get','list','create']}],
+   # A capacity operator, not the commissioning operator, enables capacity.
+   'capacity-operator':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get']},{'apiGroups':['metal.datumapis.com'],'resources':['machinecapacities'],'verbs':['get','list','update']}],
    'discovery':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices/status'],'verbs':['get','update']}],
    # Staff create recoveries and read inventory and custody, nothing else.
    # The coordinator treats every unconfigured creator as staff.

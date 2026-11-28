@@ -44,8 +44,7 @@ marked **implemented and verified**, **implemented and inert**, or
   only when `spec.creator` is the authenticated caller's username, plus its UID
   when the caller has one, and an update only when the creator is unchanged.
 - **The capacity projector** is a pure function that derives `Prepared`,
-  `Healthy` and `Available`. Nothing calls it outside tests (**implemented and
-  inert**; see [Capacity](#other-decisions)).
+  `Healthy` and `Available`. [Capacity status](#capacity-status) wires it.
 
 Creating or importing a Device creates `Unverified` custody. That sends
 nothing to a BMC and makes no capacity `Available`.
@@ -377,8 +376,6 @@ event.
 
 ### Unchanged and still open
 
-- The capacity projector stays unwired (O1), so the synthetic fixtures still write
-  `Prepared`, `Healthy` and `Available`.
 - Bootstrap stays refused (O10).
 - `DeviceRecovery` needs no second person.
 
@@ -698,12 +695,8 @@ remains.
   policy record pinned at allocation. A resolver maps the capacity's cleaning
   policy reference to that digest when the allocator creates the allocation. The
   standalone, staging and multi-plane modes supply a fixture resolver.
-- **Capacity (O1).** The projector stays a pure function. `Prepared` needs a
-  succeeded commissioning under the current plan, `Healthy` needs current
-  commissioning and discovery evidence, and `Available` also needs `Verified`
-  custody, holder `None`, no hold and an enabled allocation policy. Wiring it
-  as written would make every server unallocatable, because commissioning is
-  not built.
+- **Capacity (O1).** Settled by commissioning: see [Capacity
+  status](#capacity-status).
 
 ### No object UIDs in spec
 
@@ -862,10 +855,10 @@ which a test pins, because the coordinator lists every registered kind.
   plans, which a test pins.
 - **Residual window.** Admission reads the plan and its approval before the
   custody update, which re-checks only the Device. A plan revoked in between
-  can still be admitted once. No capacity projector reads commissioning yet,
-  so this increment makes nothing `Prepared`. The projector that does must
-  check the plan's qualification again when it reads a commissioning, so
-  that run cannot make a server `Prepared` under a revoked plan (O1).
+  can still be admitted once. The capacity projector reads the Device's
+  current plan, and so its qualification, again on every pass, so that run
+  cannot make a server `Prepared` under a revoked plan (see [Capacity
+  status](#capacity-status)).
 - **Current plan.** The qualified plans whose selector matches the Device's
   labels, minus those another of them supersedes. One left is the current
   plan. None left with none matching is `NoCurrentPlan`. More than one, or
@@ -897,11 +890,11 @@ The boot interface is fixed at `primary`, like the allocator's in every mode.
 
 ### The Redfish commissioning worker
 
-The Redfish worker for `DeviceCommissioning` is **implemented and inert**. It
-is tested against a TLS BMC stub, and no site registers it yet. The lab
-emulator's adapter reports each target's serial, its one disk and a firmware
-inventory, which a local read with the worker's Redfish client matched to a
-plan's hardware and firmware.
+The Redfish worker for `DeviceCommissioning` is **implemented**. It is tested
+against a TLS BMC stub, and the multi-plane Redfish site runs it against the
+lab emulator in its `commission` phase (see [Capacity
+status](#capacity-status)). The lab adapter reports each target's serial, its
+one disk and a firmware inventory. No production site registers it yet.
 
 - **Preflight.** It reads the system's identity, processors, memory, storage,
   network interfaces and firmware inventory with GETs only, and compares them
@@ -928,15 +921,113 @@ plan's hardware and firmware.
   component lists are dropped before the verdict if the evidence would pass
   the kind's limit.
 
+## Capacity status
+
+The capacity projector is **implemented** in every mode, and verified by tests
+against a real API server and by the standalone smoke. It derives
+`Prepared`, `Healthy`, `Available` and the hardware of every MachineCapacity
+from the [commissioning proposal](https://github.com/datum-cloud/fleet/pull/185)'s
+inputs, and nothing else writes them.
+
+- **Where it runs.** The coordinator loop runs it after each pass, with the
+  projector's own identity: the `fleet.datumapis.com-capacity-projector` role
+  in Milo, a `fleet-capacity-projector` ServiceAccount in standalone, the
+  `--synthetic-projector-client-cert-dir` client certificate in synthetic staging, and a
+  `projector` token in the multi-plane run. The Metal controller role no
+  longer holds `machinecapacities.updateStatus`.
+- **The allocator does not read conditions.** It asks the projector to
+  evaluate each candidate from live inputs (`Offer`), matches the profile
+  against the hardware that evaluation returns, and pins that hardware on the
+  allocation. Custody still decides. It reads each candidate's Device and
+  custody first and evaluates only identified, visibly free capacity. One
+  pass lists the provider project's Devices, plans, approvals and
+  commissionings once, not once per capacity, and so does each projector
+  pass. A capacity whose reads or evaluation fail is skipped; the error is
+  returned only when nothing is offered.
+- **Grants.** Every identity that evaluates capacity, the Metal provider and
+  the projector, lists Devices across the provider project, because a
+  duplicate in any namespace withdraws an offer.
+  `TestEveryEvaluatorListsDevicesProjectWide` pins that in every mode. `TestOnlyEvidenceOffersCapacity` edits a
+  failed server's status to `Available` and shows the allocator refuses it and
+  the projector restores the derived status.
+- **Inputs.** The Device and its lifecycle, custody for the same Device UID,
+  the Device's current plan, its latest succeeded commissioning for the same
+  Device UID, discovery currency by the admission rule, the cleaning policy
+  resolver, and whether another Device in the namespace shares an identity
+  alias anywhere in the provider project. Registration admission checks the
+  other provider projects when capacity is registered and enabled; the
+  projector does not read across projects. Aliases moved from registration to
+  the inventory API package, so both compute them the same way.
+- **Device pin.** Registered capacity counts its Device only while the
+  Device's UID is the one registration recorded when it created the
+  capacity. Capacity behind a Device recreated under the same name is not
+  `Prepared` (`DeviceReplaced`), so the allocator never offers it.
+- **Hardware ID.** A Device without a hardware ID never backs capacity
+  ([#131](https://github.com/datum-cloud/fleet/issues/131)). The projector
+  calls `inventory.CapacityBackingError` on the Device it reads and, when it
+  fails, reads nothing else and leaves the capacity not `Prepared`
+  (`DeviceUnidentified`). The allocator makes the same check on the Device it
+  reads, whatever the evaluation offered.
+  `TestAServerWithoutAHardwareIDIsNeverOffered` and
+  `TestTheAllocatorNeverSelectsAServerWithoutAHardwareID` pin both.
+- **Plan pin.** `Prepared` needs the latest commissioning's evidence to name
+  the current plan's name, generation, digest and approval name. The approval
+  name is derived from the plan's UID, so evidence under a plan recreated with
+  the same name and content proves nothing (`PlanChanged`).
+- **Cleaning policy.** The projector takes a resolver that returns a digest,
+  `ErrUnresolved`, or another error, which makes `Available` `Unknown`. Every
+  mode supplies a fixture resolver for its one fixture policy. No production
+  resolver exists yet; it belongs to the cleaning policy owner.
+- **Simulated commissioning.** The simulator site runs a `DeviceCommissioning`
+  worker that inspects the hardware and firmware its enrollment records for
+  the Device. Its burn-in sends nothing and takes no time: it journals one
+  step named `simulated-burnin` and records the plan's duration, so its
+  evidence is synthetic and says so. The enrollment gains `hardware` and
+  `firmware` fields for it.
+- **Standalone.** A `commission` phase runs before `allocate`, as three
+  ServiceAccounts: a plan author, an approver and an operator. The fixture
+  Device carries a `fleet.datumapis.com/hardware-model` label that the plan
+  selects. The smoke checks that the provider cannot write capacity status
+  and that the author cannot approve.
+- **Multi-plane.** The provider project gets the projector, the three staff
+  identities and a capacity operator, and the Metal provider reads
+  commissioning evidence. The seed no longer writes capacity conditions. A
+  `commission` phase runs before `allocate` in both runs: the plan author
+  writes the local plan, another identity approves it, the operator
+  commissions the Device, and the phase waits until the projector offers the
+  capacity. The seeded Device carries the `fleet.datumapis.com/hardware-model`
+  label the plan selects. The plan requires the fixture profile's hardware
+  and a one-minute burn-in of the site image. In Redfish mode it also requires
+  the lab's firmware inventory; the local VM reports no firmware, so its plan
+  has no baseline.
+  - The site needs a worker before any allocation exists, while the install
+    must still be delivered before any worker Job for the partition scenario.
+    So one source revision enables dispatch for the commissioning and the next
+    disables it again, and kro prunes the finished commissioning's Job. Its
+    handoff stays delivered and answered, and the install's scenarios count
+    only the other assignments. When dispatch is enabled again, or the graph
+    lifecycle recreates the workers, kro recreates the commissioning's Job:
+    it replays a verified no-op, or the site refuses it at exit 65 once the
+    install raised the Device's fence. It sends nothing either way.
+  - The local VM site runs a `DeviceCommissioning` worker. The local VM has
+    no BMC, so inspection compares the hardware the site enrolls for the
+    Device, which describes the guest it defines, with the plan. Burn-in is
+    real: one network boot of the site image in burn-in mode on a scratch
+    disk, proven by its one console receipt, after which the scratch disk is
+    removed.
+  - The Redfish site registers the Redfish worker against the lab emulator.
+    The `redfish-commission-mark` step requires exactly one effective `On` to
+    target A, one passed burn-in receipt and no effect on target B, and the
+    later Redfish counts start after it.
+  - The harness keeps commissionings out of its install and wipe evidence by
+    their site key.
+- **Synthetic staging.** The staging handler no longer writes capacity
+  status; the projector does.
+
 ## Points for a person
 
 These need a decision before the increment that depends on them.
 
-- **O1: the interim source of `Prepared` and `Healthy`.** Still open after C.
-  The projector stays unwired, so the synthetic fixtures write `Prepared`,
-  `Healthy` and `Available` themselves. When the projector reads
-  commissioning, it must check the plan's qualification again, which closes
-  the residual window of [Commissioning](#commissioning).
 - **Who approves commissioning plans.** No team holds the plan approver role
   in any deployed environment yet, so no plan qualifies there. The roles keep
   the author and the approver apart by username.
@@ -952,14 +1043,17 @@ These need a decision before the increment that depends on them.
   2. Make sure each Device, with its BMC endpoint and identity, and each
      capacity exists in the provider project. Records GitOps already manages
      stay with it; import by hand only the ones it does not.
-  3. Create two Milo identities that sign in with client certificates, bound
-     to the `fleet.datumapis.com-device-coordinator` and
-     `fleet.datumapis.com-device-wipe-requester` roles, and issue each a
+  3. Create three Milo identities that sign in with client certificates,
+     bound to the `fleet.datumapis.com-device-coordinator`,
+     `fleet.datumapis.com-device-wipe-requester` and
+     `fleet.datumapis.com-capacity-projector` roles, and issue each a
      cert-manager client certificate.
   4. Grant the manager's own identity, the Metal provider, the
      `metal.datumapis.com-controller`,
      `fleet.datumapis.com-device-installation-requester` and
      `fleet.datumapis.com-inventory-discoverer` roles in the provider project.
+     Bind these roles and the projector's on the project, not on one
+     namespace: evaluating capacity lists Devices in every namespace.
   5. Supply the site's enrollment.
   6. Delete the old `fleet-system-private` namespace and its Secrets.
   7. Delete the publisher's copy of the MachineClass in the consumer project.

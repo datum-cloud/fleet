@@ -31,15 +31,12 @@ kind: Role
 metadata: {name: fleet-synthetic-provider-writer, namespace: fleet-provider}
 rules:
   # The Metal provider selects capacity, records allocations and creates
-  # installations. It reads custody and Devices only to skip taken capacity;
+  # installations. It evaluates each capacity from its commissioning,
+  # discovery and custody evidence, and never writes capacity status;
   # custody decides.
   - apiGroups: [metal.datumapis.com]
     resources: [machinecapacities]
     verbs: [get, list]
-  - apiGroups: [metal.datumapis.com]
-    resources: [machinecapacities/status]
-    resourceNames: [central1-baremetal-01]
-    verbs: [get, update]
   - apiGroups: [metal.datumapis.com]
     resources: [machineallocations]
     verbs: [get, list, create, delete]
@@ -50,8 +47,8 @@ rules:
     resources: [deviceinstallations]
     verbs: [get, list, create]
   - apiGroups: [fleet.datumapis.com]
-    resources: [devices, devicecustodies]
-    verbs: [get]
+    resources: [devices, devicecustodies, devicecommissionings, devicecommissioningplans, devicecommissioningplanapprovals]
+    verbs: [get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -218,3 +215,147 @@ metadata: {name: fleet-simulator-discovery, namespace: fleet-provider}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-simulator-discovery}
 subjects:
   - {kind: ServiceAccount, name: fleet-simulator, namespace: fleet-system}
+---
+# The capacity projector is the only writer of capacity status. It derives
+# Prepared, Healthy, Available and the hardware from evidence.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-capacity-projector, namespace: fleet-system}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fleet-capacity-projector-token
+  namespace: fleet-system
+  annotations: {kubernetes.io/service-account.name: fleet-capacity-projector}
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-capacity-projector, namespace: fleet-provider}
+rules:
+  - apiGroups: [metal.datumapis.com]
+    resources: [machinecapacities]
+    verbs: [get, list]
+  - apiGroups: [metal.datumapis.com]
+    resources: [machinecapacities/status]
+    verbs: [get, update]
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devices, devicecustodies, devicecommissionings, devicecommissioningplans, devicecommissioningplanapprovals]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-capacity-projector, namespace: fleet-provider}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-capacity-projector}
+subjects:
+  - {kind: ServiceAccount, name: fleet-capacity-projector, namespace: fleet-system}
+---
+# A duplicate identity anywhere in the project withdraws an offer, so the
+# projector reads Devices in every namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: fleet-capacity-projector-devices}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: fleet-custody-coordinator-devices}
+subjects:
+  - {kind: ServiceAccount, name: fleet-capacity-projector, namespace: fleet-system}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: fleet-standalone-smoke-devices}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: fleet-custody-coordinator-devices}
+subjects:
+  - {kind: ServiceAccount, name: fleet-standalone-smoke, namespace: fleet-system}
+---
+# Writes commissioning plans. It cannot approve them.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-plan-author, namespace: fleet-system}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fleet-plan-author-token
+  namespace: fleet-system
+  annotations: {kubernetes.io/service-account.name: fleet-plan-author}
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-plan-author, namespace: fleet-provider}
+rules:
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devicecommissioningplans]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-plan-author, namespace: fleet-provider}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-plan-author}
+subjects:
+  - {kind: ServiceAccount, name: fleet-plan-author, namespace: fleet-system}
+---
+# Approves another person's commissioning plan.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-plan-approver, namespace: fleet-system}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fleet-plan-approver-token
+  namespace: fleet-system
+  annotations: {kubernetes.io/service-account.name: fleet-plan-approver}
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-plan-approver, namespace: fleet-provider}
+rules:
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devicecommissioningplans]
+    verbs: [get]
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devicecommissioningplanapprovals]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-plan-approver, namespace: fleet-provider}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-plan-approver}
+subjects:
+  - {kind: ServiceAccount, name: fleet-plan-approver, namespace: fleet-system}
+---
+# Commissions a Device under its current plan.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-commissioning-operator, namespace: fleet-system}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fleet-commissioning-operator-token
+  namespace: fleet-system
+  annotations: {kubernetes.io/service-account.name: fleet-commissioning-operator}
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-commissioning-operator, namespace: fleet-provider}
+rules:
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devices]
+    verbs: [get]
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devicecommissioningplans]
+    verbs: [get]
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devicecommissionings]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-commissioning-operator, namespace: fleet-provider}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-commissioning-operator}
+subjects:
+  - {kind: ServiceAccount, name: fleet-commissioning-operator, namespace: fleet-system}

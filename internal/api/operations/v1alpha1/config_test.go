@@ -205,8 +205,11 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 		"fleet.datumapis.com-device-commissioning-plan-author":   p(group+"devicecommissioningplans", "create", "delete"),
 		"fleet.datumapis.com-device-commissioning-plan-approver": p(group+"devicecommissioningplanapprovals", "create", "delete"),
 		"fleet.datumapis.com-device-recovery-operator":           slices.Concat(p(group+"devicerecoveries", "create"), p("metal.datumapis.com/machineallocations", read...)),
-		"fleet.datumapis.com-device-installation-requester":      slices.Concat(p(group+"deviceinstallations", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
-		"fleet.datumapis.com-device-wipe-requester":              slices.Concat(p(group+"devicewipes", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
+		"fleet.datumapis.com-device-installation-requester": slices.Concat(p(group+"deviceinstallations", "create", "get", "list", "watch"), p(group+"devicecustodies", read...),
+			p(group+"devices", read...), p(group+"devicecommissionings", read...), p(group+"devicecommissioningplans", read...), p(group+"devicecommissioningplanapprovals", read...)),
+		"fleet.datumapis.com-capacity-projector": slices.Concat(p("metal.datumapis.com/machinecapacities", "get", "list", "watch", "updateStatus"), p(group+"devices", read...), p(group+"devicecustodies", read...),
+			p(group+"devicecommissionings", read...), p(group+"devicecommissioningplans", read...), p(group+"devicecommissioningplanapprovals", read...)),
+		"fleet.datumapis.com-device-wipe-requester": slices.Concat(p(group+"devicewipes", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
 	}
 	coordinator := slices.Concat(p(group+"devicecustodies", "get", "list", "watch", "create", "update", "delete"), p(group+"devices", read...), p("metal.datumapis.com/machineallocations", read...), p("metal.datumapis.com/machinecapacities", read...))
 	for _, plural := range []string{"deviceinstallations", "devicewipes", "devicerecoveries", "devicecommissionings"} {
@@ -239,7 +242,11 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 		for _, permission := range actual {
 			parts := strings.SplitN(strings.TrimPrefix(permission, group), ".", 2)
 			resource, verb := parts[0], parts[1]
-			// Only the coordinator writes custody or operation status.
+			// Only the coordinator writes custody or operation status; the
+			// projector writes only capacity status.
+			if name == "fleet.datumapis.com-capacity-projector" && strings.HasPrefix(permission, "metal.datumapis.com/machinecapacities.") {
+				continue
+			}
 			if name != "fleet.datumapis.com-device-coordinator" && (strings.Contains(permission, "/status.") || strings.HasSuffix(permission, ".updateStatus") || (resource == "devicecustodies" && !slices.Contains(read, verb))) {
 				t.Fatalf("%s writes custody or status: %s", name, permission)
 			}

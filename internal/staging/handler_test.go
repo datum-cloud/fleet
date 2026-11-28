@@ -225,10 +225,11 @@ func TestPublishedConsumerClaimAllocatesProviderMachine(t *testing.T) {
 	if holder := s.custody(device.Name).Spec.Holder; holder.Type != ops.HolderAllocation || holder.AllocationRef.Name != allocated.Name {
 		t.Fatalf("holder = %+v", holder)
 	}
-	capacity := s.capacity(device.Name)
-	if c := apiMeta.FindStatusCondition(capacity.Status.Conditions, "Available"); c == nil || c.Status != metav1.ConditionFalse {
-		t.Fatalf("provider capacity not marked allocated: %#v", capacity.Status.Conditions)
-	}
+	// The capacity projector, not the handler, withdraws the offer.
+	s.until("the projector withdraws the allocated capacity", func() bool {
+		c := apiMeta.FindStatusCondition(s.capacity(device.Name).Status.Conditions, "Available")
+		return c != nil && c.Status == metav1.ConditionFalse && c.Reason == "Held"
+	})
 
 	if err := consumerKube.Delete(s.ctx, &got); err != nil {
 		t.Fatal(err)
@@ -242,10 +243,10 @@ func TestPublishedConsumerClaimAllocatesProviderMachine(t *testing.T) {
 	if holder := s.custody(device.Name).Spec.Holder; holder.Type != ops.HolderNone {
 		t.Fatalf("holder after release = %+v", holder)
 	}
-	capacity = s.capacity(device.Name)
-	if c := apiMeta.FindStatusCondition(capacity.Status.Conditions, "Available"); c == nil || c.Status != metav1.ConditionTrue {
-		t.Fatalf("provider capacity did not become reusable: %#v", capacity.Status.Conditions)
-	}
+	s.until("the projector offers the released capacity again", func() bool {
+		c := apiMeta.FindStatusCondition(s.capacity(device.Name).Status.Conditions, "Available")
+		return c != nil && c.Status == metav1.ConditionTrue
+	})
 }
 
 func (s *stack) capacity(device string) *fleetv1.MachineCapacity {
