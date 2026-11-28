@@ -77,21 +77,20 @@ func TestCapacityCannotLeaveDisabledForInactiveDevice(t *testing.T) {
 			}
 		})
 	}
-	// Stage 1 still denies every update, so an Active Device, or an update that
-	// stays Disabled, gets the general denial.
-	for name, test := range map[string]struct {
-		lifecycle inventory.DeviceLifecycle
-		policy    string
-	}{
-		"Active enabled":            {inventory.DeviceActive, "Enabled"},
-		"Retired staying Disabled":  {inventory.DeviceRetired, "Disabled"},
-		"Decommissioning unchanged": {inventory.DeviceDecommissioning, "Disabled"},
-	} {
+	// An Active Device's capacity is enabled only with a pool label and a
+	// resolving cleaning policy; an update that stays Disabled is allowed.
+	t.Run("Active enabled without a pool", func(t *testing.T) {
+		handler, device := fixture(t)
+		response := handler.Handle(context.Background(), capacityUpdate(t, device, "Enabled"))
+		if response.Allowed || !strings.Contains(response.Result.Message, "capacity-pool label") {
+			t.Fatalf("capacity update: %+v", response.Result)
+		}
+	})
+	for name, lifecycle := range map[string]inventory.DeviceLifecycle{"Retired staying Disabled": inventory.DeviceRetired, "Decommissioning unchanged": inventory.DeviceDecommissioning} {
 		t.Run(name, func(t *testing.T) {
 			handler, device := fixture(t)
-			setLifecycle(t, handler, device, test.lifecycle)
-			response := handler.Handle(context.Background(), capacityUpdate(t, device, test.policy))
-			if response.Allowed || response.Result.Message != mutationDisabled {
+			setLifecycle(t, handler, device, lifecycle)
+			if response := handler.Handle(context.Background(), capacityUpdate(t, device, "Disabled")); !response.Allowed {
 				t.Fatalf("capacity update: %+v", response.Result)
 			}
 		})
@@ -99,7 +98,7 @@ func TestCapacityCannotLeaveDisabledForInactiveDevice(t *testing.T) {
 	t.Run("caller without Device read learns nothing", func(t *testing.T) {
 		handler, device := fixture(t)
 		setLifecycle(t, handler, device, inventory.DeviceRetired)
-		handler.Authorize = func(_ context.Context, _ Project, _ authenticationv1.UserInfo, _, resource, _ string) error {
+		handler.Authorize = func(_ context.Context, _ Project, _ authenticationv1.UserInfo, _, _, resource, _ string) error {
 			if resource == "devices" {
 				return errors.New("get permission on devices is required")
 			}

@@ -38,8 +38,8 @@ func tripwire(t *testing.T, why string) client.Client {
 }
 
 // tripwireAuthorize fails the test if a SubjectAccessReview is attempted.
-func tripwireAuthorize(t *testing.T, why string) func(context.Context, Project, authenticationv1.UserInfo, string, string, string) error {
-	return func(_ context.Context, _ Project, _ authenticationv1.UserInfo, _, resource, _ string) error {
+func tripwireAuthorize(t *testing.T, why string) func(context.Context, Project, authenticationv1.UserInfo, string, string, string, string) error {
+	return func(_ context.Context, _ Project, _ authenticationv1.UserInfo, _, _, resource, _ string) error {
 		t.Errorf("%s: SubjectAccessReview for %s was attempted", why, resource)
 		return context.Canceled
 	}

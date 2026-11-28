@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -24,24 +25,27 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"go.datum.net/fleet/internal/capacity"
 	"go.datum.net/fleet/internal/custody/creatorwebhook"
 )
 
 func main() {
-	var configFile, providers, cert, key, clientCA string
+	var configFile, providers, cert, key, clientCA, clients, projectors string
 	flag.StringVar(&configFile, "config", "", "Fleet manager discovery configuration")
 	flag.StringVar(&providers, "provider-projects", "", "complete comma-separated provider scope searched for duplicate hardware identity")
 	flag.StringVar(&cert, "tls-cert", "/etc/fleet/registration/tls.crt", "serving certificate")
 	flag.StringVar(&key, "tls-key", "/etc/fleet/registration/tls.key", "serving key")
 	flag.StringVar(&clientCA, "client-ca", "/etc/fleet/registration/client-ca.crt", "CA dedicated to trusted API-server webhook clients")
+	flag.StringVar(&clients, "client-identities", "", "required comma-separated subjects of the API-server webhook client certificates; any other certificate is refused")
+	flag.StringVar(&projectors, "capacity-projectors", "", "comma-separated usernames of the capacity projector, the only writer of registered capacity status")
 	flag.Parse()
-	if err := run(ctrl.SetupSignalHandler(), configFile, providers, cert, key, clientCA); err != nil {
+	if err := run(ctrl.SetupSignalHandler(), configFile, providers, cert, key, clientCA, list(clients), list(projectors)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, configFile, providers, cert, key, clientCA string) error {
+func run(ctx context.Context, configFile, providers, cert, key, clientCA string, clients, projectors []string) error {
 	config, err := projectdiscovery.LoadConfig(configFile)
 	if err != nil {
 		return err
@@ -72,7 +76,11 @@ func run(ctx context.Context, configFile, providers, cert, key, clientCA string)
 		}
 	}
 	handler := registration.NewHandler(config.AuthorityID, projects, root, template, scheme)
-	tlsConfig, err := webhookTLS(clientCA)
+	handler.Projectors = projectors
+	// No cleaning policy resolver exists yet: the cleaning policy owner
+	// provides it. Until then no registered capacity can be enabled.
+	handler.Cleaning = capacity.Unresolved
+	tlsConfig, err := webhookTLS(clientCA, clients)
 	if err != nil {
 		return err
 	}
@@ -101,7 +109,24 @@ func providerScope(providers string) ([]string, error) {
 	return projects, nil
 }
 
-func webhookTLS(clientCA string) (*tls.Config, error) {
+func list(value string) []string {
+	var out []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// webhookTLS accepts only clients whose certificate chains to the dedicated
+// client CA and whose subject common name is one of the configured API
+// server identities. Any other certificate is refused during the handshake,
+// before a request is read.
+func webhookTLS(clientCA string, identities []string) (*tls.Config, error) {
+	if len(identities) == 0 {
+		return nil, errors.New("--client-identities must name the API-server webhook clients")
+	}
 	caBytes, err := os.ReadFile(clientCA)
 	if err != nil {
 		return nil, err
@@ -110,5 +135,11 @@ func webhookTLS(clientCA string) (*tls.Config, error) {
 	if !pool.AppendCertsFromPEM(caBytes) {
 		return nil, errors.New("API-server client CA is invalid")
 	}
-	return &tls.Config{MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool}, nil
+	return &tls.Config{MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool,
+		VerifyConnection: func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) == 0 || !slices.Contains(identities, state.PeerCertificates[0].Subject.CommonName) {
+				return errors.New("the client certificate is not a configured API-server webhook client")
+			}
+			return nil
+		}}, nil
 }

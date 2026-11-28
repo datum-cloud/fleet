@@ -24,6 +24,7 @@ import (
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	metal "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/capacity"
 	"go.datum.net/fleet/internal/controller"
 	iam "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -36,7 +37,7 @@ import (
 )
 
 const (
-	DeviceUIDAnnotation     = "fleet.datumapis.com/registration-device-uid"
+	DeviceUIDAnnotation     = capacity.RegisteredDeviceUID
 	DeviceVersionAnnotation = "fleet.datumapis.com/registration-device-version"
 	OperationAnnotation     = "fleet.datumapis.com/registration-operation"
 
@@ -68,10 +69,22 @@ type Project struct {
 type Handler struct {
 	// Projects is the complete provider scope. Duplicate identities are
 	// searched across all of it.
-	Projects  []string
-	Resolve   func(context.Context, string) (Project, error)
-	Authorize func(context.Context, Project, authenticationv1.UserInfo, string, string, string) error
+	Projects []string
+	Resolve  func(context.Context, string) (Project, error)
+	// Authorize runs a SubjectAccessReview for the caller: verb, group,
+	// resource and object name.
+	Authorize func(ctx context.Context, project Project, actor authenticationv1.UserInfo, verb, group, resource, name string) error
+	// Cleaning resolves a cleaning policy name to its digest. It returns
+	// capacity.ErrUnresolved for a name that does not resolve. Nil resolves
+	// nothing, so no registered capacity can be enabled.
+	Cleaning capacity.CleaningResolver
+	// Projectors are the usernames of the capacity projector, the only
+	// identity that may write the status of registered capacity.
+	Projectors []string
 }
+
+// PoolLabel is the label a MachineClass selects capacity by.
+const PoolLabel = "fleet.datumapis.com/capacity-pool"
 
 var systemUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
@@ -109,9 +122,6 @@ func (handler *Handler) Handle(ctx context.Context, request admission.Request) a
 		// Defence in depth: the packaged webhook does not route this request.
 		return admission.Allowed("capacity is not inventory-backed; registration admission does not govern it")
 	}
-	if request.SubResource != "" || (request.Operation != admissionv1.Create && request.Operation != admissionv1.Update) {
-		return admission.Denied(mutationDisabled)
-	}
 	name, err := projectName(request.UserInfo)
 	if err != nil {
 		return admission.Denied(err.Error())
@@ -119,8 +129,28 @@ func (handler *Handler) Handle(ctx context.Context, request admission.Request) a
 	if !slices.Contains(handler.Projects, name) {
 		return admission.Denied("project is outside the configured provider registration scope")
 	}
-	if request.Operation == admissionv1.Update {
-		return admission.Denied(handler.evaluateUpdate(ctx, name, request).Error())
+	switch {
+	case request.SubResource == "status" && request.Operation == admissionv1.Update:
+		// Only the capacity projector writes the status of registered
+		// capacity. The status subresource ignores metadata and spec.
+		if !slices.Contains(handler.Projectors, request.UserInfo.Username) {
+			return admission.Denied("only the capacity projector writes the status of registered capacity")
+		}
+		return admission.Allowed("the capacity projector writes derived status")
+	case request.SubResource != "":
+		return admission.Denied(mutationDisabled)
+	case request.Operation == admissionv1.Update:
+		if err := handler.evaluateUpdate(ctx, name, request); err != nil {
+			return admission.Denied(err.Error())
+		}
+		return admission.Allowed("only the allocation policy, cleaning policy and pool changed, under the stage-2 rules")
+	case request.Operation == admissionv1.Delete:
+		if err := handler.evaluateDelete(ctx, name, request); err != nil {
+			return admission.Denied(err.Error())
+		}
+		return admission.Allowed("the capacity is Disabled and its Device is gone or Retired")
+	case request.Operation != admissionv1.Create:
+		return admission.Denied(mutationDisabled)
 	}
 	if err := handler.evaluate(ctx, name, request); err != nil {
 		return admission.Denied(err.Error())
@@ -171,41 +201,172 @@ func marked(object *metav1.PartialObjectMetadata) bool {
 	return false
 }
 
-const mutationDisabled = "capacity mutation and deletion are disabled for inventory-backed capacity; registration annotations cannot be added, changed or removed"
+const mutationDisabled = "registered capacity changes only its allocation policy, cleaning policy and pool label; registration annotations cannot be added, changed or removed"
 
-// evaluateUpdate explains why a capacity update is denied. Stage 1 denies
-// every update. An update that would move capacity out of Disabled for a
-// Device that is not Active is denied for that reason first, so the rule
-// already holds when a future stage allows enabling capacity. It always
-// returns an error.
+// evaluateUpdate admits an update of registered capacity that changes only
+// the allocation policy, the cleaning policy reference and the pool label.
+// While the capacity is Enabled, the only change is to Disabled. Enabling
+// requires, at the time of the update, the caller's update permission, the
+// annotated Device incarnation Active, no duplicate identity in the provider
+// scope, a resolving cleaning policy and a pool label.
 func (handler *Handler) evaluateUpdate(ctx context.Context, name string, request admission.Request) error {
-	var capacity metal.MachineCapacity
-	if err := json.Unmarshal(request.Object.Raw, &capacity); err != nil {
+	var next, previous metal.MachineCapacity
+	if err := json.Unmarshal(request.Object.Raw, &next); err != nil {
 		return err
 	}
-	if capacity.Spec.AllocationPolicy == "Disabled" {
+	if err := json.Unmarshal(request.OldObject.Raw, &previous); err != nil {
+		return err
+	}
+	if !onlyStageTwoFields(previous, next) {
 		return errors.New(mutationDisabled)
+	}
+	enabled := func(capacity metal.MachineCapacity) bool { return capacity.Spec.AllocationPolicy == "Enabled" }
+	unchanged := previous.Spec.AllocationPolicy == next.Spec.AllocationPolicy && reflect.DeepEqual(previous.Spec.CleaningPolicyRef, next.Spec.CleaningPolicyRef) && previous.Labels[PoolLabel] == next.Labels[PoolLabel]
+	switch {
+	case unchanged:
+		// An identical update, such as an unchanged apply, changes nothing.
+		return nil
+	case next.Spec.AllocationPolicy != "Enabled" && next.Spec.AllocationPolicy != "Disabled":
+		return errors.New("the allocation policy is Enabled or Disabled")
+	case enabled(previous) && (enabled(next) || !reflect.DeepEqual(previous.Spec.CleaningPolicyRef, next.Spec.CleaningPolicyRef) || previous.Labels[PoolLabel] != next.Labels[PoolLabel]):
+		return errors.New("enabled capacity changes only to Disabled; disable it before changing its cleaning policy or pool")
+	case !enabled(next):
+		return nil
 	}
 	project, err := handler.Resolve(ctx, name)
 	if err != nil || !project.Identity.Valid() || project.Identity.RouteName != name {
 		return errors.New("provider project lifetime is unavailable")
 	}
-	// The API server has authorized the capacity update itself. Reading the
-	// backing Device additionally requires the caller to be able to read it.
-	if err := handler.Authorize(ctx, project, request.UserInfo, inventory.GroupVersion.Group, "devices", capacity.Spec.DeviceRef.Name); err != nil {
+	if err := handler.Authorize(ctx, project, request.UserInfo, "update", metal.GroupVersion.Group, "machinecapacities", next.Name); err != nil {
+		return err
+	}
+	if err := handler.Authorize(ctx, project, request.UserInfo, "get", inventory.GroupVersion.Group, "devices", next.Spec.DeviceRef.Name); err != nil {
 		return err
 	}
 	device := &inventory.Device{}
-	if err := project.Client.Get(ctx, client.ObjectKey{Namespace: request.Namespace, Name: capacity.Spec.DeviceRef.Name}, device); err != nil {
+	if err := project.Client.Get(ctx, client.ObjectKey{Namespace: request.Namespace, Name: next.Spec.DeviceRef.Name}, device); err != nil {
 		if apierrors.IsNotFound(err) {
 			return errors.New("capacity cannot leave Disabled: its Device does not exist")
 		}
 		return errors.New("capacity cannot leave Disabled: its Device is unavailable")
 	}
+	if string(device.UID) != next.Annotations[DeviceUIDAnnotation] || !device.DeletionTimestamp.IsZero() {
+		return errors.New("capacity cannot leave Disabled: its Device is another incarnation than the one registered")
+	}
 	if lifecycle := inventory.LifecycleOf(device); lifecycle != inventory.DeviceActive {
 		return fmt.Errorf("capacity cannot leave Disabled: its Device is %s; only an Active Device can back available capacity", lifecycle)
 	}
-	return errors.New(mutationDisabled)
+	if !eligible(device) {
+		return errors.New("capacity cannot leave Disabled: its Device no longer records a complete, non-placeholder identity")
+	}
+	if next.Labels[PoolLabel] == "" {
+		return errors.New("capacity cannot leave Disabled without a " + PoolLabel + " label")
+	}
+	resolve := handler.Cleaning
+	if resolve == nil {
+		resolve = capacity.Unresolved
+	}
+	if next.Spec.CleaningPolicyRef.Name == "" {
+		return errors.New("capacity cannot leave Disabled without a cleaning policy")
+	}
+	if _, err := resolve(ctx, next.Spec.CleaningPolicyRef.Name); errors.Is(err, capacity.ErrUnresolved) {
+		return fmt.Errorf("capacity cannot leave Disabled: cleaning policy %q does not resolve", next.Spec.CleaningPolicyRef.Name)
+	} else if err != nil {
+		return errors.New("capacity cannot leave Disabled: the cleaning policy owner is unavailable")
+	}
+	return handler.duplicates(ctx, name, device)
+}
+
+// onlyStageTwoFields reports whether an update changes nothing but the
+// allocation policy, the cleaning policy reference and the pool label.
+func onlyStageTwoFields(previous, next metal.MachineCapacity) bool {
+	strip := func(capacity metal.MachineCapacity) metal.MachineCapacity {
+		capacity.Spec.AllocationPolicy, capacity.Spec.CleaningPolicyRef = "", metal.LocalReference{}
+		capacity.Status = metal.MachineCapacityStatus{}
+		labels := map[string]string{}
+		for key, value := range capacity.Labels {
+			if key != PoolLabel {
+				labels[key] = value
+			}
+		}
+		capacity.Labels = labels
+		capacity.ResourceVersion, capacity.Generation, capacity.ManagedFields = "", 0, nil
+		return capacity
+	}
+	return reflect.DeepEqual(strip(previous), strip(next))
+}
+
+// evaluateDelete admits the delete of registered capacity only when it is
+// Disabled, its annotated Device is missing, another incarnation or
+// Retired, no MachineAllocation that is not Released names it, and the
+// caller may delete it. Enabling needs an Active Device of the annotated
+// incarnation, so the capacity stays Disabled. An allocator that selected
+// the capacity while it was Enabled re-reads it after creating its
+// allocation and withdraws the allocation if the capacity is gone or
+// Disabled, before it claims the Device.
+func (handler *Handler) evaluateDelete(ctx context.Context, name string, request admission.Request) error {
+	var registered metal.MachineCapacity
+	if err := json.Unmarshal(request.OldObject.Raw, &registered); err != nil {
+		return err
+	}
+	if registered.Spec.AllocationPolicy != "Disabled" {
+		return errors.New("disable the capacity before deleting it")
+	}
+	project, err := handler.Resolve(ctx, name)
+	if err != nil || !project.Identity.Valid() || project.Identity.RouteName != name {
+		return errors.New("provider project lifetime is unavailable")
+	}
+	if err := handler.Authorize(ctx, project, request.UserInfo, "delete", metal.GroupVersion.Group, "machinecapacities", registered.Name); err != nil {
+		return err
+	}
+	if err := handler.Authorize(ctx, project, request.UserInfo, "get", inventory.GroupVersion.Group, "devices", registered.Spec.DeviceRef.Name); err != nil {
+		return err
+	}
+	device := &inventory.Device{}
+	switch err := project.Client.Get(ctx, client.ObjectKey{Namespace: request.Namespace, Name: registered.Spec.DeviceRef.Name}, device); {
+	case apierrors.IsNotFound(err):
+	case err != nil:
+		return errors.New("the capacity's Device is unavailable")
+	case string(device.UID) == registered.Annotations[DeviceUIDAnnotation] && inventory.LifecycleOf(device) != inventory.DeviceRetired:
+		return errors.New("registered capacity is removed only after its Device is deleted or Retired")
+	}
+	var allocations metal.MachineAllocationList
+	if err := project.Client.List(ctx, &allocations, client.InNamespace(request.Namespace)); err != nil {
+		return errors.New("the allocations that may name the capacity are unavailable")
+	}
+	for _, allocation := range allocations.Items {
+		reference := allocation.Spec.MachineCapacityRef
+		if reference.Name == registered.Name && (reference.Namespace == "" || reference.Namespace == registered.Namespace) && allocation.Status.Phase != metal.AllocationReleased {
+			return fmt.Errorf("allocation %s still names the capacity", allocation.Name)
+		}
+	}
+	return nil
+}
+
+// duplicates refuses a Device that shares an identity alias with any other
+// Device in the provider scope, Retired ones included.
+func (handler *Handler) duplicates(ctx context.Context, selectedProject string, selected *inventory.Device) error {
+	selectedAliases := inventory.Aliases(selected)
+	for _, name := range handler.Projects {
+		project, err := handler.Resolve(ctx, name)
+		if err != nil {
+			return errors.New("provider identity scope is unavailable")
+		}
+		var devices inventory.DeviceList
+		if err := project.Client.List(ctx, &devices); err != nil {
+			return errors.New("provider identity inventory is unavailable")
+		}
+		for index := range devices.Items {
+			device := &devices.Items[index]
+			if name == selectedProject && device.UID == selected.UID {
+				continue
+			}
+			if overlaps(inventory.Aliases(device), selectedAliases) {
+				return fmt.Errorf("another Device (%s) shares recorded hardware identity; resolve the duplicate before enabling", describe(name, selectedProject, device.Namespace, device.Name))
+			}
+		}
+	}
+	return nil
 }
 
 func (handler *Handler) evaluate(ctx context.Context, name string, request admission.Request) error {
@@ -241,10 +402,10 @@ func (handler *Handler) evaluate(ctx context.Context, name string, request admis
 	}
 	// Authorize before reading the Device so an unauthorized caller cannot
 	// learn whether it exists.
-	if err := handler.Authorize(ctx, project, request.UserInfo, metal.GroupVersion.Group, "machinecapacities", ""); err != nil {
+	if err := handler.Authorize(ctx, project, request.UserInfo, "create", metal.GroupVersion.Group, "machinecapacities", ""); err != nil {
 		return err
 	}
-	if err := handler.Authorize(ctx, project, request.UserInfo, inventory.GroupVersion.Group, "devices", capacity.Spec.DeviceRef.Name); err != nil {
+	if err := handler.Authorize(ctx, project, request.UserInfo, "get", inventory.GroupVersion.Group, "devices", capacity.Spec.DeviceRef.Name); err != nil {
 		return err
 	}
 	device := &inventory.Device{}
