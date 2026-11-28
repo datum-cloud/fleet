@@ -128,6 +128,10 @@ jobs:
       timeout-minutes: 100
       env:
         TASK: ${{ matrix.mode == 'localvm' && 'multiplane:acceptance' || matrix.mode == 'media' && 'multiplane:media-acceptance' || 'multiplane:redfish-acceptance' }}
+        # The virtual media suite's lab windows, short enough for KVM guests:
+        # each held installation waits out both.
+        FLEET_MULTIPLANE_MEDIA_FETCH: ${{ matrix.mode == 'media' && '2m0s' || '' }}
+        FLEET_MULTIPLANE_MEDIA_REPORT: ${{ matrix.mode == 'media' && '3m0s' || '' }}
       run: |
         mkdir -m 0700 "$FLEET_MULTIPLANE_STATE_ROOT"
         task "$TASK"
