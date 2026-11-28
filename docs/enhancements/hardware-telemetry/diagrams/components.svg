@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1430" height="850" viewBox="0 0 1430 850" role="img" aria-labelledby="title description">
+  <title id="title">Systems involved in BMC hardware telemetry</title>
+  <desc id="description">Systems grouped by owner and by trust boundary. The physical site holds servers, their BMCs, and later PDUs on the out-of-band network. Fleet provides BMC discovery, an operations custody record, inventory, and new pieces: telemetry account provisioning, a renderer with a target list, and an allocation info publisher. The BMC gateway holds the VPN tunnel into the out-of-band network and runs the adopted upstream Redfish exporter, and later an SNMP exporter. Account provisioning changes BMC accounts as a custody operation that goes through the gateway. The existing platform telemetry path has a scraper and the metrics store, plus a new recording rule and federation allowlist, all in the operator-only area. The tenant-visible area holds the tenant metrics store, query API, and export policy. Tenants use their own tools and their own backend.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; }
+    .heading { font-size: 24px; font-weight: 700; }
+    .owner { font-size: 18px; font-weight: 700; fill: #475569; }
+    .label { font-size: 20px; font-weight: 700; }
+    .detail { font-size: 17px; fill: #475569; }
+    .edge { font-size: 17px; fill: #334155; }
+    .key { font-size: 16px; fill: #334155; }
+    .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }
+  </style>
+  <rect width="1430" height="850" fill="white"/>
+  <rect x="20" y="16" width="196" height="734" rx="10" fill="#fff7ed" stroke="#e0b98f" stroke-width="1.5"/>
+  <text x="40" y="52" class="heading" text-anchor="start">Out-of-band</text>
+  <text x="40" y="76" class="heading" text-anchor="start">network</text>
+  <rect x="232" y="16" width="944" height="734" rx="10" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+  <text x="252" y="52" class="heading" text-anchor="start">Operator-only area</text>
+  <rect x="1196" y="16" width="214" height="734" rx="10" fill="#f0fdf4" stroke="#96bda1" stroke-width="1.5"/>
+  <text x="1216" y="52" class="heading" text-anchor="start">Tenant-visible</text>
+  <text x="1216" y="76" class="heading" text-anchor="start">area</text>
+  <rect x="32" y="90" width="172" height="314" rx="8" fill="#ffffff" fill-opacity="0.7" stroke="#b6c2d1" stroke-width="1.5"/>
+  <text x="46" y="116" class="owner" text-anchor="start">Physical site</text>
+  <rect x="270" y="90" width="590" height="594" rx="8" fill="#ffffff" fill-opacity="0.7" stroke="#b6c2d1" stroke-width="1.5"/>
+  <text x="284" y="116" class="owner" text-anchor="start">Fleet</text>
+  <rect x="580" y="98" width="260" height="302" rx="8" fill="#ffffff" fill-opacity="1.0" stroke="#b6c2d1" stroke-width="1.5"/>
+  <text x="594" y="124" class="owner" text-anchor="start">BMC gateway</text>
+  <rect x="906" y="90" width="250" height="426" rx="8" fill="#ffffff" fill-opacity="0.7" stroke="#b6c2d1" stroke-width="1.5"/>
+  <text x="920" y="116" class="owner" text-anchor="start">Platform telemetry</text>
+  <rect x="1206" y="90" width="194" height="174" rx="8" fill="#ffffff" fill-opacity="0.7" stroke="#b6c2d1" stroke-width="1.5"/>
+  <text x="1220" y="116" class="owner" text-anchor="start">Tenant</text>
+  <rect x="1206" y="316" width="194" height="284" rx="8" fill="#ffffff" fill-opacity="0.7" stroke="#b6c2d1" stroke-width="1.5"/>
+  <text x="1220" y="342" class="owner" text-anchor="start">Platform telemetry</text>
+  <rect x="1206" y="622" width="194" height="108" rx="8" fill="#ffffff" fill-opacity="0.7" stroke="#b6c2d1" stroke-width="1.5"/>
+  <text x="1220" y="648" class="owner" text-anchor="start">Tenant</text>
+  <rect x="40" y="128" width="156" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="118.0" y="153" class="label" text-anchor="middle">BMCs</text>
+  <text x="118.0" y="175" class="detail" text-anchor="middle">Redfish API</text>
+  <rect x="40" y="212" width="156" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="118.0" y="237" class="label" text-anchor="middle">Servers</text>
+  <text x="118.0" y="259" class="detail" text-anchor="middle">Tenant machines</text>
+  <rect x="40" y="330" width="156" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="118.0" y="355" class="label" text-anchor="middle">PDUs</text>
+  <text x="118.0" y="377" class="detail" text-anchor="middle">Power cabling</text>
+  <rect x="304" y="190" width="218" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="413.0" y="215" class="label" text-anchor="middle">BMC discovery</text>
+  <text x="413.0" y="237" class="detail" text-anchor="middle">Writes observations</text>
+  <rect x="304" y="274" width="218" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="413.0" y="299" class="label" text-anchor="middle">Custody</text>
+  <text x="413.0" y="321" class="detail" text-anchor="middle">Admits BMC writes</text>
+  <rect x="304" y="358" width="218" height="58" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5"/>
+  <text x="413.0" y="383" class="label" text-anchor="middle">Account provisioning</text>
+  <text x="413.0" y="405" class="detail" text-anchor="middle">Read-only telemetry</text>
+  <rect x="304" y="442" width="218" height="58" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5"/>
+  <text x="413.0" y="467" class="label" text-anchor="middle">Renderer</text>
+  <text x="413.0" y="489" class="detail" text-anchor="middle">Config and target list</text>
+  <rect x="304" y="526" width="218" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="413.0" y="551" class="label" text-anchor="middle">Inventory</text>
+  <text x="413.0" y="573" class="detail" text-anchor="middle">Device, capacity, allocation</text>
+  <rect x="304" y="610" width="218" height="58" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5"/>
+  <text x="413.0" y="635" class="label" text-anchor="middle">Allocation publisher</text>
+  <text x="413.0" y="657" class="detail" text-anchor="middle">Active allocations</text>
+  <rect x="600" y="128" width="220" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="710.0" y="153" class="label" text-anchor="middle">VPN tunnel</text>
+  <text x="710.0" y="175" class="detail" text-anchor="middle">Into the site network</text>
+  <rect x="600" y="236" width="220" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="710.0" y="261" class="label" text-anchor="middle">SNMP exporter</text>
+  <text x="710.0" y="283" class="detail" text-anchor="middle">Upstream, later</text>
+  <rect x="600" y="322" width="220" height="58" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5"/>
+  <text x="710.0" y="347" class="label" text-anchor="middle">Redfish exporter</text>
+  <text x="710.0" y="369" class="detail" text-anchor="middle">Adopted upstream</text>
+  <rect x="922" y="190" width="218" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="1031.0" y="215" class="label" text-anchor="middle">Scraper</text>
+  <text x="1031.0" y="237" class="detail" text-anchor="middle">Site cell cluster</text>
+  <rect x="922" y="274" width="218" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="1031.0" y="299" class="label" text-anchor="middle">Metrics store</text>
+  <text x="1031.0" y="321" class="detail" text-anchor="middle">Operator view</text>
+  <rect x="922" y="358" width="218" height="58" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5"/>
+  <text x="1031.0" y="383" class="label" text-anchor="middle">Recording rule</text>
+  <text x="1031.0" y="405" class="detail" text-anchor="middle">Joins, adds project</text>
+  <rect x="922" y="442" width="218" height="58" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5"/>
+  <text x="1031.0" y="467" class="label" text-anchor="middle">Federation allowlist</text>
+  <text x="1031.0" y="489" class="detail" text-anchor="middle">Joined series only</text>
+  <rect x="1212" y="190" width="182" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="1303.0" y="215" class="label" text-anchor="middle">Backend</text>
+  <text x="1303.0" y="237" class="detail" text-anchor="middle">Tenant's own</text>
+  <rect x="1212" y="358" width="182" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="1303.0" y="383" class="label" text-anchor="middle">Export policy</text>
+  <text x="1303.0" y="405" class="detail" text-anchor="middle">Existing</text>
+  <rect x="1212" y="442" width="182" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="1303.0" y="467" class="label" text-anchor="middle">Tenant store</text>
+  <text x="1303.0" y="489" class="detail" text-anchor="middle">Short retention</text>
+  <rect x="1212" y="526" width="182" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="1303.0" y="551" class="label" text-anchor="middle">Query API</text>
+  <text x="1303.0" y="573" class="detail" text-anchor="middle">Project scoped</text>
+  <rect x="1212" y="656" width="182" height="58" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="1303.0" y="681" class="label" text-anchor="middle">Tenant tools</text>
+  <text x="1303.0" y="703" class="detail" text-anchor="middle">Dashboards, alerts</text>
+  <path d="M 600 143 L 196 143" class="line"/>
+  <text x="400" y="133" class="edge" text-anchor="middle">tunnel</text>
+  <path d="M 600 171 L 252 171 L 252 359 L 196 359" class="line" stroke-dasharray="6 4"/>
+  <path d="M 116 186 L 116 212" class="line"/>
+  <text x="126" y="205" class="edge" text-anchor="start">manage</text>
+  <path d="M 413 358 L 413 332" class="line"/>
+  <text x="423" y="350" class="edge" text-anchor="start">operation</text>
+  <path d="M 508 303 L 580 303" class="line"/>
+  <path d="M 508 219 L 580 219" class="line"/>
+  <text x="544" y="211" class="edge" text-anchor="middle">via</text>
+  <path d="M 413 416 L 413 442" class="line"/>
+  <text x="423" y="434" class="edge" text-anchor="start">accounts</text>
+  <path d="M 413 500 L 413 526" class="line"/>
+  <text x="423" y="518" class="edge" text-anchor="start">snapshot</text>
+  <path d="M 413 610 L 413 584" class="line"/>
+  <text x="423" y="602" class="edge" text-anchor="start">allocations</text>
+  <path d="M 304 219 L 284 219 L 284 555 L 304 555" class="line"/>
+  <path d="M 600 351 L 592 351 L 592 207 L 625 207 L 625 186" class="line"/>
+  <text x="640" y="226" class="edge" text-anchor="start">Redfish</text>
+  <path d="M 790 236 L 790 186" class="line" stroke-dasharray="6 4"/>
+  <path d="M 508 471 L 710 471 L 710 380" class="line"/>
+  <text x="610" y="461" class="edge" text-anchor="middle">config</text>
+  <path d="M 922 205 L 850 205 L 850 265 L 820 265" class="line" stroke-dasharray="6 4"/>
+  <path d="M 922 219 L 864 219 L 864 351 L 820 351" class="line"/>
+  <text x="886" y="197" class="edge" text-anchor="middle">scrape</text>
+  <path d="M 922 233 L 878 233 L 878 485 L 508 485" class="line"/>
+  <text x="700" y="505" class="edge" text-anchor="middle">target list</text>
+  <path d="M 522 639 L 896 639 L 896 303 L 922 303" class="line"/>
+  <text x="700" y="629" class="edge" text-anchor="middle">allocation info</text>
+  <path d="M 1031.0 248 L 1031.0 274" class="line"/>
+  <text x="1041.0" y="266" class="edge" text-anchor="start">remote write</text>
+  <path d="M 1031.0 358 L 1031.0 332" class="line"/>
+  <text x="1041.0" y="350" class="edge" text-anchor="start">join</text>
+  <path d="M 1031.0 442 L 1031.0 416" class="line"/>
+  <text x="1041.0" y="434" class="edge" text-anchor="start">tenant series</text>
+  <path d="M 1140 471 L 1212 471" class="line"/>
+  <path d="M 1303 416 L 1303 442" class="line"/>
+  <text x="1313" y="434" class="edge" text-anchor="start">read</text>
+  <path d="M 1384 358 L 1384 248" class="line"/>
+  <text x="1378" y="290" class="edge" text-anchor="end">send</text>
+  <path d="M 1303 526 L 1303 500" class="line"/>
+  <text x="1313" y="518" class="edge" text-anchor="start">read</text>
+  <path d="M 1384 656 L 1384 584" class="line"/>
+  <text x="1378" y="620" class="edge" text-anchor="end">query</text>
+  <rect x="24" y="772" width="34" height="22" rx="5" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="68" y="789" class="key" text-anchor="start">Exists or proposed separately</text>
+  <rect x="300" y="772" width="34" height="22" rx="5" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5"/>
+  <text x="344" y="789" class="key" text-anchor="start">New in this proposal</text>
+  <rect x="540" y="772" width="34" height="22" rx="5" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="584" y="789" class="key" text-anchor="start">Later phase</text>
+  <rect x="24" y="808" width="34" height="22" rx="5" fill="#fff7ed" stroke="#e0b98f" stroke-width="1.5"/>
+  <text x="68" y="825" class="key" text-anchor="start">Out-of-band network</text>
+  <rect x="300" y="808" width="34" height="22" rx="5" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+  <text x="344" y="825" class="key" text-anchor="start">Operator-only area</text>
+  <rect x="540" y="808" width="34" height="22" rx="5" fill="#f0fdf4" stroke="#96bda1" stroke-width="1.5"/>
+  <text x="584" y="825" class="key" text-anchor="start">Tenant-visible area</text>
+  <text x="800" y="789" class="key" text-anchor="start">Arrows point from the side that calls or sends</text>
+</svg>
