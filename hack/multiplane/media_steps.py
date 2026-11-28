@@ -156,6 +156,15 @@ def why(s, uid):
     return '; console %s; report outcomes %s; relay %s; media service %s' % (console, outcomes(s, uid), relay, central)
 
 
+def detail(s, op):
+    """How an install ended, for a failure message: its phase, reason and
+    message, the BMC's recent virtual media requests, and what the lab saw
+    of its report."""
+    status = op.get('status', {})
+    media = summarize([e for e in rf.audit(s) if '/VirtualMedia/' in e['path']])[-6:]
+    return '; ended %s %s: %s; BMC media requests %s%s' % (status.get('phase'), status.get('reason'), (status.get('message') or '')[:300], media, why(s, op['metadata']['uid']))
+
+
 def steps_of(s, uid):
     return dict((n, st) for o in rf.journal(s) if o['operation'] == uid for n, st in o['steps'])
 
@@ -188,7 +197,7 @@ def arm_add_download(s):
 
 
 def arm_stray_source(s):
-    arm('stray-source', SYSTEM, STRAY_SOURCE)
+    arm(s, 'stray-source', SYSTEM, STRAY_SOURCE)
     print('media-arm-stray-source: target A\'s next config medium makes its installed OS post its report, with the right token, from %s first' % STRAY_SOURCE)
 
 
@@ -282,7 +291,7 @@ def held_download(s):
     uid = op['metadata']['uid']
     steps = steps_of(s, uid)
     if steps.get('media-installer-done') != 'Done' or 'media-report-verified' in steps or 'media-released' in steps:
-        die('the second installation verified its report or recorded release: %s' % steps)
+        die('the second installation did not install from media, or verified its report or recorded release: %s%s' % (steps, detail(s, op)))
     if len(media_effects(rf.audit(s), 'add-config-download')) != 1:
         die('the add-download fault did not fire exactly once')
     w = window_record(s, uid)
@@ -304,7 +313,7 @@ def held_eject(s):
     steps = steps_of(s, uid)
     for step in ('media-window', 'media-insert-boot', 'media-insert-config', 'media-installer-done', 'media-report-verified', 'media-close'):
         if steps.get(step) != 'Done':
-            die('the third installation did not journal %s done: %s' % (step, steps))
+            die('the third installation did not journal %s done: %s%s' % (step, steps, detail(s, op)))
     if steps.get('media-eject-cd1') != 'Intended' or 'media-released' in steps:
         die('the lost eject is not journaled intended-only, or release was recorded: %s' % steps)
     # The BMC audits the eject only once it answers, after the 45 seconds it
