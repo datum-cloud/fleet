@@ -35,7 +35,6 @@ entry=k(hub,'config','view','-o','jsonpath={.clusters[0].name}')
 k(hub,'config','set-cluster',entry,'--server=https://127.0.0.1:%d'%env['karmadaPort'])
 # CA verification is retained; the chart includes localhost in its serving SANs.
 credentials(hub,ns,'fleet-management',state/'management-hub.json')
-credentials(host,'fleet-system-private','fleet-custodian',state/'private.json')
 # Cell execution credentials are Kubernetes ServiceAccounts inside the cell
 # site; no cell credential is exported to the host.
 token,ca=credentials(cell,ns,'fleet-federation',state/'federation-cell.json',env['cellEndpoint'])
@@ -46,4 +45,4 @@ k(host,'-n','karmada-system','annotate','--overwrite','kustomization','fleet-kar
 wait(hub,'cluster/'+env['cell'])
 k(hub,'wait','--for=condition=Ready','cluster/'+env['cell'],'--timeout=300s')
 k(host,'-n','karmada-system','wait','--for=condition=Ready','kustomization/fleet-karmada-members','--timeout=300s')
-print('Karmada member enrolled; separate management/custodian/cell credentials minted for Flux-created identities')
+print('Karmada member enrolled; separate management and cell credentials minted for Flux-created identities')

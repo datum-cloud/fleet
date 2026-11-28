@@ -7,11 +7,8 @@ import (
 	"strings"
 
 	quotav1alpha1 "go.miloapis.com/milo/pkg/apis/quota/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -33,10 +30,8 @@ const (
 	RouteInstallation    RouteKind = "Installation"
 	RouteMachine         RouteKind = "Machine"
 	RouteMachineCapacity RouteKind = "MachineCapacity"
-	RoutePrivateUID      RouteKind = "PrivateUID"
 	RouteNetwork         RouteKind = "Network"
 	RouteQuota           RouteKind = "Quota"
-	RouteEntitlement     RouteKind = "Entitlement"
 	RouteLocation        RouteKind = "Location"
 	RouteAvailability    RouteKind = "ServiceAvailability"
 )
@@ -53,7 +48,6 @@ type RouteRequest struct {
 	Name        string
 	UID         types.UID
 	Key         string
-	Field       string
 	// Deleted marks a snapshot delivered by an informer Delete event. The
 	// snapshot's UID and routing fields describe the dependency lifetime that
 	// disappeared, so resolution must not compare it with a same-name
@@ -76,24 +70,23 @@ func (r RouteRequest) Valid() bool {
 	return strings.TrimSpace(r.AuthorityID) != "" && r.ProjectUID != "" && r.Kind != "" && r.Name != "" && r.UID != ""
 }
 
-func (m Mappers) Route(kind RouteKind, field string) func(context.Context, client.Object) []RouteRequest {
+func (m Mappers) Route(kind RouteKind) func(context.Context, client.Object) []RouteRequest {
 	return func(_ context.Context, object client.Object) []RouteRequest {
 		if object == nil || !m.Project.Valid() {
 			return nil
 		}
-		request := RouteRequest{ClusterName: m.ClusterName, AuthorityID: m.Project.AuthorityID, ProjectUID: m.Project.UID, Kind: kind, Namespace: object.GetNamespace(), Name: object.GetName(), UID: object.GetUID(), Field: field}
+		request := RouteRequest{ClusterName: m.ClusterName, AuthorityID: m.Project.AuthorityID, ProjectUID: m.Project.UID, Kind: kind, Namespace: object.GetNamespace(), Name: object.GetName(), UID: object.GetUID()}
 		switch kind {
 		case RouteMachineCapacity:
 			encoded, _ := json.Marshal(object.GetLabels())
 			request.Key = string(encoded)
-		case RoutePrivateUID:
-			request.Key = string(object.GetUID())
 		case RouteNetwork:
 			request.Key = object.GetNamespace() + "/" + object.GetName()
 		case RouteQuota:
+			// A quota claim names its Machine only by this label; a claim
+			// without it wakes nothing.
 			request.Key = object.GetLabels()["fleet.datumapis.com/machine-uid"]
-		case RouteEntitlement:
-			if object.GetName() != milo.EntitlementName {
+			if request.Key == "" {
 				return nil
 			}
 		case RouteLocation:
@@ -141,38 +134,10 @@ func (m Mappers) ResolveRoute(ctx context.Context, route RouteRequest) ([]Projec
 			return nil, ErrEventWiringUnavailable
 		}
 		return m.claimsForMachineE(ctx, &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: route.Namespace, Name: route.Name, UID: route.UID, Labels: eventLabels}})
-	case RoutePrivateUID:
-		return m.claimsForPrivateFieldE(ctx, route.Field, route.Key)
 	case RouteNetwork:
-		claims, err := m.claimsByFieldE(ctx, IndexClaimNetwork, route.Key)
-		if err != nil {
-			return nil, err
-		}
-		retained, err := m.claimsForPrivateFieldE(ctx, IndexPrivateNetworkUID, string(route.UID))
-		return uniqueRequests(append(claims, retained...)), err
+		return m.claimsByFieldE(ctx, IndexClaimNetwork, route.Key)
 	case RouteQuota:
-		claims, err := m.claimsForPrivateFieldE(ctx, IndexPrivateQuotaUID, string(route.UID))
-		if err != nil {
-			return nil, err
-		}
-		if route.Key != "" {
-			byClaim, listErr := m.claimsForPrivateFieldE(ctx, IndexPrivateClaimUID, route.Key)
-			if listErr != nil {
-				return nil, listErr
-			}
-			claims = append(claims, byClaim...)
-		}
-		return uniqueRequests(claims), nil
-	case RouteEntitlement:
-		claims, err := m.claimsForPrivateFieldE(ctx, IndexPrivateEntitlementUID, string(route.UID))
-		if err != nil {
-			return nil, err
-		}
-		byProject, listErr := m.claimsForPrivateFieldE(ctx, IndexPrivatePendingEntitlementProject, projectIndexKey(m.Project.AuthorityID, m.Project.UID))
-		if listErr != nil {
-			return nil, listErr
-		}
-		return uniqueRequests(append(claims, byProject...)), nil
+		return m.claimsByFieldE(ctx, IndexClaimUID, route.Key)
 	case RouteLocation, RouteAvailability:
 		return m.claimsByFieldE(ctx, IndexClaimLocationName, route.Key)
 	default:
@@ -213,25 +178,10 @@ func routeObject(route RouteRequest) (client.Object, error) {
 		return &fleetv1.Machine{}, nil
 	case RouteMachineCapacity:
 		return &fleetv1.MachineCapacity{}, nil
-	case RoutePrivateUID:
-		switch route.Field {
-		case IndexPrivateNamespaceUID:
-			return &corev1.Namespace{}, nil
-		case IndexPrivateNICClaimUID:
-			return &networkingv1.NetworkInterfaceClaim{}, nil
-		case IndexPrivateInterfaceUID:
-			return &networkingv1.NetworkInterface{}, nil
-		default:
-			return nil, ErrEventWiringUnavailable
-		}
 	case RouteNetwork:
 		return &networkingv1.Network{}, nil
 	case RouteQuota:
 		return &quotav1alpha1.ResourceClaim{}, nil
-	case RouteEntitlement:
-		object := &unstructured.Unstructured{}
-		object.SetGroupVersionKind(schema.GroupVersionKind{Group: "services.miloapis.com", Version: "v1alpha1", Kind: "ServiceEntitlement"})
-		return object, nil
 	case RouteLocation:
 		return &locationsv1alpha1.Location{}, nil
 	case RouteAvailability:

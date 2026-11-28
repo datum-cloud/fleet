@@ -193,7 +193,7 @@ func newFixture(t *testing.T, uuid string) *fixture {
 		Site: "site-example-a", Store: store, Results: NewResults(store),
 		Access: &RedfishAccess{
 			Credentials: fixedCredentials{credential: bmcdiscovery.Credential{Username: "operator", Password: "synthetic-secret", Pin: b.pin()}, found: true},
-			Targets:     StaticTargets{testDevice: {AssetID: "server-example-001", Endpoint: b.server.URL, SystemID: "A", SystemUUID: testUUID, MAC: testMAC}},
+			Targets:     StaticTargets{testDevice: {Device: "server-example-001", Endpoint: b.server.URL, SystemID: "A", SystemUUID: testUUID, MAC: testMAC}},
 		},
 		Kinds: map[string]Kind{"DeviceInstallation": kind},
 		Poll:  10 * time.Millisecond,
@@ -203,12 +203,17 @@ func newFixture(t *testing.T, uuid string) *fixture {
 
 func (f *fixture) access() *RedfishAccess { return f.runner.Access.(*RedfishAccess) }
 
+// testKey is the site key of the fixture's installation at fence.
+func testKey(fence int64, uid string) string {
+	return custody.OperationKey(ops.OperationReference{Kind: "DeviceInstallation", Name: "alloc-example-install-" + uid}, fence)
+}
+
 func (f *fixture) assignment(fence int64, uid string) Assignment {
 	inputs := json.RawMessage(`{"image":"debian-12"}`)
 	sum := sha256.Sum256(inputs)
 	return Assignment{
 		Device:      testDevice,
-		Operation:   ops.OperationReference{Kind: "DeviceInstallation", Name: "alloc-example-install-" + uid, UID: uid},
+		Operation:   ops.OperationReference{Kind: "DeviceInstallation", Name: "alloc-example-install-" + uid},
 		Fence:       fence,
 		AdmittedAt:  time.Now(),
 		Deadline:    time.Now().Add(time.Minute),
@@ -401,7 +406,7 @@ func TestAReplayedStepIsObservedNotSentAgain(t *testing.T) {
 	if err := f.runner.Store.Raise(testDevice, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.runner.Store.Intend(testDevice, 1, "op-replay", "power-off"); err != nil {
+	if _, err := f.runner.Store.Intend(testDevice, 1, testKey(1, "op-replay"), "power-off"); err != nil {
 		t.Fatal(err)
 	}
 	var observed atomic.Int32
@@ -422,7 +427,7 @@ func TestAReplayedStepIsObservedNotSentAgain(t *testing.T) {
 	if err := g.runner.Store.Raise(testDevice, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.runner.Store.Intend(testDevice, 1, "op-replay", "power-off"); err != nil {
+	if _, err := g.runner.Store.Intend(testDevice, 1, testKey(1, "op-replay"), "power-off"); err != nil {
 		t.Fatal(err)
 	}
 	g.kind.observe = func(context.Context, json.RawMessage) (bool, error) { return false, nil }
@@ -439,15 +444,15 @@ func TestResultsAreDeletedOnceTheCoordinatorAnswers(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	answers := map[string]error{"op-a": nil, "op-b": custody.ErrStaleFence, "op-c": errors.New("coordinator unreachable")}
+	answers := map[string]error{"alloc-example-install-op-a": nil, "alloc-example-install-op-b": custody.ErrStaleFence, "alloc-example-install-op-c": errors.New("coordinator unreachable")}
 	err := f.runner.Results.Deliver(context.Background(), func(_ context.Context, result custody.SiteResult) error {
-		return answers[result.Operation.UID]
+		return answers[result.Operation.Name]
 	})
 	if err == nil {
 		t.Fatal("the failed delivery was not reported")
 	}
 	pending, _ := f.runner.Results.Pending()
-	if len(pending) != 1 || pending[0].Result.Operation.UID != "op-c" {
+	if len(pending) != 1 || pending[0].Result.Operation.Name != "alloc-example-install-op-c" {
 		t.Fatalf("pending = %+v", pending)
 	}
 }
@@ -461,7 +466,7 @@ func TestAssignmentValidation(t *testing.T) {
 	for name, mutate := range map[string]func(*Assignment){
 		"device":   func(a *Assignment) { a.Device = "server-example-001" },
 		"nested":   func(a *Assignment) { a.Device = "default/a/b" },
-		"uid":      func(a *Assignment) { a.Operation.UID = "" },
+		"name":     func(a *Assignment) { a.Operation.Name = "" },
 		"fence":    func(a *Assignment) { a.Fence = 0 },
 		"deadline": func(a *Assignment) { a.Deadline = time.Time{} },
 		"inputs":   func(a *Assignment) { a.Inputs = make(json.RawMessage, maxInputs+1) },
@@ -494,7 +499,7 @@ func TestAResumedWorkerThatCannotReachTheBMCReportsUnknown(t *testing.T) {
 	if err := f.runner.Store.Raise(testDevice, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.runner.Store.Intend(testDevice, 1, "op-resumed", "power-off"); err != nil {
+	if _, err := f.runner.Store.Intend(testDevice, 1, testKey(1, "op-resumed"), "power-off"); err != nil {
 		t.Fatal(err)
 	}
 	f.access().Credentials = fixedCredentials{}
@@ -538,7 +543,7 @@ func TestALateStartIsStaleAndSendsNothing(t *testing.T) {
 	if err := g.runner.Store.Raise(testDevice, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.runner.Store.Intend(testDevice, 1, "op-resume-late", "power-off"); err != nil {
+	if _, err := g.runner.Store.Intend(testDevice, 1, testKey(1, "op-resume-late"), "power-off"); err != nil {
 		t.Fatal(err)
 	}
 	g.kind.observe = func(context.Context, json.RawMessage) (bool, error) { return true, nil }
@@ -651,7 +656,7 @@ func TestARedeliveryWhileTheSameOperationRunsStoresNothing(t *testing.T) {
 	if _, err := f.runner.Run(context.Background(), again); !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("redelivery: %v", err)
 	}
-	if _, found, _ := f.runner.Results.Get(testDevice, "op-same", 1); found {
+	if _, found, _ := f.runner.Results.Get(testDevice, ops.OperationReference{Kind: "DeviceInstallation", Name: "alloc-example-install-op-same"}, 1); found {
 		t.Fatal("the redelivery stored a result while the first worker ran")
 	}
 	close(f.kind.block)
@@ -764,7 +769,7 @@ func TestAWorkerStoppedFromOutsideStoresNoResult(t *testing.T) {
 	if _, err := f.runner.Run(ctx, f.assignment(1, "op-shutdown")); !errors.Is(err, context.Canceled) {
 		t.Fatalf("shutdown: %v", err)
 	}
-	if _, found, _ := f.runner.Results.Get(testDevice, "op-shutdown", 1); found {
+	if _, found, _ := f.runner.Results.Get(testDevice, ops.OperationReference{Kind: "DeviceInstallation", Name: "alloc-example-install-op-shutdown"}, 1); found {
 		t.Fatal("a worker shut down from outside stored a result")
 	}
 }
@@ -781,7 +786,7 @@ func TestAShutdownWhileWaitingForTheRunLockStoresNothing(t *testing.T) {
 	if _, err := f.runner.Run(ctx, f.assignment(2, "op-waiting")); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("shutdown while waiting: %v", err)
 	}
-	if _, found, _ := f.runner.Results.Get(testDevice, "op-waiting", 2); found {
+	if _, found, _ := f.runner.Results.Get(testDevice, ops.OperationReference{Kind: "DeviceInstallation", Name: "alloc-example-install-op-waiting"}, 2); found {
 		t.Fatal("a worker shut down while waiting stored a result")
 	}
 }
@@ -799,7 +804,7 @@ func TestALostLockWithJournaledStepsIsUnknown(t *testing.T) {
 	if err := f.runner.Store.Raise(testDevice, 2); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.runner.Store.Intend(testDevice, 2, "op-journaled", "power-off"); err != nil {
+	if _, err := f.runner.Store.Intend(testDevice, 2, testKey(2, "op-journaled"), "power-off"); err != nil {
 		t.Fatal(err)
 	}
 	newer := f.assignment(2, "op-journaled")
@@ -838,7 +843,7 @@ func TestAShutdownDuringTheChecksStoresNothing(t *testing.T) {
 	if _, err := f.runner.Run(ctx, f.assignment(1, "op-checks")); !errors.Is(err, context.Canceled) {
 		t.Fatalf("shutdown during checks: %v", err)
 	}
-	if _, found, _ := f.runner.Results.Get(testDevice, "op-checks", 1); found {
+	if _, found, _ := f.runner.Results.Get(testDevice, ops.OperationReference{Kind: "DeviceInstallation", Name: "alloc-example-install-op-checks"}, 1); found {
 		t.Fatal("a worker shut down during its checks stored a result")
 	}
 }

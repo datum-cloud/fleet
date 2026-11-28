@@ -5,9 +5,6 @@ import (
 	"time"
 
 	quotav1alpha1 "go.miloapis.com/milo/pkg/apis/quota/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -23,6 +20,8 @@ import (
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
+	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
+	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
 	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
@@ -40,8 +39,6 @@ type Handlers struct {
 // SetupOptions configures the manager's controllers. Projects are not part of
 // the options: they arrive through discovery, one ProjectRuntime each.
 type SetupOptions struct {
-	PrivateNamespace string
-	PrivateCluster   ctrlcluster.Cluster
 	// HandlersFor builds each engaged project's handlers. Projects with no
 	// production or synthetic integration get blocked lifecycle handlers and
 	// the requested-hardware projector.
@@ -62,14 +59,6 @@ type SetupOptions struct {
 func ProjectCacheOptions() cache.Options {
 	zero := time.Duration(0)
 	return cache.Options{SyncPeriod: &zero}
-}
-
-// PrivateCacheOptions confines the host cache to the service-owned namespace.
-// RBAC remains the authorization boundary; this scope prevents accidental host
-// API watches and keeps private records out of the routed project cache.
-func PrivateCacheOptions(privateNamespace string) cache.Options {
-	zero := time.Duration(0)
-	return cache.Options{SyncPeriod: &zero, DefaultNamespaces: map[string]cache.Config{privateNamespace: {}}}
 }
 
 // NewProjects returns the engaged-project registry. resolve turns a cluster
@@ -95,19 +84,13 @@ var providerClustersOnly = []mcbuilder.EngageOptions{mcbuilder.WithEngageWithLoc
 // carries its cluster name and is reconciled only through that project's
 // runtime, with that project's identity, client, and verifier.
 func Setup(ctx context.Context, mgr mcmanager.Manager, projects *Projects, options SetupOptions) error {
-	if mgr == nil || projects == nil || projects.resolve == nil || projects.verifierFor == nil || options.PrivateCluster == nil || options.PrivateNamespace == "" || options.HandlersFor == nil {
+	if mgr == nil || projects == nil || projects.resolve == nil || projects.verifierFor == nil || options.HandlersFor == nil {
 		return ErrEventWiringUnavailable
 	}
 	if err := RegisterProjectIndexes(ctx, mgr.GetFieldIndexer()); err != nil {
 		return err
 	}
-	if err := RegisterPrivateIndexes(ctx, options.PrivateCluster.GetFieldIndexer(), options.PrivateNamespace); err != nil {
-		return err
-	}
 	local := mgr.GetLocalManager()
-	if err := local.Add(options.PrivateCluster); err != nil {
-		return err
-	}
 	if options.ProviderCluster != nil {
 		// The synthetic consumer must never be the provider; the provider may
 		// still be engaged as an ordinary consumer.
@@ -141,7 +124,6 @@ func Setup(ctx context.Context, mgr mcmanager.Manager, projects *Projects, optio
 	if err := local.Add(installationDeadlines); err != nil {
 		return err
 	}
-	privateReader := options.PrivateCluster.GetCache()
 	projects.mu.Lock()
 	projects.build = func(binding ProjectBinding, reader client.Reader, verifier ProjectVerifier) (*ProjectRuntime, error) {
 		if reader == nil || verifier == nil || binding.Client == nil {
@@ -151,8 +133,8 @@ func Setup(ctx context.Context, mgr mcmanager.Manager, projects *Projects, optio
 		// It engages like any other consumer: HandlersFor gives it blocked
 		// lifecycle handlers and the projector, because only the configured
 		// synthetic consumer (never the provider) gets the staging handler.
-		// Its engaged runtime only maps its own Machines and private records
-		// whose consumer is this project, so provider MachineCapacity events
+		// Its engaged runtime only maps its own Machines, so provider
+		// MachineCapacity events
 		// on its runtime cannot reach the synthetic consumer's claims, and its
 		// blocked handlers never write MachineCapacity status.
 		handlers, err := options.HandlersFor(binding)
@@ -166,7 +148,7 @@ func Setup(ctx context.Context, mgr mcmanager.Manager, projects *Projects, optio
 			Binding:      binding,
 			Reader:       reader,
 			Verifier:     verifier,
-			Mappers:      Mappers{Reader: reader, PrivateReader: privateReader, Project: binding.Project, PrivateNamespace: options.PrivateNamespace, ClusterName: binding.ClusterName},
+			Mappers:      Mappers{Reader: reader, Project: binding.Project, ClusterName: binding.ClusterName},
 			Machine:      NewLifecycleOwner(handlers.Machine, handlers.MachineProjector, claimDeadlines),
 			Installation: NewLifecycleOwner(handlers.Installation, handlers.InstallationProjector, installationDeadlines),
 		}, nil
@@ -175,39 +157,37 @@ func Setup(ctx context.Context, mgr mcmanager.Manager, projects *Projects, optio
 
 	machineOwner := func(r *ProjectRuntime) *LifecycleOwner { return r.Machine }
 	installationOwner := func(r *ProjectRuntime) *LifecycleOwner { return r.Installation }
-	entitlement := &unstructured.Unstructured{}
-	entitlement.SetGroupVersionKind(schema.GroupVersionKind{Group: "services.miloapis.com", Version: "v1alpha1", Kind: "ServiceEntitlement"})
-	privateSecrets := options.PrivateCluster.GetCache()
 
 	claim := mcbuilder.TypedControllerManagedBy[ProjectRequest](mgr).
 		Named("fleet-machine-events").
 		Watches(&fleetv1.Machine{}, projectHandler(projects, func(m Mappers) func(context.Context, client.Object) []ProjectRequest { return m.RequestFor }), watchOptions(PrimaryPredicate())...).
-		WatchesRawSource(source.TypedKind(privateSecrets, client.Object(&corev1.Secret{}), typedMap(privateHandler(projects, options.PrivateNamespace, func(m Mappers) func(context.Context, client.Object) []ProjectRequest { return m.RequestForPrivate })), PrivateRecordPredicate())).
 		WatchesRawSource(deadlineSource(claimDeadlineEvents))
 	if err := claim.Complete(ClusterProjectReconciler{Projects: projects, Owner: machineOwner}); err != nil {
 		return err
 	}
 	claimRoutes := mcbuilder.TypedControllerManagedBy[RouteRequest](mgr).
 		Named("fleet-machine-routes").
-		Watches(&fleetv1.MachineClass{}, routeHandler(projects, RouteClass, ""), watchOptions(DependencyPredicate())...).
-		Watches(&fleetv1.MachineProfile{}, routeHandler(projects, RouteProfile, ""), watchOptions(DependencyPredicate())...).
-		Watches(&fleetv1.Installation{}, routeHandler(projects, RouteInstallation, ""), watchOptions(PrimaryPredicate())...).
-		Watches(&fleetv1.MachineCapacity{}, routeHandler(projects, RouteMachineCapacity, ""), watchOptions(DependencyPredicate())...).
-		Watches(&corev1.Namespace{}, routeHandler(projects, RoutePrivateUID, IndexPrivateNamespaceUID), watchOptions(DependencyPredicate())...).
-		Watches(&networkingv1.Network{}, routeHandler(projects, RouteNetwork, ""), watchOptions(DependencyPredicate())...).
-		Watches(&networkingv1.NetworkInterfaceClaim{}, routeHandler(projects, RoutePrivateUID, IndexPrivateNICClaimUID), watchOptions(DependencyPredicate())...).
-		Watches(&networkingv1.NetworkInterface{}, routeHandler(projects, RoutePrivateUID, IndexPrivateInterfaceUID), watchOptions(DependencyPredicate())...).
-		Watches(&quotav1alpha1.ResourceClaim{}, routeHandler(projects, RouteQuota, ""), watchOptions(DependencyPredicate())...).
-		Watches(entitlement, routeHandler(projects, RouteEntitlement, ""), watchOptions(DependencyPredicate())...).
-		Watches(&locationsv1alpha1.Location{}, routeHandler(projects, RouteLocation, ""), watchOptions(DependencyPredicate())...).
-		Watches(&servicesv1alpha1.ServiceAvailability{}, routeHandler(projects, RouteAvailability, ""), watchOptions(DependencyPredicate())...)
+		Watches(&fleetv1.MachineClass{}, routeHandler(projects, RouteClass), watchOptions(DependencyPredicate())...).
+		Watches(&fleetv1.MachineProfile{}, routeHandler(projects, RouteProfile), watchOptions(DependencyPredicate())...).
+		Watches(&fleetv1.Installation{}, routeHandler(projects, RouteInstallation), watchOptions(PrimaryPredicate())...).
+		Watches(&fleetv1.MachineCapacity{}, routeHandler(projects, RouteMachineCapacity), watchOptions(DependencyPredicate())...).
+		Watches(&networkingv1.Network{}, routeHandler(projects, RouteNetwork), watchOptions(DependencyPredicate())...).
+		Watches(&quotav1alpha1.ResourceClaim{}, routeHandler(projects, RouteQuota), watchOptions(DependencyPredicate())...).
+		Watches(&locationsv1alpha1.Location{}, routeHandler(projects, RouteLocation), watchOptions(DependencyPredicate())...).
+		Watches(&servicesv1alpha1.ServiceAvailability{}, routeHandler(projects, RouteAvailability), watchOptions(DependencyPredicate())...)
 	if err := claimRoutes.Complete(ClusterRouteReconciler{Projects: projects, Owner: machineOwner}); err != nil {
 		return err
 	}
 	if options.ProviderCluster != nil {
 		providerEvents := mcbuilder.TypedControllerManagedBy[ProviderEventRequest](mgr).
 			Named("fleet-provider-machinecapacity-events").
-			WatchesRawSource(source.TypedKind(options.ProviderCluster.GetCache(), client.Object(&fleetv1.MachineCapacity{}), typedProviderEventMap(options.ProviderProject), DependencyPredicate()))
+			WatchesRawSource(source.TypedKind(options.ProviderCluster.GetCache(), client.Object(&fleetv1.MachineCapacity{}), typedProviderEventMap(options.ProviderProject), DependencyPredicate())).
+			// Custody, allocation and Device changes wake the consumer's
+			// Machines, so the power projector reports a recovery hold or a
+			// discovered power change without a Machine event.
+			WatchesRawSource(source.TypedKind(options.ProviderCluster.GetCache(), client.Object(&ops.DeviceCustody{}), typedProviderEventMap(options.ProviderProject), DependencyPredicate())).
+			WatchesRawSource(source.TypedKind(options.ProviderCluster.GetCache(), client.Object(&fleetv1.MachineAllocation{}), typedProviderEventMap(options.ProviderProject), DependencyPredicate())).
+			WatchesRawSource(source.TypedKind(options.ProviderCluster.GetCache(), client.Object(&inventory.Device{}), typedProviderEventMap(options.ProviderProject), DependencyPredicate()))
 		if err := providerEvents.Complete(ClusterProviderEventReconciler{Projects: projects, Consumer: options.ProviderConsumer, Provider: options.ProviderProject, ProviderVerifier: options.ProviderVerifier}); err != nil {
 			return err
 		}
@@ -215,16 +195,13 @@ func Setup(ctx context.Context, mgr mcmanager.Manager, projects *Projects, optio
 	installation := mcbuilder.TypedControllerManagedBy[ProjectRequest](mgr).
 		Named("fleet-installation-events").
 		Watches(&fleetv1.Installation{}, projectHandler(projects, func(m Mappers) func(context.Context, client.Object) []ProjectRequest { return m.RequestFor }), watchOptions(PrimaryPredicate())...).
-		WatchesRawSource(source.TypedKind(privateSecrets, client.Object(&corev1.Secret{}), typedMap(privateHandler(projects, options.PrivateNamespace, func(m Mappers) func(context.Context, client.Object) []ProjectRequest {
-			return m.RequestForPrivateInstallation
-		})), PrivateRecordPredicate())).
 		WatchesRawSource(deadlineSource(installationDeadlineEvents))
 	if err := installation.Complete(ClusterProjectReconciler{Projects: projects, Owner: installationOwner}); err != nil {
 		return err
 	}
 	installationRoutes := mcbuilder.TypedControllerManagedBy[RouteRequest](mgr).
 		Named("fleet-installation-routes").
-		Watches(&fleetv1.Machine{}, routeHandler(projects, RouteMachine, ""), watchOptions(PrimaryPredicate())...)
+		Watches(&fleetv1.Machine{}, routeHandler(projects, RouteMachine), watchOptions(PrimaryPredicate())...)
 	return installationRoutes.Complete(ClusterRouteReconciler{Projects: projects, Owner: installationOwner})
 }
 
@@ -250,36 +227,15 @@ func projectHandler(projects *Projects, mapper func(Mappers) func(context.Contex
 	}
 }
 
-func routeHandler(projects *Projects, kind RouteKind, field string) mchandler.TypedEventHandlerFunc[client.Object, RouteRequest] {
+func routeHandler(projects *Projects, kind RouteKind) mchandler.TypedEventHandlerFunc[client.Object, RouteRequest] {
 	return func(name multicluster.ClusterName, _ ctrlcluster.Cluster) handler.TypedEventHandler[client.Object, RouteRequest] {
 		return typedRouteMap(func(ctx context.Context, object client.Object) []RouteRequest {
 			runtime := projects.Get(name)
 			if runtime == nil {
 				return nil
 			}
-			return runtime.Mappers.Route(kind, field)(ctx, object)
+			return runtime.Mappers.Route(kind)(ctx, object)
 		})
-	}
-}
-
-// privateHandler routes a private record by the exact consumer project
-// lifetime it records. It reaches only the runtime engaged for that lifetime;
-// records of a project that is not engaged map to nothing.
-func privateHandler(projects *Projects, privateNamespace string, mapper func(Mappers) func(context.Context, client.Object) []ProjectRequest) func(context.Context, client.Object) []ProjectRequest {
-	return func(ctx context.Context, object client.Object) []ProjectRequest {
-		secret, ok := object.(*corev1.Secret)
-		if !ok {
-			return nil
-		}
-		route, ok := routePrivate(secret, privateNamespace)
-		if !ok {
-			return nil
-		}
-		runtime := projects.ForProject(route.ConsumerProject.AuthorityID, route.ConsumerProject.UID)
-		if runtime == nil {
-			return nil
-		}
-		return mapper(runtime.Mappers)(ctx, object)
 	}
 }
 
@@ -299,10 +255,6 @@ func deadlineSource(events <-chan event.TypedGenericEvent[ProjectRequest]) sourc
 		}
 		return []ProjectRequest{request}
 	}))
-}
-
-func typedMap(fn func(context.Context, client.Object) []ProjectRequest) handler.TypedEventHandler[client.Object, ProjectRequest] {
-	return handler.TypedEnqueueRequestsFromMapFunc(fn)
 }
 
 func typedRouteMap(fn func(context.Context, client.Object) []RouteRequest) handler.TypedEventHandler[client.Object, RouteRequest] {

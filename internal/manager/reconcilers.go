@@ -86,7 +86,7 @@ func (r ProjectReconciler) Reconcile(ctx context.Context, request ProjectRequest
 // runtime engaged under its cluster name, and only when that runtime's
 // identity matches the request. A request for a project that is not engaged,
 // or whose cluster now holds another project lifetime, is dropped with no
-// effect: no handler runs, no private record or status is written.
+// effect: no handler runs, no custody or status is written.
 type ClusterProjectReconciler struct {
 	Projects *Projects
 	Owner    func(*ProjectRuntime) *LifecycleOwner

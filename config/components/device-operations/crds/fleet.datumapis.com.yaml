@@ -54,13 +54,8 @@ spec:
                     type: string
                     minLength: 1
                     maxLength: 253
-                  uid:
-                    type: string
-                    minLength: 1
-                    maxLength: 64
                 required:
                 - name
-                - uid
               state:
                 type: string
                 enum:
@@ -116,10 +111,6 @@ spec:
                     type: string
                     minLength: 1
                     maxLength: 253
-                  uid:
-                    type: string
-                    minLength: 1
-                    maxLength: 64
                   fence:
                     type: integer
                     format: int64
@@ -180,7 +171,6 @@ spec:
                         maxLength: 512
                     required:
                     - username
-                    - uid
                   settles:
                     type: object
                     properties:
@@ -192,18 +182,17 @@ spec:
                         type: string
                         minLength: 1
                         maxLength: 253
-                      uid:
-                        type: string
-                        minLength: 1
-                        maxLength: 64
+                      fence:
+                        type: integer
+                        format: int64
+                        minimum: 0
                     required:
                     - kind
                     - name
-                    - uid
+                    - fence
                 required:
                 - kind
                 - name
-                - uid
                 - fence
                 - phase
                 - admittedAt
@@ -222,10 +211,6 @@ spec:
                     type: string
                     minLength: 1
                     maxLength: 253
-                  uid:
-                    type: string
-                    minLength: 1
-                    maxLength: 64
                   fence:
                     type: integer
                     format: int64
@@ -256,7 +241,6 @@ spec:
                 required:
                 - kind
                 - name
-                - uid
                 - fence
                 - phase
                 - finishedAt
@@ -271,10 +255,6 @@ spec:
                     type: string
                     minLength: 1
                     maxLength: 253
-                  uid:
-                    type: string
-                    minLength: 1
-                    maxLength: 64
                   fence:
                     type: integer
                     format: int64
@@ -327,14 +307,14 @@ spec:
                         type: string
                         minLength: 1
                         maxLength: 253
-                      uid:
-                        type: string
-                        minLength: 1
-                        maxLength: 64
+                      fence:
+                        type: integer
+                        format: int64
+                        minimum: 0
                     required:
                     - kind
                     - name
-                    - uid
+                    - fence
                   retries:
                     type: integer
                     format: int32
@@ -345,7 +325,6 @@ spec:
                 required:
                 - kind
                 - name
-                - uid
                 - fence
                 - since
                 - reason
@@ -464,7 +443,6 @@ spec:
                     maxLength: 512
                 required:
                 - username
-                - uid
               deviceRef:
                 type: object
                 properties:
@@ -472,13 +450,8 @@ spec:
                     type: string
                     minLength: 1
                     maxLength: 253
-                  uid:
-                    type: string
-                    minLength: 1
-                    maxLength: 64
                 required:
                 - name
-                - uid
               authority:
                 type: object
                 properties:
@@ -503,10 +476,6 @@ spec:
                 x-kubernetes-validations:
                 - rule: has(self.allocationRef) != has(self.serviceRequest)
                   message: set exactly one of allocationRef and serviceRequest
-              requestUID:
-                type: string
-                minLength: 1
-                maxLength: 64
               image:
                 type: object
                 properties:
@@ -550,7 +519,6 @@ spec:
             - creator
             - deviceRef
             - authority
-            - requestUID
             - image
             - bootInterface
             - targetDisks
@@ -560,6 +528,15 @@ spec:
           status:
             type: object
             properties:
+              admission:
+                type: object
+                properties:
+                  fence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                required:
+                - fence
               phase:
                 type: string
                 enum:
@@ -688,7 +665,6 @@ spec:
                     maxLength: 512
                 required:
                 - username
-                - uid
               deviceRef:
                 type: object
                 properties:
@@ -696,13 +672,8 @@ spec:
                     type: string
                     minLength: 1
                     maxLength: 253
-                  uid:
-                    type: string
-                    minLength: 1
-                    maxLength: 64
                 required:
                 - name
-                - uid
               authority:
                 type: object
                 properties:
@@ -756,6 +727,15 @@ spec:
           status:
             type: object
             properties:
+              admission:
+                type: object
+                properties:
+                  fence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                required:
+                - fence
               phase:
                 type: string
                 enum:
@@ -884,7 +864,6 @@ spec:
                     maxLength: 512
                 required:
                 - username
-                - uid
               deviceRef:
                 type: object
                 properties:
@@ -892,13 +871,8 @@ spec:
                     type: string
                     minLength: 1
                     maxLength: 253
-                  uid:
-                    type: string
-                    minLength: 1
-                    maxLength: 64
                 required:
                 - name
-                - uid
               authority:
                 type: object
                 properties:
@@ -1022,6 +996,15 @@ spec:
           status:
             type: object
             properties:
+              admission:
+                type: object
+                properties:
+                  fence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                required:
+                - fence
               phase:
                 type: string
                 enum:

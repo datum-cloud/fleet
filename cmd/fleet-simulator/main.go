@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,82 +17,144 @@ import (
 	"time"
 	"unicode"
 
-	"go.datum.net/fleet/internal/simulator"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
+	"go.datum.net/fleet/internal/site"
+	"go.datum.net/fleet/internal/site/fixture"
+	"go.datum.net/fleet/internal/site/simwork"
+	"go.datum.net/fleet/internal/site/siteapi"
 )
 
 const shutdownTimeout = 10 * time.Second
 const maxTokenFileBytes = 4096
 
+// fleet-simulator is the simulator site: synthetic Devices with no BMC whose
+// install and wipe effects go through the site framework's fenced journal.
+// The coordinator reaches it over the site API.
 func main() {
-	var runtimeAddress, adminAddress, statePath, runtimeTokenPath, adminTokenPath string
-	flag.StringVar(&runtimeAddress, "listen-address", "127.0.0.1:8080", "runtime HTTP listen address")
-	flag.StringVar(&adminAddress, "admin-listen-address", "", "optional admin HTTP listen address; disabled by default")
-	flag.StringVar(&statePath, "state-file", "/var/lib/fleet-simulator/state.json", "durable state path")
-	flag.StringVar(&runtimeTokenPath, "runtime-token-file", "", "required file containing the runtime bearer token")
-	flag.StringVar(&adminTokenPath, "admin-token-file", "", "file containing the admin bearer token; required when the admin listener is enabled")
+	var address, stateDir, tokenPath, siteName, enrollmentPath string
+	var discover bool
+	var discoveryInterval time.Duration
+	flag.StringVar(&address, "listen-address", "127.0.0.1:8080", "site API listen address")
+	flag.StringVar(&stateDir, "state-dir", "/var/lib/fleet/site", "the site store's owner-only directory")
+	flag.StringVar(&tokenPath, "runtime-token-file", "", "required file containing the site API bearer token")
+	flag.StringVar(&siteName, "site", "simulator", "this site's name")
+	flag.StringVar(&enrollmentPath, "enrollment-file", "", "required JSON enrollment of the Devices this site serves")
+	flag.BoolVar(&discover, "discover", false, "write fixture discovery for the enrolled Devices, using the in-cluster credential")
+	flag.DurationVar(&discoveryInterval, "discovery-interval", time.Minute, "how often fixture discovery runs")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	runtimeToken, err := readToken(runtimeTokenPath)
-	if err != nil {
-		logger.Error("load runtime token", "error", err)
+	fail := func(what string, err error) {
+		logger.Error(what, "error", err)
 		os.Exit(1)
 	}
-	store, err := simulator.Open(statePath)
-	if err != nil {
-		logger.Error("open simulator state", "error", err)
-		os.Exit(1)
+	if _, err := readToken(tokenPath); err != nil {
+		fail("load site token", err)
 	}
-
-	runtimeTokenSource := func() (string, error) { return readToken(runtimeTokenPath) }
-	servers := []*http.Server{newServer(runtimeAddress, simulator.RuntimeHandlerWithTokenSource(store, runtimeTokenSource, logger), logger)}
-	if adminAddress != "" {
-		adminToken, err := readToken(adminTokenPath)
+	enrollment, err := readEnrollment(enrollmentPath)
+	if err != nil {
+		fail("load enrollment", err)
+	}
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		fail("create the site store", err)
+	}
+	if err := os.Chmod(stateDir, 0o700); err != nil {
+		fail("restrict the site store", err)
+	}
+	store, err := site.OpenStore(stateDir, nil)
+	if err != nil {
+		fail("open the site store", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	results := site.NewResults(store)
+	runner := &site.Runner{Site: siteName, Store: store, Results: results, Access: fixture.Access{Enrollment: enrollment},
+		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}}}
+	dispatcher := &siteapi.Dispatcher{Runner: runner, Context: ctx, Logger: logger}
+	server := newServer(address, siteapi.Handler(dispatcher, store, results, func() (string, error) { return readToken(tokenPath) }), logger)
+	if discover {
+		api, err := discoveryClient()
 		if err != nil {
-			logger.Error("load admin token", "error", err)
-			os.Exit(1)
+			fail("build the discovery client", err)
 		}
-		if err := validateDistinctTokens(runtimeToken, adminToken); err != nil {
-			logger.Error("validate simulator credentials", "error", err)
-			os.Exit(1)
-		}
-		adminTokenSource := func() (string, error) { return readToken(adminTokenPath) }
-		servers = append(servers, newServer(adminAddress, simulator.AdminHandlerWithTokenSource(store, adminTokenSource, logger), logger))
-	}
-
-	errCh := make(chan error, len(servers))
-	for _, server := range servers {
-		server := server
 		go func() {
-			logger.Info("fleet simulator listening", "address", server.Addr)
-			errCh <- server.ListenAndServe()
+			for {
+				if err := fixture.Discover(ctx, api, enrollment, time.Now()); err != nil && ctx.Err() == nil {
+					logger.Info("fixture discovery incomplete", "error", err.Error())
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(discoveryInterval):
+				}
+			}
 		}()
 	}
-
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("simulator site listening", "address", address, "site", siteName, "devices", len(enrollment))
+		errCh <- server.ListenAndServe()
+	}()
 	failed := false
 	select {
-	case sig := <-signals:
-		logger.Info("shutting down fleet simulator", "signal", sig.String())
+	case <-ctx.Done():
+		logger.Info("shutting down the simulator site")
 	case err := <-errCh:
 		if !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("fleet simulator server failed", "error", err)
+			logger.Error("simulator site server failed", "error", err)
 			failed = true
 		}
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutdown, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	for _, server := range servers {
-		if err := server.Shutdown(ctx); err != nil {
-			logger.Error("shut down fleet simulator server", "address", server.Addr, "error", err)
-			failed = true
-		}
+	if err := server.Shutdown(shutdown); err != nil {
+		logger.Error("shut down the simulator site", "error", err)
+		failed = true
 	}
+	// Workers stopped by shutdown store no result; the next process
+	// resumes them from the journal.
+	dispatcher.Wait()
 	if failed {
 		os.Exit(1)
 	}
+}
+
+func readEnrollment(path string) (fixture.Enrollment, error) {
+	if path == "" {
+		return nil, errors.New("an enrollment file is required")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var enrollment fixture.Enrollment
+	if err := decoder.Decode(&enrollment); err != nil {
+		return nil, err
+	}
+	for device, target := range enrollment {
+		if !strings.Contains(device, "/") || target.SystemUUID == "" || target.BMCEndpoint == "" || target.BMCPublicKeySHA256 == "" || len(target.Disks) == 0 {
+			return nil, fmt.Errorf("enrollment of %s is incomplete", device)
+		}
+	}
+	return enrollment, nil
+}
+
+func discoveryClient() (client.Client, error) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, err
+	}
+	scheme := runtime.NewScheme()
+	if err := inventory.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+	return client.New(config, client.Options{Scheme: scheme})
 }
 
 func readToken(path string) (string, error) {
@@ -124,13 +188,6 @@ func readToken(path string) (string, error) {
 		return "", errors.New("token must not contain control characters")
 	}
 	return token, nil
-}
-
-func validateDistinctTokens(runtimeToken, adminToken string) error {
-	if len(runtimeToken) == len(adminToken) && subtle.ConstantTimeCompare([]byte(runtimeToken), []byte(adminToken)) == 1 {
-		return errors.New("runtime and admin tokens must be distinct")
-	}
-	return nil
 }
 
 func newServer(address string, handler http.Handler, logger *slog.Logger) *http.Server {

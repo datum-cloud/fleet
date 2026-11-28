@@ -23,7 +23,7 @@ func TestRowsAndReplacement(t *testing.T) {
 	t.Run("a request refused its permission check replaces nothing", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-cust"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-cust"); err != nil {
 			t.Fatal(err)
 		}
 		e.installation(device, "alloc-cust", "request-running")
@@ -65,7 +65,7 @@ func TestRowsAndReplacement(t *testing.T) {
 			t.Fatal(err)
 		}
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-row"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-row"); err != nil {
 			t.Fatal(err)
 		}
 		named := &DeviceTestStaffOperation{ObjectMeta: metav1.ObjectMeta{Name: "alloc-row-staff-a", Namespace: "default"}, Spec: testSpec{OperationEnvelope: envelope(device, providerUser, allocated("alloc-row")), Input: "a"}}
@@ -157,7 +157,7 @@ func TestRowsAndReplacement(t *testing.T) {
 		e.staffOp(device, "ok")
 		e.settle(device.Name)
 		active := e.custody(device.Name).Spec.ActiveOperation
-		err := e.coord.AcceptResult(e.ctx, SiteResult{Site: testSite, Device: device.Name, Operation: ops.OperationReference{Kind: "DeviceInvented", Name: active.Name, UID: active.UID}, Fence: active.Fence, Phase: ops.PhaseSucceeded, Evidence: []byte(`{"after":"On"}`)})
+		err := e.coord.AcceptResult(e.ctx, SiteResult{Site: testSite, Device: device.Name, Operation: ops.OperationReference{Kind: "DeviceInvented", Name: active.Name}, Fence: active.Fence, Phase: ops.PhaseSucceeded, Evidence: []byte(`{"after":"On"}`)})
 		if !errors.Is(err, ErrStaleFence) {
 			t.Fatalf("result for an unregistered kind: %v", err)
 		}

@@ -6,8 +6,6 @@ package staging
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
@@ -21,9 +19,11 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"go.datum.net/fleet/internal/allocation"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
 	"go.datum.net/fleet/internal/manager"
+	"go.datum.net/fleet/internal/tenancy"
 )
 
 // Handler is an event-driven synthetic provider and claim coordinator. It uses
@@ -31,9 +31,10 @@ import (
 // decision and provider observation. It accepts only powered-off, networkless
 // claims in one configured location.
 type Handler struct {
-	Public          client.Client
-	Provider        client.Client
-	Coordinator     *controller.Coordinator
+	Public   client.Client
+	Provider client.Client
+	// Allocator allocates and releases in the provider project, on custody.
+	Allocator       *allocation.Allocator
 	Project         controller.ProjectIdentity
 	ProviderProject controller.ProjectIdentity
 	Location        string
@@ -41,7 +42,7 @@ type Handler struct {
 }
 
 func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequest) manager.Outcome {
-	if h.Public == nil || h.Coordinator == nil || !h.Project.Valid() || h.Location == "" || !request.Valid() || !request.SameProject(h.Project.AuthorityID, h.Project.UID) {
+	if h.Public == nil || h.Allocator == nil || !h.Project.Valid() || h.Location == "" || !request.Valid() || !request.SameProject(h.Project.AuthorityID, h.Project.UID) {
 		return manager.Outcome{RetryError: manager.ErrEventWiringUnavailable}
 	}
 	crossProject := h.Provider != nil || h.ProviderProject.Valid()
@@ -82,11 +83,17 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	sourceClass, sourceProfile := &class, &profile
 	machineClient := h.Public
 	if crossProject {
-		if class.Spec.Source == nil || class.Spec.Source.Project != h.ProviderProject.RouteName || !sourceResolved(&class) || !profilePublished(&profile) || !publishedFor(&class, h.ProviderProject) || !publishedFor(&profile, h.ProviderProject) {
+		if class.Spec.Source == nil || !sourceResolved(&class) || !profilePublished(&profile) || !publishedFor(&class, h.ProviderProject) || !publishedFor(&profile, h.ProviderProject) {
 			return h.rejected(ctx, &claim, "UnresolvedPublication", "Synthetic cross-project allocation requires a publisher-owned class and profile with a current resolved source.")
 		}
+		// The class's publisher must be the provider incarnation that
+		// published it.
+		publisher, err := tenancy.Incarnation(ctx, tenancy.Fixed(manager.ProjectConsumer(h.ProviderProject, h.Provider)), class.Spec.Source.PublisherRef, h.ProviderProject.UID)
+		if err != nil {
+			return h.rejected(ctx, &claim, "UnresolvedPublication", "The class's publisher is not the configured provider project.")
+		}
 		sourceClass = &fleetv1.MachineClass{}
-		if err := h.Provider.Get(ctx, client.ObjectKey{Name: class.Spec.Source.Name}, sourceClass); err != nil {
+		if err := publisher.Client.Get(ctx, client.ObjectKey{Name: class.Spec.Source.Name}, sourceClass); err != nil {
 			return h.dependency(ctx, &claim, "SourceMachineClassPending", err)
 		}
 		sourceProfile = &fleetv1.MachineProfile{}
@@ -94,7 +101,7 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 		if sourceProfileName == "" {
 			return h.rejected(ctx, &claim, "UnresolvedPublication", "Published MachineProfile provenance is incomplete.")
 		}
-		if err := h.Provider.Get(ctx, client.ObjectKey{Name: sourceProfileName}, sourceProfile); err != nil {
+		if err := publisher.Client.Get(ctx, client.ObjectKey{Name: sourceProfileName}, sourceProfile); err != nil {
 			return h.dependency(ctx, &claim, "SourceMachineProfilePending", err)
 		}
 		revision, revisionErr := publicationRevision(sourceClass, h.ProviderProject)
@@ -102,7 +109,7 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 		if revisionErr != nil || class.Status.EvaluatedRevision != revision || !reflect.DeepEqual(class.Status.ResolvedClass, resolved) || class.Annotations[publicationSourceUIDAnnotation] != string(sourceClass.UID) || profile.Annotations[publicationSourceUIDAnnotation] != string(sourceProfile.UID) || !reflect.DeepEqual(profile.Spec, sourceProfile.Spec) || !profileAllowed(sourceClass.Spec.ProfilePolicy, sourceProfile.Name) {
 			return h.rejected(ctx, &claim, "PublicationDrift", "Published inputs no longer match the exact provider source lifetimes.")
 		}
-		machineClient = h.Provider
+		machineClient = publisher.Client
 	} else if class.Spec.Source != nil {
 		return h.rejected(ctx, &claim, "UnsupportedMachineClass", "Synthetic same-project staging requires a local capacity definition.")
 	}
@@ -134,48 +141,29 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 		machines = append(machines, *machine)
 		evidence[machine.UID] = now
 	}
-	admission := controller.AdmissionAuthority{PrincipalUID: "synthetic-staging:" + string(h.Project.UID), DecisionID: "synthetic-staging:" + string(claim.UID)}
-	if crossProject {
-		if err := h.Coordinator.EnsureClaimCustody(ctx, &claim, namespace.UID, admission, h.Project); err != nil {
-			return h.lifecycleError(ctx, &claim, err)
-		}
-		authority, hold := syntheticCrossProjectAuthority(claim.UID, claim.Namespace, h.Project, h.ProviderProject)
-		if err := h.Coordinator.RetainClaimAuthority(ctx, claim.UID, h.Project, h.ProviderProject, authority); err != nil {
-			return h.lifecycleError(ctx, &claim, err)
-		}
-		if err := h.Coordinator.RetainAllocationAuthority(ctx, claim.UID, h.Project, h.ProviderProject, authority, hold); err != nil {
-			return h.lifecycleError(ctx, &claim, err)
-		}
-	} else if err := h.Coordinator.EnsureClaimCustody(ctx, &claim, namespace.UID, admission); err != nil {
-		return h.lifecycleError(ctx, &claim, err)
-	}
-	if !contains(claim.Finalizers, controller.MachineFinalizer) {
+	if !contains(claim.Finalizers, allocation.MachineFinalizer) {
 		updated := claim.DeepCopyObject().(*fleetv1.Machine)
-		updated.Finalizers = append(updated.Finalizers, controller.MachineFinalizer)
+		updated.Finalizers = append(updated.Finalizers, allocation.MachineFinalizer)
 		if err := h.Public.Update(ctx, updated); err != nil {
 			return manager.Outcome{RetryError: err}
 		}
 		return manager.Outcome{}
 	}
-	allocation := controller.AllocationRequest{
-		Claim: &claim, Class: sourceClass, Profile: sourceProfile, MachineCapacities: machines,
-		EvidenceObservedAt: evidence, NamespaceUID: namespace.UID, Admission: admission,
-		LocalClassName: class.Name, LocalClassUID: class.UID,
-		LocalProfileName: profile.Name, LocalProfileUID: profile.UID,
-	}
-	if crossProject {
-		allocation.ConsumerProject, allocation.ProviderProject = h.Project, h.ProviderProject
-		allocation.Authority, allocation.ExternalHold = syntheticCrossProjectAuthority(claim.UID, claim.Namespace, h.Project, h.ProviderProject)
-	}
-	record, err := h.Coordinator.Allocate(ctx, allocation)
-	if errors.Is(err, controller.ErrInsufficientCapacity) {
+	record, err := h.Allocator.Allocate(ctx, allocation.Request{
+		Machine: h.machine(&claim), Class: sourceClass, Profile: sourceProfile,
+		Authority: fleetv1.AllocationAuthority{Principal: "synthetic-staging:" + h.Project.RouteName, Decision: "synthetic-staging:" + claim.Namespace + "/" + claim.Name},
+	})
+	if errors.Is(err, allocation.ErrInsufficientCapacity) {
 		return h.pending(ctx, &claim, "InsufficientCapacity", "No matching synthetic machine is currently available.", nil)
 	}
+	if errors.Is(err, allocation.ErrCustodyLost) {
+		return h.pending(ctx, &claim, "CustodyLost", "Device custody no longer names this Machine's allocation; an operator must resolve it.", nil)
+	}
 	if err != nil {
-		return h.lifecycleError(ctx, &claim, err)
+		return manager.Outcome{RetryError: err}
 	}
 	for i := range list.Items {
-		if list.Items[i].UID == record.MachineUID {
+		if list.Items[i].Name == record.Spec.MachineCapacityRef.Name {
 			if err := h.ensureObservation(ctx, machineClient, &list.Items[i], false); err != nil {
 				return manager.Outcome{RetryError: err}
 			}
@@ -188,11 +176,10 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	status := fleetv1.MachineStatus{
 		Phase: "Ready", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: h.Location}},
 		AcceptedProfileRef: &fleetv1.LocalReference{Name: profile.Name},
-		AllocatedHardware:  &fleetv1.AllocatedHardwareStatus{ObservedAt: &observed, Hardware: record.Hardware},
-		Power:              &fleetv1.PowerStatus{State: "Off"},
+		AllocatedHardware:  &fleetv1.AllocatedHardwareStatus{ObservedAt: &observed, Hardware: record.Spec.Hardware},
 		Conditions: []metav1.Condition{
 			condition("Accepted", metav1.ConditionTrue, claim.Generation, admissionReason(crossProject), admissionMessage(crossProject)),
-			condition("Bound", metav1.ConditionTrue, claim.Generation, "ExclusiveBinding", "Private custody contains the exclusive binding."),
+			condition("Bound", metav1.ConditionTrue, claim.Generation, "MachineAllocationActive", "Device custody names this Machine's allocation."),
 			condition("NetworkReady", metav1.ConditionTrue, claim.Generation, "NoAttachmentsRequired", "No network interfaces were requested."),
 			condition("Ready", metav1.ConditionTrue, claim.Generation, "PoweredOffHandoff", "The synthetic powered-off handoff is ready."),
 		},
@@ -208,17 +195,10 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	return manager.Outcome{}
 }
 
-// lifecycleError reports a private record of this Machine that cannot be
-// decoded as not bound and not ready, without retrying: retrying cannot make
-// the record readable. Every other error is retried.
-func (h Handler) lifecycleError(ctx context.Context, claim *fleetv1.Machine, err error) manager.Outcome {
-	if errors.Is(err, controller.ErrRecordUnreadable) {
-		return h.pending(ctx, claim, controller.ReasonUnreadablePrivateRecord, unreadableRecordMessage, nil)
-	}
-	return manager.Outcome{RetryError: err}
+// machine is the claim's exact identity in its consumer project.
+func (h Handler) machine(claim *fleetv1.Machine) allocation.Machine {
+	return allocation.MachineOf(manager.ProjectConsumer(h.Project, h.Public), claim)
 }
-
-const unreadableRecordMessage = "A private lifecycle record for this Machine cannot be decoded. Fleet will not allocate, install, or release through it; an operator must remove the record."
 
 func (h Handler) dependency(ctx context.Context, claim *fleetv1.Machine, reason string, err error) manager.Outcome {
 	if apierrors.IsNotFound(err) {
@@ -260,57 +240,44 @@ func (h Handler) rejected(ctx context.Context, claim *fleetv1.Machine, reason, m
 	return manager.Outcome{}
 }
 
+// errReleasing means the release has not finished; the event is retried.
+var errReleasing = errors.New("synthetic release is in progress")
+
 func (h Handler) release(ctx context.Context, namespace string, uid types.UID, claim *fleetv1.Machine) manager.Outcome {
-	crossProject := h.Provider != nil && h.ProviderProject.Valid() && !h.ProviderProject.SameLifetime(h.Project)
-	var result controller.ReleaseResult
-	var err error
-	if crossProject {
-		result, err = h.Coordinator.ReleaseScoped(ctx, h.Project, uid)
-	} else {
-		result, err = h.Coordinator.Release(ctx, uid)
+	if claim == nil || !contains(claim.Finalizers, allocation.MachineFinalizer) {
+		// A claim that never reached allocation needs no release.
+		return manager.Outcome{}
 	}
+	machine := h.machine(claim)
+	current, err := h.Allocator.Get(ctx, machine)
 	if err != nil {
-		// A claim that never reached custody needs no synthetic cleanup.
-		if errors.Is(err, controller.ErrRecordInvalid) && (claim == nil || !contains(claim.Finalizers, controller.MachineFinalizer)) {
-			return manager.Outcome{}
-		}
-		// The finalizer stays until an operator removes the record; see
-		// docs/development/README.md.
-		if errors.Is(err, controller.ErrRecordUnreadable) {
-			return h.pending(ctx, claim, controller.ReasonUnreadablePrivateRecord, unreadableRecordMessage, nil)
-		}
 		return manager.Outcome{RetryError: err}
 	}
-	if crossProject && result.ExternalSettlementRequired {
-		authority, hold := syntheticCrossProjectAuthority(uid, namespace, h.Project, h.ProviderProject)
-		result, err = h.Coordinator.CompleteExternalRelease(ctx, uid, authority, hold, h.Project)
-		if err != nil {
-			return manager.Outcome{RetryError: err}
-		}
-	}
-	if !result.SafeToRemoveFinalizer {
-		return manager.Outcome{RetryError: fmt.Errorf("synthetic cleanup is not settled")}
-	}
-	if claim != nil && contains(claim.Finalizers, controller.MachineFinalizer) {
-		if err := h.removeFinalizer(ctx, client.ObjectKeyFromObject(claim), uid); err != nil {
-			return manager.Outcome{RetryError: err}
-		}
-	}
-	// A Machine event wakes all claims routed through its class. Private
-	// custody remains the authority if more than one synthetic machine exists.
-	var machines fleetv1.MachineCapacityList
-	machineClient := h.Public
-	if crossProject {
-		machineClient = h.Provider
-	}
-	if err := machineClient.List(ctx, &machines); err != nil {
+	// Release also covers a Machine deleted before its allocation existed,
+	// which may hold a quota claim.
+	released, err := h.Allocator.ReleaseMachine(ctx, machine)
+	if err != nil {
 		return manager.Outcome{RetryError: err}
 	}
-	for i := range machines.Items {
-		machine := &machines.Items[i]
-		if err := h.ensureObservation(ctx, machineClient, machine, true); err != nil {
-			return manager.Outcome{RetryError: err}
-		}
+	if !released {
+		return manager.Outcome{RetryError: errReleasing}
+	}
+	if err := h.removeFinalizer(ctx, client.ObjectKeyFromObject(claim), uid); err != nil {
+		return manager.Outcome{RetryError: err}
+	}
+	if current == nil {
+		return manager.Outcome{}
+	}
+	// The released capacity is offered again. Custody stays the authority.
+	capacity := &fleetv1.MachineCapacity{}
+	reference := current.Spec.MachineCapacityRef
+	if err := h.Allocator.Provider.Get(ctx, client.ObjectKey{Namespace: reference.Namespace, Name: reference.Name}, capacity); apierrors.IsNotFound(err) {
+		return manager.Outcome{}
+	} else if err != nil {
+		return manager.Outcome{RetryError: err}
+	}
+	if err := h.ensureObservation(ctx, h.Allocator.Provider, capacity, true); err != nil {
+		return manager.Outcome{RetryError: err}
 	}
 	return manager.Outcome{}
 }
@@ -346,15 +313,6 @@ func profilePublished(profile *fleetv1.MachineProfile) bool {
 	return condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == profile.Generation
 }
 
-func syntheticCrossProjectAuthority(claimUID types.UID, namespace string, consumer, provider controller.ProjectIdentity) (controller.AuthorityRef, controller.ExternalHoldRef) {
-	value := "synthetic-cross-project-v1/" + consumer.AuthorityID + "/" + string(consumer.UID) + "/" + string(provider.UID) + "/" + string(claimUID)
-	sum := sha256.Sum256([]byte(value))
-	digest := hex.EncodeToString(sum[:])
-	authority := controller.AuthorityRef{Provider: "synthetic-staging", RecordName: "synthetic-publication-" + digest[:24], RecordID: digest[:32], ContractDigest: digest}
-	hold := controller.ExternalHoldRef{Provider: "synthetic-staging", Namespace: namespace, Name: "machine-" + digest[:24], UID: types.UID("synthetic-" + string(claimUID))}
-	return authority, hold
-}
-
 func admissionReason(crossProject bool) string {
 	if crossProject {
 		return "SyntheticCrossProjectAdmission"
@@ -385,11 +343,11 @@ func (h Handler) removeFinalizer(ctx context.Context, key client.ObjectKey, uid 
 			return err
 		}
 		if current.UID != uid {
-			return controller.ErrRecordInvalid
+			return errors.New("the claim name was recreated before finalizer removal")
 		}
 		out := current.Finalizers[:0]
 		for _, value := range current.Finalizers {
-			if value != controller.MachineFinalizer {
+			if value != allocation.MachineFinalizer {
 				out = append(out, value)
 			}
 		}
@@ -411,11 +369,13 @@ func condition(kind string, status metav1.ConditionStatus, generation int64, rea
 	return metav1.Condition{Type: kind, Status: status, ObservedGeneration: generation, LastTransitionTime: metav1.Now(), Reason: reason, Message: message}
 }
 
-// preserveRequest carries forward the fields owned by the requested-hardware
-// projector. This handler replaces Machine status wholesale and must never
-// drop or rewrite the pinned snapshot or its RequestResolved condition.
+// preserveRequest carries forward the fields owned by the projectors: the
+// requested-hardware snapshot with its RequestResolved condition, and power.
+// This handler replaces Machine status wholesale and must never drop or
+// rewrite them.
 func preserveRequest(current, next fleetv1.MachineStatus) fleetv1.MachineStatus {
 	next.RequestedHardware = current.RequestedHardware
+	next.Power = current.Power
 	if resolved := apiMeta.FindStatusCondition(current.Conditions, controller.ConditionRequestResolved); resolved != nil {
 		next.Conditions = append(next.Conditions, *resolved)
 	}
@@ -449,12 +409,18 @@ func ConsumerHandlers(base manager.HandlerFactory, consumer controller.ProjectId
 		if err != nil || string(binding.ClusterName) != consumer.RouteName {
 			return handlers, err
 		}
+		if template.Allocator == nil {
+			return manager.Handlers{}, fmt.Errorf("%w: synthetic staging has no allocator", manager.ErrEventWiringUnavailable)
+		}
 		if !binding.Project.SameLifetime(consumer) {
 			return manager.Handlers{}, fmt.Errorf("%w: synthetic consumer %q is engaged as a different project lifetime", manager.ErrProjectIdentityUnavailable, binding.ClusterName)
 		}
 		handler := template
 		handler.Public, handler.Project = binding.Client, binding.Project
 		handlers.Machine = handler
+		// The power projector reads the custody of the Machine's allocation
+		// in the provider project.
+		handlers.MachineProjector = manager.Chain(handlers.MachineProjector, manager.PowerProjector{Client: binding.Client, Project: binding.Project, Provider: template.Allocator.Provider, Namespace: template.Allocator.Namespace})
 		return handlers, nil
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
+	"go.datum.net/fleet/internal/allocation"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
 	"go.datum.net/fleet/internal/manager"
@@ -142,8 +143,9 @@ func TestEngagedPublisherRefusesAReplacedConsumerLifetime(t *testing.T) {
 // The staging handler is installed only for the consumer's exact lifetime.
 func TestConsumerHandlersScopeStagingToTheConsumerLifetime(t *testing.T) {
 	isStaging := func(h manager.Handlers) bool { _, ok := h.Machine.(Handler); return ok }
-	factory := ConsumerHandlers(manager.DefaultHandlers, scopeConsumer, Handler{Location: "us-central-1"})
 	c := fake.NewClientBuilder().WithScheme(scopeScheme(t)).Build()
+	// The factory wires the power projector from the allocator's provider.
+	factory := ConsumerHandlers(manager.DefaultHandlers, scopeConsumer, Handler{Allocator: &allocation.Allocator{Provider: c, Namespace: providerNamespace}, Location: "us-central-1"})
 	consumer, err := factory(manager.ProjectBinding{ClusterName: "consumer", Project: scopeConsumer, Client: c})
 	if err != nil || !isStaging(consumer) {
 		t.Fatalf("consumer handlers = %#v, %v", consumer.Machine, err)

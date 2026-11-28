@@ -1,15 +1,15 @@
+// Package standalone runs the standalone smoke test's phases on Device
+// custody. Each phase is the Metal provider and, for release, the release
+// controller, acting on fixed fixtures in one kind cluster. The coordinator
+// runs as its own process and the simulator is the site.
 package standalone
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,9 +17,13 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"go.datum.net/fleet/internal/allocation"
+	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
-	"go.datum.net/fleet/internal/executor"
+	"go.datum.net/fleet/internal/custody"
+	"go.datum.net/fleet/internal/manager"
+	"go.datum.net/fleet/internal/tenancy"
 )
 
 const (
@@ -30,7 +34,6 @@ const (
 )
 
 type Options struct {
-	PrivateNamespace   string
 	ProviderNamespace  string
 	FirstNamespace     string
 	SecondNamespace    string
@@ -40,301 +43,375 @@ type Options struct {
 	ClaimName          string
 	InstallationName   string
 	ReinstallationName string
-	ImageName          string
 	LocationName       string
-	EvidenceAge        time.Duration
+	// Wait bounds how long a phase waits for the coordinator and the site.
+	Wait time.Duration
 }
 
 func DefaultOptions() Options {
 	return Options{
-		PrivateNamespace: "fleet-system-private", ProviderNamespace: "fleet-provider",
-		FirstNamespace: "fleet-project-a", SecondNamespace: "fleet-project-b",
+		ProviderNamespace: "fleet-provider",
+		FirstNamespace:    "fleet-project-a", SecondNamespace: "fleet-project-b",
 		ClassName: "standard-metal", ProfileName: "general-purpose-24c-128g",
 		MachineName: "central1-baremetal-01", ClaimName: "allocation",
-		ReinstallationName: "debian-12-reinstall",
-		InstallationName:   "debian-12", ImageName: "debian-12@sha256:9f4ad8d8b8a6f6fc64d2cf2c7e70b9184b74f089adf8c36d84f4fcb99892f3cb",
-		LocationName: "us-central-1", EvidenceAge: 5 * time.Minute,
+		ReinstallationName: "debian-12-reinstall", InstallationName: "debian-12",
+		LocationName: "us-central-1", Wait: 3 * time.Minute,
 	}
 }
 
+// Runner runs one phase. Client is the Metal provider's identity. The
+// allocator carries the coordinator's and the release controller's clients.
 type Runner struct {
-	Client   client.Client
-	Executor executor.Client
-	Options  Options
-	Now      func() time.Time
-}
-
-type syntheticEvidence struct {
-	SchemaVersion    int              `json:"schemaVersion"`
-	MachineNamespace string           `json:"machineNamespace"`
-	MachineName      string           `json:"machineName"`
-	MachineUID       types.UID        `json:"machineUID"`
-	Location         string           `json:"location"`
-	ObservedAt       time.Time        `json:"observedAt"`
-	Hardware         fleetv1.Hardware `json:"hardware"`
+	Client    client.Client
+	Allocator *allocation.Allocator
+	Options   Options
+	Now       func() time.Time
 }
 
 func (r Runner) Run(ctx context.Context, phase string) error {
-	if r.Client == nil || r.Executor == nil {
-		return errors.New("Kubernetes and simulator clients are required")
+	if r.Client == nil || r.Allocator == nil {
+		return errors.New("standalone: a client and an allocator are required")
 	}
 	if r.Now == nil {
 		r.Now = time.Now
 	}
-	if r.Options.EvidenceAge <= 0 {
-		return errors.New("positive evidence age is required")
-	}
-	coordinator, err := controller.NewCoordinator(r.Client, r.Options.PrivateNamespace, r.Executor, controller.LocalDigestImageResolver{}, nil, r.Options.EvidenceAge)
-	if err != nil {
-		return err
-	}
 	switch phase {
 	case PhaseAllocate:
-		return r.allocate(ctx, coordinator)
+		return r.allocate(ctx)
 	case PhaseInstall:
-		return r.install(ctx, coordinator, r.Options.InstallationName)
+		return r.install(ctx, r.Options.InstallationName)
 	case PhaseReinstall:
 		if r.Options.ReinstallationName == "" || r.Options.ReinstallationName == r.Options.InstallationName {
 			return errors.New("reinstall requires a distinct installation name")
 		}
-		return r.install(ctx, coordinator, r.Options.ReinstallationName)
+		return r.install(ctx, r.Options.ReinstallationName)
 	case PhaseRelease:
-		return r.release(ctx, coordinator)
+		return r.release(ctx)
 	default:
 		return fmt.Errorf("unsupported smoke phase %q", phase)
 	}
 }
 
-func (r Runner) allocate(ctx context.Context, coordinator *controller.Coordinator) error {
-	class, profile, machine, observedAt, err := r.inputs(ctx, true)
+func (r Runner) allocate(ctx context.Context) error {
+	class, profile, capacity, err := r.inputs(ctx)
 	if err != nil {
 		return err
 	}
-	first, firstNS, firstAdmission, err := r.prepareClaim(ctx, coordinator, r.Options.FirstNamespace)
+	if err := r.await(ctx, "custody of the fixture Device is Verified", func() (bool, error) {
+		state := &ops.DeviceCustody{}
+		if err := r.Client.Get(ctx, client.ObjectKey{Namespace: r.Options.ProviderNamespace, Name: capacity.Spec.DeviceRef.Name}, state); apierrors.IsNotFound(err) {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+		return state.Spec.State == ops.CustodyVerified, nil
+	}); err != nil {
+		return err
+	}
+	first, err := r.prepareClaim(ctx, r.Options.FirstNamespace)
 	if err != nil {
 		return err
 	}
-	second, secondNS, secondAdmission, err := r.prepareClaim(ctx, coordinator, r.Options.SecondNamespace)
+	second, err := r.prepareClaim(ctx, r.Options.SecondNamespace)
 	if err != nil {
 		return err
 	}
-	firstRequest := allocationRequest(first, firstNS, firstAdmission, class, profile, machine, observedAt)
-	secondRequest := allocationRequest(second, secondNS, secondAdmission, class, profile, machine, observedAt)
-	if err := coordinator.CheckCapacity(firstRequest); err != nil {
-		return fmt.Errorf("first consumer capacity preflight: %w", err)
-	}
-	if err := coordinator.CheckCapacity(secondRequest); err != nil {
-		return fmt.Errorf("second consumer capacity preflight: %w", err)
-	}
-	firstRecord, err := coordinator.Allocate(ctx, firstRequest)
+	won, err := r.Allocator.Allocate(ctx, r.request(first, class, profile))
 	if err != nil {
 		return fmt.Errorf("allocate first consumer: %w", err)
 	}
-	if err := r.projectBoundMachine(ctx, first, profile, firstRecord, observedAt); err != nil {
+	if err := r.projectBound(ctx, first, profile, won); err != nil {
 		return err
 	}
-	// Both contenders use the same retained Available=True evidence. Private
-	// custody, not a status projection racing the second request, decides the winner.
-	_, err = coordinator.Allocate(ctx, secondRequest)
-	if !errors.Is(err, controller.ErrInsufficientCapacity) {
+	// Both contenders see the same Available capacity. Custody, not a
+	// status projection, decides the winner.
+	if _, err := r.Allocator.Allocate(ctx, r.request(second, class, profile)); !errors.Is(err, allocation.ErrInsufficientCapacity) {
 		return fmt.Errorf("second consumer must wait for capacity: %w", err)
 	}
-	if firstRecord.ClaimUID != first.UID || firstRecord.ClaimNamespace != first.Namespace || firstRecord.ClaimName != first.Name || firstRecord.BindingID == "" {
-		return fmt.Errorf("%w: retained exclusive owner does not match the winning claim", controller.ErrRecordInvalid)
+	if lost, err := r.Allocator.Get(ctx, second.machine); err != nil || lost != nil {
+		return fmt.Errorf("the losing consumer kept an allocation: %v", err)
 	}
-	if err := r.projectMachineOccupied(ctx, machine); err != nil {
+	if err := r.projectOccupied(ctx, capacity); err != nil {
 		return err
 	}
-	return r.projectPendingClaim(ctx, second, profile, "InsufficientCapacity", "The only synthetic machine is allocated to another consumer.")
+	return r.projectPending(ctx, second, profile, "InsufficientCapacity", "The only synthetic machine is allocated to another consumer.")
 }
 
-func (r Runner) install(ctx context.Context, coordinator *controller.Coordinator, installationName string) error {
-	claim, namespace, admission, err := r.claim(ctx, r.Options.FirstNamespace)
+func (r Runner) install(ctx context.Context, installationName string) error {
+	first, err := r.claim(ctx, r.Options.FirstNamespace)
 	if err != nil {
 		return err
 	}
+	current, err := r.Allocator.Get(ctx, first.machine)
+	if err != nil {
+		return err
+	}
+	if current == nil || current.Status.Phase != fleetv1.AllocationActive {
+		return errors.New("the first consumer has no active allocation")
+	}
 	var installation fleetv1.Installation
-	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: claim.Namespace, Name: installationName}, &installation); err != nil {
+	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: first.claim.Namespace, Name: installationName}, &installation); err != nil {
 		return err
 	}
 	if installationName == r.Options.ReinstallationName && installation.Spec.ExpectedPredecessor != (fleetv1.InstallationPredecessor{Type: "Installation", Name: r.Options.InstallationName}) {
 		return errors.New("synthetic reinstall must name the configured initial installation as predecessor")
 	}
-	apiMeta.SetStatusCondition(&claim.Status.Conditions, condition("Ready", metav1.ConditionUnknown, claim.Generation, "SyntheticInstallationUnverified", "The synthetic installation request has not yet returned verified completion."))
-	if err := r.Client.Status().Update(ctx, claim); err != nil {
+	// A rerun after the site restarted finds the same operation by name and
+	// waits for its result; it never creates a second one.
+	operation := &ops.DeviceInstallation{}
+	name := custody.InstallationName(current.Name, string(installation.UID))
+	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: r.Options.ProviderNamespace, Name: name}, operation); apierrors.IsNotFound(err) {
+		previous := ""
+		if ref := first.claim.Status.CurrentInstallationRef; ref != nil {
+			previous = ref.Name
+		}
+		apiMeta.SetStatusCondition(&first.claim.Status.Conditions, condition("Ready", metav1.ConditionUnknown, first.claim.Generation, "InstallationUnverified", "The installation has not yet returned a verified result."))
+		if err := r.Client.Status().Update(ctx, first.claim); err != nil {
+			return err
+		}
+		if operation, err = r.Allocator.Install(ctx, current, allocation.Installation{Installation: &installation, Current: previous}); err != nil {
+			return fmt.Errorf("install synthetic image: %w", err)
+		}
+	} else if err != nil {
 		return err
 	}
-	imageDecision := "local-test-" + imageDigest(r.Options.ImageName)
-	result, err := coordinator.Install(ctx, controller.InstallationRequest{Claim: claim, Installation: &installation, NamespaceUID: namespace.UID, Admission: controller.InstallationAdmissionAuthority{PrincipalUID: admission.PrincipalUID, DecisionID: "standalone-install-" + string(installation.UID), CatalogAuthority: "local-test-catalog", CatalogRevision: "local-test-v1", ImageDecisionID: imageDecision}})
-	if err != nil {
-		return fmt.Errorf("install synthetic image: %w", err)
-	}
-	retained, found, err := r.Executor.Lookup(ctx, result.Record.OperationID)
-	if err != nil || !found || retained.ID != result.Record.OperationID || retained.Kind != "install" || retained.Phase != "Succeeded" || retained.Result != "installed" || retained.CompletedAt == nil || result.RequestDigest == "" || retained.InputDigest != result.RequestDigest {
-		return fmt.Errorf("%w: simulator installation history is missing or does not match retained authority and inputs", executor.ErrOutcomeUnknown)
+	if err := r.await(ctx, "the DeviceInstallation succeeds", func() (bool, error) {
+		if err := r.Client.Get(ctx, client.ObjectKeyFromObject(operation), operation); err != nil {
+			return false, err
+		}
+		if phase := operation.Status.Phase; phase.Ended() && phase != ops.PhaseSucceeded {
+			return false, fmt.Errorf("the installation ended %s: %s", phase, operation.Status.Reason)
+		}
+		return operation.Status.Phase == ops.PhaseSucceeded, nil
+	}); err != nil {
+		return err
 	}
 	now := metav1.NewTime(r.Now().UTC())
-	installation.Status = fleetv1.InstallationStatus{Phase: "Ready", CompletedAt: &now, Conditions: []metav1.Condition{condition("Accepted", metav1.ConditionTrue, installation.Generation, "SyntheticFixtureAccepted", "The standalone fixture admitted this request; this is not Milo authorization."), condition("Executing", metav1.ConditionFalse, installation.Generation, "Completed", "The persistent simulator returned a verified terminal result."), condition("Ready", metav1.ConditionTrue, installation.Generation, "Installed", "The synthetic provider verified installation completion.")}}
+	installation.Status = fleetv1.InstallationStatus{Phase: "Ready", CompletedAt: &now, Conditions: []metav1.Condition{
+		condition("Accepted", metav1.ConditionTrue, installation.Generation, "SyntheticFixtureAccepted", "The standalone fixture admitted this request; this is not Milo authorization."),
+		condition("Executing", metav1.ConditionFalse, installation.Generation, "Completed", "The simulator site returned a verified result under the operation's fence."),
+		condition("Ready", metav1.ConditionTrue, installation.Generation, "Installed", "The simulator site verified the installation."),
+	}}
 	if err := r.Client.Status().Update(ctx, &installation); err != nil {
 		return err
 	}
-	claim.Status.CurrentInstallationRef = &fleetv1.LocalReference{Name: installation.Name}
-	apiMeta.SetStatusCondition(&claim.Status.Conditions, condition("Ready", metav1.ConditionTrue, claim.Generation, "SyntheticHandoffReady", "Synthetic installation and powered-off handoff are verified."))
-	return r.Client.Status().Update(ctx, claim)
+	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(first.claim), first.claim); err != nil {
+		return err
+	}
+	first.claim.Status.CurrentInstallationRef = &fleetv1.LocalReference{Name: installation.Name}
+	apiMeta.SetStatusCondition(&first.claim.Status.Conditions, condition("Ready", metav1.ConditionTrue, first.claim.Generation, "SyntheticHandoffReady", "The installation is verified."))
+	if err := r.Client.Status().Update(ctx, first.claim); err != nil {
+		return err
+	}
+	return r.projectPower(ctx, first.machine)
 }
 
-func (r Runner) release(ctx context.Context, coordinator *controller.Coordinator) error {
-	claim, _, _, err := r.claim(ctx, r.Options.FirstNamespace)
+func (r Runner) release(ctx context.Context) error {
+	first, err := r.claim(ctx, r.Options.FirstNamespace)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
 	if err == nil {
-		claimUID, claimResourceVersion := claim.UID, claim.ResourceVersion
-		if claim.DeletionTimestamp == nil {
-			if err := r.requestExactDeletion(ctx, claim, claimUID, claimResourceVersion); err != nil {
+		if first.claim.DeletionTimestamp == nil {
+			uid, version := first.claim.UID, first.claim.ResourceVersion
+			if err := r.Client.Delete(ctx, first.claim, client.Preconditions{UID: &uid, ResourceVersion: &version}); err != nil && !apierrors.IsNotFound(err) {
 				return err
 			}
 		}
-		result, releaseErr := coordinator.Release(ctx, claimUID)
-		if releaseErr != nil {
-			return fmt.Errorf("release first consumer: %w", releaseErr)
+		current, err := r.Allocator.Get(ctx, first.machine)
+		if err != nil {
+			return err
 		}
-		if !result.SafeToRemoveFinalizer {
-			return errors.New("cleanup did not authorize finalizer removal")
+		if current != nil {
+			if err := r.await(ctx, "the first allocation is Released", func() (bool, error) {
+				if err := r.Client.Get(ctx, client.ObjectKeyFromObject(current), current); err != nil {
+					return false, err
+				}
+				released, err := r.Allocator.Release(ctx, current, first.machine)
+				if errors.Is(err, allocation.ErrWipeFailed) {
+					return false, err
+				}
+				return released, nil
+			}); err != nil {
+				return err
+			}
 		}
-		if err := r.removeExactFinalizer(ctx, client.ObjectKey{Namespace: r.Options.FirstNamespace, Name: r.Options.ClaimName}, claimUID); err != nil {
+		if err := r.removeFinalizer(ctx, client.ObjectKeyFromObject(first.claim), first.claim.UID); err != nil {
 			return err
 		}
 	}
-	class, profile, machine, observedAt, err := r.inputs(ctx, false)
+	class, profile, capacity, err := r.inputs(ctx)
 	if err != nil {
 		return err
 	}
-	second, secondNS, admission, err := r.claim(ctx, r.Options.SecondNamespace)
+	second, err := r.claim(ctx, r.Options.SecondNamespace)
 	if err != nil {
 		return err
 	}
-	record, err := coordinator.Allocate(ctx, allocationRequest(second, secondNS, admission, class, profile, machine, observedAt))
+	reused, err := r.Allocator.Allocate(ctx, r.request(second, class, profile))
 	if err != nil {
 		return fmt.Errorf("allocate waiting consumer: %w", err)
 	}
-	if record.Epoch < 2 {
-		return fmt.Errorf("reused asset epoch = %d, want at least 2", record.Epoch)
+	if reused.Spec.DeviceRef.Name != capacity.Spec.DeviceRef.Name {
+		return errors.New("the waiting consumer did not reuse the released Device")
 	}
-	if err := r.projectBoundMachine(ctx, second, profile, record, observedAt); err != nil {
+	if err := r.projectBound(ctx, second, profile, reused); err != nil {
 		return err
 	}
-	return r.projectMachineOccupied(ctx, machine)
+	return r.projectOccupied(ctx, capacity)
 }
 
-func (r Runner) inputs(ctx context.Context, createEvidence bool) (*fleetv1.MachineClass, *fleetv1.MachineProfile, *fleetv1.MachineCapacity, time.Time, error) {
-	var class fleetv1.MachineClass
-	var profile fleetv1.MachineProfile
-	var machine fleetv1.MachineCapacity
-	if err := r.Client.Get(ctx, client.ObjectKey{Name: r.Options.ClassName}, &class); err != nil {
-		return nil, nil, nil, time.Time{}, err
-	}
-	if err := r.Client.Get(ctx, client.ObjectKey{Name: r.Options.ProfileName}, &profile); err != nil {
-		return nil, nil, nil, time.Time{}, err
-	}
-	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: r.Options.ProviderNamespace, Name: r.Options.MachineName}, &machine); err != nil {
-		return nil, nil, nil, time.Time{}, err
-	}
-	if class.Spec.Capacity == nil || class.Spec.Capacity.MachineCapacities.Namespace != r.Options.ProviderNamespace || machine.Namespace != r.Options.ProviderNamespace {
-		return nil, nil, nil, time.Time{}, errors.New("synthetic provider scope does not match configuration")
-	}
-	evidence, err := r.loadEvidence(ctx, &machine, createEvidence)
-	if err != nil {
-		return nil, nil, nil, time.Time{}, err
-	}
-	machine.Status.Hardware = evidence.Hardware
-	machine.Status.Conditions = []metav1.Condition{condition("Prepared", metav1.ConditionTrue, machine.Generation, "SyntheticEvidence", "Synthetic fixture evidence is current."), condition("Healthy", metav1.ConditionTrue, machine.Generation, "SyntheticEvidence", "Synthetic fixture evidence is current."), condition("Available", metav1.ConditionTrue, machine.Generation, "SyntheticEvidence", "Private custody remains authoritative for exclusivity.")}
-	if err := r.Client.Status().Update(ctx, &machine); err != nil {
-		return nil, nil, nil, time.Time{}, err
-	}
-	return &class, &profile, &machine, evidence.ObservedAt, nil
-}
-
-func (r Runner) prepareClaim(ctx context.Context, coordinator *controller.Coordinator, namespaceName string) (*fleetv1.Machine, *corev1.Namespace, controller.AdmissionAuthority, error) {
-	claim, ns, admission, err := r.claim(ctx, namespaceName)
-	if err != nil {
-		return nil, nil, admission, err
-	}
-	if claim.Spec.LocationRef.Name != r.Options.LocationName || claim.Spec.MachineClassRef.Name != r.Options.ClassName || claim.Spec.MachineProfileRef.Name != r.Options.ProfileName || len(claim.Spec.NetworkInterfaces) != 0 || claim.Spec.PowerState != "Off" {
-		return nil, nil, admission, fmt.Errorf("%w: claim does not match the configured synthetic fixture", controller.ErrRecordInvalid)
-	}
-	if err := coordinator.EnsureClaimCustody(ctx, claim, ns.UID, admission); err != nil {
-		return nil, nil, admission, err
-	}
-	if !contains(claim.Finalizers, controller.MachineFinalizer) {
-		claim.Finalizers = append(claim.Finalizers, controller.MachineFinalizer)
-		if err := r.Client.Update(ctx, claim); err != nil {
-			return nil, nil, admission, err
+// await polls until done, a failure, or the phase's wait bound.
+func (r Runner) await(ctx context.Context, what string, done func() (bool, error)) error {
+	deadline := r.Now().Add(r.Options.Wait)
+	for {
+		ok, err := done()
+		if err != nil || ok {
+			return err
+		}
+		if r.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting until %s", what)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
 		}
 	}
-	return claim, ns, admission, nil
 }
 
-func (r Runner) claim(ctx context.Context, namespaceName string) (*fleetv1.Machine, *corev1.Namespace, controller.AdmissionAuthority, error) {
-	var claim fleetv1.Machine
-	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: namespaceName, Name: r.Options.ClaimName}, &claim); err != nil {
-		return nil, nil, controller.AdmissionAuthority{}, err
+// inputs reads the fixtures and writes the synthetic capacity evidence. The
+// capacity projector is not wired, so the fixture writes Prepared, Healthy
+// and Available itself. Custody stays authoritative for exclusivity.
+func (r Runner) inputs(ctx context.Context) (*fleetv1.MachineClass, *fleetv1.MachineProfile, *fleetv1.MachineCapacity, error) {
+	var class fleetv1.MachineClass
+	var profile fleetv1.MachineProfile
+	var capacity fleetv1.MachineCapacity
+	if err := r.Client.Get(ctx, client.ObjectKey{Name: r.Options.ClassName}, &class); err != nil {
+		return nil, nil, nil, err
 	}
-	ns := &corev1.Namespace{}
-	if err := r.Client.Get(ctx, client.ObjectKey{Name: namespaceName}, ns); err != nil {
-		return nil, nil, controller.AdmissionAuthority{}, err
+	if err := r.Client.Get(ctx, client.ObjectKey{Name: r.Options.ProfileName}, &profile); err != nil {
+		return nil, nil, nil, err
 	}
-	a := controller.AdmissionAuthority{PrincipalUID: "standalone-fixture-" + string(ns.UID), DecisionID: "standalone-claim-" + string(claim.UID)}
-	return &claim, ns, a, nil
+	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: r.Options.ProviderNamespace, Name: r.Options.MachineName}, &capacity); err != nil {
+		return nil, nil, nil, err
+	}
+	if class.Spec.Capacity == nil || class.Spec.Capacity.MachineCapacities.Namespace != r.Options.ProviderNamespace {
+		return nil, nil, nil, errors.New("synthetic provider scope does not match configuration")
+	}
+	capacity.Status.Hardware = fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 24, Threads: 48, Sockets: 2}, Memory: fleetv1.HardwareMemory{Capacity: "128Gi"}}
+	capacity.Status.Conditions = []metav1.Condition{
+		condition("Prepared", metav1.ConditionTrue, capacity.Generation, "SyntheticEvidence", "Synthetic fixture evidence is current."),
+		condition("Healthy", metav1.ConditionTrue, capacity.Generation, "SyntheticEvidence", "Synthetic fixture evidence is current."),
+		condition("Available", metav1.ConditionTrue, capacity.Generation, "SyntheticEvidence", "Device custody remains authoritative for exclusivity."),
+	}
+	if err := r.Client.Status().Update(ctx, &capacity); err != nil {
+		return nil, nil, nil, err
+	}
+	return &class, &profile, &capacity, nil
 }
 
-func allocationRequest(claim *fleetv1.Machine, ns *corev1.Namespace, admission controller.AdmissionAuthority, class *fleetv1.MachineClass, profile *fleetv1.MachineProfile, machine *fleetv1.MachineCapacity, observed time.Time) controller.AllocationRequest {
-	return controller.AllocationRequest{Claim: claim, Class: class, Profile: profile, MachineCapacities: []fleetv1.MachineCapacity{*machine}, EvidenceObservedAt: map[types.UID]time.Time{machine.UID: observed}, NamespaceUID: ns.UID, Admission: admission, LocalClassName: class.Name, LocalClassUID: class.UID, LocalProfileName: profile.Name, LocalProfileUID: profile.UID}
+type claim struct {
+	claim   *fleetv1.Machine
+	machine allocation.Machine
+}
+
+func (r Runner) claim(ctx context.Context, namespaceName string) (claim, error) {
+	machine := &fleetv1.Machine{}
+	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: namespaceName, Name: r.Options.ClaimName}, machine); err != nil {
+		return claim{}, err
+	}
+	// Each consumer namespace stands in for a consumer project.
+	consumer, err := tenancy.Namespaces{Client: r.Client}.Resolve(ctx, tenancy.Namespace(namespaceName))
+	if err != nil {
+		return claim{}, err
+	}
+	return claim{claim: machine, machine: allocation.MachineOf(consumer, machine)}, nil
+}
+
+func (r Runner) prepareClaim(ctx context.Context, namespaceName string) (claim, error) {
+	current, err := r.claim(ctx, namespaceName)
+	if err != nil {
+		return claim{}, err
+	}
+	spec := current.claim.Spec
+	if spec.LocationRef.Name != r.Options.LocationName || spec.MachineClassRef.Name != r.Options.ClassName || spec.MachineProfileRef.Name != r.Options.ProfileName || len(spec.NetworkInterfaces) != 0 || spec.PowerState != "Off" {
+		return claim{}, errors.New("the claim does not match the configured synthetic fixture")
+	}
+	if !contains(current.claim.Finalizers, allocation.MachineFinalizer) {
+		current.claim.Finalizers = append(current.claim.Finalizers, allocation.MachineFinalizer)
+		if err := r.Client.Update(ctx, current.claim); err != nil {
+			return claim{}, err
+		}
+	}
+	return current, nil
+}
+
+func (r Runner) request(c claim, class *fleetv1.MachineClass, profile *fleetv1.MachineProfile) allocation.Request {
+	return allocation.Request{Machine: c.machine, Class: class, Profile: profile, Authority: fleetv1.AllocationAuthority{Principal: "standalone-fixture", Decision: "standalone-claim:" + c.machine.Namespace + "/" + c.machine.Name}}
 }
 
 // withRequestedHardware applies the same resolve-once contract as the
-// manager's requested-hardware projector: a pinned snapshot is carried forward
-// unchanged, and an unresolvable fixture profile fails the phase rather than
-// producing a guessed request.
-func withRequestedHardware(claim *fleetv1.Machine, profile *fleetv1.MachineProfile, status fleetv1.MachineStatus) (fleetv1.MachineStatus, error) {
-	requested := claim.Status.RequestedHardware
+// manager's requested-hardware projector.
+func withRequestedHardware(machine *fleetv1.Machine, profile *fleetv1.MachineProfile, status fleetv1.MachineStatus) (fleetv1.MachineStatus, error) {
+	requested := machine.Status.RequestedHardware
 	if requested == nil {
 		var err error
-		if requested, err = controller.ResolveRequestedHardware(claim, profile); err != nil {
+		if requested, err = controller.ResolveRequestedHardware(machine, profile); err != nil {
 			return status, fmt.Errorf("resolve requested hardware: %w", err)
 		}
 	}
 	status.RequestedHardware = requested
-	status.Conditions = append(status.Conditions, condition(controller.ConditionRequestResolved, metav1.ConditionTrue, claim.Generation, controller.ReasonRequestResolved, "Requested hardware is pinned from the fixture MachineProfile."))
+	status.Conditions = append(status.Conditions, condition(controller.ConditionRequestResolved, metav1.ConditionTrue, machine.Generation, controller.ReasonRequestResolved, "Requested hardware is pinned from the fixture MachineProfile."))
 	return status, nil
 }
 
-func (r Runner) projectBoundMachine(ctx context.Context, claim *fleetv1.Machine, profile *fleetv1.MachineProfile, record *controller.AssetRecord, observedAt time.Time) error {
-	observed := metav1.NewTime(observedAt.UTC())
-	status := fleetv1.MachineStatus{Phase: "Ready", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: r.Options.LocationName}}, AcceptedProfileRef: &fleetv1.LocalReference{Name: r.Options.ProfileName}, AllocatedHardware: &fleetv1.AllocatedHardwareStatus{ObservedAt: &observed, Hardware: record.Hardware}, Power: &fleetv1.PowerStatus{State: "Off"}, Conditions: []metav1.Condition{condition("Accepted", metav1.ConditionTrue, claim.Generation, "SyntheticFixtureAccepted", "This standalone fixture does not represent Milo admission."), condition("Bound", metav1.ConditionTrue, claim.Generation, "MachineAllocationCommitted", "Private custody contains the immutable allocation."), condition("NetworkReady", metav1.ConditionTrue, claim.Generation, "NoAttachmentsRequired", "No network interfaces were requested."), condition("Ready", metav1.ConditionTrue, claim.Generation, "PoweredOffHandoff", "Synthetic powered-off handoff is ready.")}}
-	return r.writeClaimStatus(ctx, claim, profile, status)
+func (r Runner) projectBound(ctx context.Context, c claim, profile *fleetv1.MachineProfile, bound *fleetv1.MachineAllocation) error {
+	observed := metav1.NewTime(r.Now().UTC())
+	status := fleetv1.MachineStatus{Phase: "Ready", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: r.Options.LocationName}}, AcceptedProfileRef: &fleetv1.LocalReference{Name: r.Options.ProfileName}, AllocatedHardware: &fleetv1.AllocatedHardwareStatus{ObservedAt: &observed, Hardware: bound.Spec.Hardware}, Conditions: []metav1.Condition{
+		condition("Accepted", metav1.ConditionTrue, c.claim.Generation, "SyntheticFixtureAccepted", "This standalone fixture does not represent Milo admission."),
+		condition("Bound", metav1.ConditionTrue, c.claim.Generation, "MachineAllocationActive", "Device custody names this Machine's allocation."),
+		condition("NetworkReady", metav1.ConditionTrue, c.claim.Generation, "NoAttachmentsRequired", "No network interfaces were requested."),
+		condition("Ready", metav1.ConditionTrue, c.claim.Generation, "PoweredOffHandoff", "Synthetic powered-off handoff is ready."),
+	}}
+	if err := r.writeStatus(ctx, c.claim, profile, status); err != nil {
+		return err
+	}
+	return r.projectPower(ctx, c.machine)
 }
 
-func (r Runner) projectPendingClaim(ctx context.Context, claim *fleetv1.Machine, profile *fleetv1.MachineProfile, reason, message string) error {
-	status := fleetv1.MachineStatus{Phase: "Pending", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: r.Options.LocationName}}, Conditions: []metav1.Condition{condition("Accepted", metav1.ConditionTrue, claim.Generation, "SyntheticFixtureAccepted", "This standalone fixture does not represent Milo admission."), condition("Bound", metav1.ConditionFalse, claim.Generation, reason, message), condition("Ready", metav1.ConditionFalse, claim.Generation, reason, message)}}
-	return r.writeClaimStatus(ctx, claim, profile, status)
+func (r Runner) projectPending(ctx context.Context, c claim, profile *fleetv1.MachineProfile, reason, message string) error {
+	status := fleetv1.MachineStatus{Phase: "Pending", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: r.Options.LocationName}}, Conditions: []metav1.Condition{
+		condition("Accepted", metav1.ConditionTrue, c.claim.Generation, "SyntheticFixtureAccepted", "This standalone fixture does not represent Milo admission."),
+		condition("Bound", metav1.ConditionFalse, c.claim.Generation, reason, message),
+		condition("Ready", metav1.ConditionFalse, c.claim.Generation, reason, message),
+	}}
+	return r.writeStatus(ctx, c.claim, profile, status)
 }
 
-func (r Runner) writeClaimStatus(ctx context.Context, claim *fleetv1.Machine, profile *fleetv1.MachineProfile, status fleetv1.MachineStatus) error {
-	status, err := withRequestedHardware(claim, profile, status)
+// writeStatus keeps status.power, which only the manager's power projector
+// writes.
+func (r Runner) writeStatus(ctx context.Context, machine *fleetv1.Machine, profile *fleetv1.MachineProfile, status fleetv1.MachineStatus) error {
+	status, err := withRequestedHardware(machine, profile, status)
 	if err != nil {
 		return err
 	}
-	claim.Status = status
-	return r.Client.Status().Update(ctx, claim)
-}
-
-func (r Runner) projectMachineOccupied(ctx context.Context, machine *fleetv1.MachineCapacity) error {
-	apiMeta.SetStatusCondition(&machine.Status.Conditions, condition("Available", metav1.ConditionFalse, machine.Generation, "Allocated", "Private custody records an active allocation."))
+	status.Power = machine.Status.Power
+	machine.Status = status
 	return r.Client.Status().Update(ctx, machine)
 }
 
-func (r Runner) removeExactFinalizer(ctx context.Context, key client.ObjectKey, uid types.UID) error {
+// projectPower runs the manager's power projector for a fixture Machine.
+func (r Runner) projectPower(ctx context.Context, machine allocation.Machine) error {
+	return manager.ProjectPower(ctx, r.Client, r.Client, r.Options.ProviderNamespace, machine)
+}
+
+func (r Runner) projectOccupied(ctx context.Context, capacity *fleetv1.MachineCapacity) error {
+	apiMeta.SetStatusCondition(&capacity.Status.Conditions, condition("Available", metav1.ConditionFalse, capacity.Generation, "Allocated", "Device custody names an active allocation."))
+	return r.Client.Status().Update(ctx, capacity)
+}
+
+func (r Runner) removeFinalizer(ctx context.Context, key client.ObjectKey, uid types.UID) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var current fleetv1.Machine
 		if err := r.Client.Get(ctx, key, &current); apierrors.IsNotFound(err) {
@@ -343,85 +420,20 @@ func (r Runner) removeExactFinalizer(ctx context.Context, key client.ObjectKey, 
 			return err
 		}
 		if current.UID != uid {
-			return fmt.Errorf("%w: claim name was recreated before finalizer removal", controller.ErrRecordInvalid)
+			return errors.New("the claim name was recreated before finalizer removal")
 		}
-		if !contains(current.Finalizers, controller.MachineFinalizer) {
+		if !contains(current.Finalizers, allocation.MachineFinalizer) {
 			return nil
 		}
-		current.Finalizers = remove(current.Finalizers, controller.MachineFinalizer)
+		current.Finalizers = remove(current.Finalizers, allocation.MachineFinalizer)
 		return r.Client.Update(ctx, &current)
 	})
-}
-
-func (r Runner) requestExactDeletion(ctx context.Context, claim *fleetv1.Machine, uid types.UID, resourceVersion string) error {
-	if err := r.Client.Delete(ctx, claim, client.Preconditions{UID: &uid, ResourceVersion: &resourceVersion}); err != nil && !apierrors.IsNotFound(err) {
-		return err
-	}
-	var current fleetv1.Machine
-	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(claim), &current); apierrors.IsNotFound(err) {
-		claim.UID = ""
-		return nil
-	} else if err != nil {
-		return err
-	}
-	if current.UID != uid {
-		return fmt.Errorf("%w: claim name was recreated during release", controller.ErrRecordInvalid)
-	}
-	*claim = current
-	return nil
-}
-
-func (r Runner) loadEvidence(ctx context.Context, machine *fleetv1.MachineCapacity, create bool) (syntheticEvidence, error) {
-	name := evidenceName(machine.UID)
-	var secret corev1.Secret
-	err := r.Client.Get(ctx, client.ObjectKey{Namespace: r.Options.PrivateNamespace, Name: name}, &secret)
-	if apierrors.IsNotFound(err) && create {
-		record := syntheticEvidence{
-			SchemaVersion: 1, MachineNamespace: machine.Namespace, MachineName: machine.Name,
-			MachineUID: machine.UID, Location: r.Options.LocationName, ObservedAt: r.Now().UTC(),
-			Hardware: fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 24, Threads: 48, Sockets: 2}, Memory: fleetv1.HardwareMemory{Capacity: "128Gi"}},
-		}
-		data, marshalErr := json.Marshal(record)
-		if marshalErr != nil {
-			return syntheticEvidence{}, marshalErr
-		}
-		secret = corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Options.PrivateNamespace, Labels: map[string]string{"fleet.datumapis.com/private-record": "synthetic-evidence"}}, Data: map[string][]byte{"record.json": data}}
-		if createErr := r.Client.Create(ctx, &secret); apierrors.IsAlreadyExists(createErr) {
-			return r.loadEvidence(ctx, machine, false)
-		} else if createErr != nil {
-			return syntheticEvidence{}, createErr
-		}
-		return record, nil
-	}
-	if err != nil {
-		return syntheticEvidence{}, err
-	}
-	var record syntheticEvidence
-	if jsonErr := json.Unmarshal(secret.Data["record.json"], &record); jsonErr != nil {
-		return syntheticEvidence{}, fmt.Errorf("decode retained synthetic evidence: %w", jsonErr)
-	}
-	if record.SchemaVersion != 1 || record.MachineNamespace != machine.Namespace || record.MachineName != machine.Name || record.MachineUID != machine.UID || record.Location != r.Options.LocationName || record.ObservedAt.IsZero() || record.ObservedAt.After(r.Now()) || r.Now().Sub(record.ObservedAt) > r.Options.EvidenceAge || record.Hardware.CPU.Architecture != "amd64" || record.Hardware.CPU.Cores != 24 || record.Hardware.Memory.Capacity != "128Gi" {
-		return syntheticEvidence{}, fmt.Errorf("%w: retained synthetic evidence differs from configured fixture", controller.ErrRecordInvalid)
-	}
-	return record, nil
-}
-
-func evidenceName(uid types.UID) string {
-	sum := sha256.Sum256([]byte(uid))
-	return "fleet-evidence-" + hex.EncodeToString(sum[:8])
 }
 
 func condition(t string, s metav1.ConditionStatus, g int64, reason, message string) metav1.Condition {
 	return metav1.Condition{Type: t, Status: s, ObservedGeneration: g, LastTransitionTime: metav1.Now(), Reason: reason, Message: message}
 }
-func imageDigest(value string) string {
-	for i := 0; i < len(value); i++ {
-		if value[i] == '@' {
-			return value[i+1:]
-		}
-	}
-	return ""
-}
+
 func contains(v []string, w string) bool {
 	for _, x := range v {
 		if x == w {
@@ -430,6 +442,7 @@ func contains(v []string, w string) bool {
 	}
 	return false
 }
+
 func remove(v []string, w string) []string {
 	out := v[:0]
 	for _, x := range v {

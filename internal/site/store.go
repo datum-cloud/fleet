@@ -201,6 +201,24 @@ func (s *Store) Current(device string) (fence, stopped int64, err error) {
 	return fence, stopped, err
 }
 
+// Peek reads a Device's fences without its lock, for readers on a read-only
+// mount such as the boot server. Every write replaces the state file
+// atomically, so a reader sees one complete state or none.
+func (s *Store) Peek(device string) (fence, stopped int64, err error) {
+	data, err := os.ReadFile(filepath.Join(s.deviceDir(device), "state.json"))
+	if os.IsNotExist(err) {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	var state deviceState
+	if err := json.Unmarshal(data, &state); err != nil || state.Device != device {
+		return 0, 0, errors.New("site: the Device's state is unreadable")
+	}
+	return state.Fence, state.Stopped, nil
+}
+
 // ConfirmStopped records that no worker below fence still runs for the
 // Device. It is refused if fence is no longer the stored fence.
 func (s *Store) ConfirmStopped(device string, fence int64) error {

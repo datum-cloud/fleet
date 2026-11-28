@@ -16,10 +16,14 @@ spec:
             - name: smoke
               image: ghcr.io/datum-cloud/fleet-standalone-smoke:v0.0.0-dev
               imagePullPolicy: Never
-              args: [--phase=allocate, --runtime-token-file=/var/run/fleet/token]
+              args: [--phase=allocate, --coordinator-token-file=/var/run/fleet/coordinator/token, --release-token-file=/var/run/fleet/release/token]
               securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
-              volumeMounts: [{name: runtime-token, mountPath: /var/run/fleet, readOnly: true}]
-          volumes: [{name: runtime-token, secret: {secretName: fleet-simulator-runtime, defaultMode: 0440}}]
+              volumeMounts:
+                - {name: coordinator-token, mountPath: /var/run/fleet/coordinator, readOnly: true}
+                - {name: release-token, mountPath: /var/run/fleet/release, readOnly: true}
+          volumes:
+            - {name: coordinator-token, secret: {secretName: fleet-custody-coordinator-token, defaultMode: 0440, items: [{key: token, path: token}]}}
+            - {name: release-token, secret: {secretName: fleet-release-controller-token, defaultMode: 0440, items: [{key: token, path: token}]}}
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -39,10 +43,14 @@ spec:
             - name: smoke
               image: ghcr.io/datum-cloud/fleet-standalone-smoke:v0.0.0-dev
               imagePullPolicy: Never
-              args: [--phase=install, --runtime-token-file=/var/run/fleet/token]
+              args: [--phase=install, --coordinator-token-file=/var/run/fleet/coordinator/token, --release-token-file=/var/run/fleet/release/token]
               securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
-              volumeMounts: [{name: runtime-token, mountPath: /var/run/fleet, readOnly: true}]
-          volumes: [{name: runtime-token, secret: {secretName: fleet-simulator-runtime, defaultMode: 0440}}]
+              volumeMounts:
+                - {name: coordinator-token, mountPath: /var/run/fleet/coordinator, readOnly: true}
+                - {name: release-token, mountPath: /var/run/fleet/release, readOnly: true}
+          volumes:
+            - {name: coordinator-token, secret: {secretName: fleet-custody-coordinator-token, defaultMode: 0440, items: [{key: token, path: token}]}}
+            - {name: release-token, secret: {secretName: fleet-release-controller-token, defaultMode: 0440, items: [{key: token, path: token}]}}
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -62,10 +70,14 @@ spec:
             - name: smoke
               image: ghcr.io/datum-cloud/fleet-standalone-smoke:v0.0.0-dev
               imagePullPolicy: Never
-              args: [--phase=reinstall, --runtime-token-file=/var/run/fleet/token]
+              args: [--phase=reinstall, --coordinator-token-file=/var/run/fleet/coordinator/token, --release-token-file=/var/run/fleet/release/token]
               securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
-              volumeMounts: [{name: runtime-token, mountPath: /var/run/fleet, readOnly: true}]
-          volumes: [{name: runtime-token, secret: {secretName: fleet-simulator-runtime, defaultMode: 0440}}]
+              volumeMounts:
+                - {name: coordinator-token, mountPath: /var/run/fleet/coordinator, readOnly: true}
+                - {name: release-token, mountPath: /var/run/fleet/release, readOnly: true}
+          volumes:
+            - {name: coordinator-token, secret: {secretName: fleet-custody-coordinator-token, defaultMode: 0440, items: [{key: token, path: token}]}}
+            - {name: release-token, secret: {secretName: fleet-release-controller-token, defaultMode: 0440, items: [{key: token, path: token}]}}
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -85,7 +97,11 @@ spec:
             - name: smoke
               image: ghcr.io/datum-cloud/fleet-standalone-smoke:v0.0.0-dev
               imagePullPolicy: Never
-              args: [--phase=release, --runtime-token-file=/var/run/fleet/token]
+              args: [--phase=release, --coordinator-token-file=/var/run/fleet/coordinator/token, --release-token-file=/var/run/fleet/release/token]
               securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
-              volumeMounts: [{name: runtime-token, mountPath: /var/run/fleet, readOnly: true}]
-          volumes: [{name: runtime-token, secret: {secretName: fleet-simulator-runtime, defaultMode: 0440}}]
+              volumeMounts:
+                - {name: coordinator-token, mountPath: /var/run/fleet/coordinator, readOnly: true}
+                - {name: release-token, mountPath: /var/run/fleet/release, readOnly: true}
+          volumes:
+            - {name: coordinator-token, secret: {secretName: fleet-custody-coordinator-token, defaultMode: 0440, items: [{key: token, path: token}]}}
+            - {name: release-token, secret: {secretName: fleet-release-controller-token, defaultMode: 0440, items: [{key: token, path: token}]}}

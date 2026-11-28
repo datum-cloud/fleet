@@ -63,26 +63,6 @@ func TestValidateExactHardwareRejectsAbsentOrInexactValues(t *testing.T) {
 	}
 }
 
-func TestAllocatorMatchesOnlyExactCPUAndMemory(t *testing.T) {
-	observed := fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 24}, Memory: fleetv1.HardwareMemory{Capacity: "128Gi"}}
-	if !matches(exactProfile("p", 1, 24, "128Gi").Spec, observed) {
-		t.Fatal("exact request did not match equal capacity")
-	}
-	if !matches(exactProfile("p", 1, 24, "131072Mi").Spec, observed) {
-		t.Fatal("equal memory in another unit did not match")
-	}
-	for name, spec := range map[string]fleetv1.MachineProfileSpec{
-		"fewer cores":  exactProfile("p", 1, 8, "128Gi").Spec,
-		"more cores":   exactProfile("p", 1, 32, "128Gi").Spec,
-		"less memory":  exactProfile("p", 1, 24, "64Gi").Spec,
-		"inexact zero": exactProfile("p", 1, 0, "128Gi").Spec,
-	} {
-		if matches(spec, observed) {
-			t.Errorf("%s matched 24-core 128Gi capacity", name)
-		}
-	}
-}
-
 func TestSameRequestedHardwareComparesPinnedValues(t *testing.T) {
 	pinned := &fleetv1.RequestedHardwareStatus{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: 8}, Memory: fleetv1.MemoryRequirement{Capacity: "32Gi"}}
 	if !SameRequestedHardware(pinned, exactProfile("p", 1, 8, "32768Mi").Spec) {

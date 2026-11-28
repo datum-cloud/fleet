@@ -15,11 +15,11 @@ require_count() {
   fi
 }
 
-require_count 5 'runAsUser: 65532'
-require_count 5 'runAsGroup: 65532'
-require_count 5 'fsGroup: 65532'
-require_count 5 'defaultMode: 288'
-require_count 5 'imagePullPolicy: Never'
+require_count 6 'runAsUser: 65532'
+require_count 6 'runAsGroup: 65532'
+require_count 6 'fsGroup: 65532'
+require_count 11 'defaultMode: 288'
+require_count 6 'imagePullPolicy: Never'
 require_count 4 'suspend: true'
 require_count 1 'name: fleet-smoke-reinstall'
 require_count 1 '--phase=reinstall'

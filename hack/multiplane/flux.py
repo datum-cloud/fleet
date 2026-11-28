@@ -58,13 +58,13 @@ SOURCE_DIRS = ('config/multiplane', 'config/site')
 # Expected Flux Kustomizations per cluster (namespace/name), besides the root.
 EXPECTED = {
     'platform': ['flux-system/milo-provider', 'flux-system/milo-consumer-a', 'flux-system/milo-consumer-b'],
-    'hub': ['flux-system/karmada', 'flux-system/fleet-host', 'karmada-system/fleet-karmada-coordination',
+    'hub': ['flux-system/karmada', 'karmada-system/fleet-karmada-coordination',
             'karmada-system/fleet-karmada-api', 'karmada-system/fleet-karmada-members'],
     'cell': ['flux-system/fleet-coordination', 'flux-system/fleet-federation', 'flux-system/kro',
              'flux-system/fleet-site-base', 'flux-system/fleet-site-graph'],
 }
 HELMRELEASES = {'hub': ['flux-system/karmada'], 'cell': ['flux-system/kro']}
-# Cell site layers present once the scoped asset is known (revision 2 onwards).
+# Cell site layers present from revision 2 onwards.
 SITE_LAYERS = ['flux-system/fleet-site-services', 'flux-system/fleet-site-dispatch']
 # A fixed ClusterIP in the static band (first 256 addresses) of kind's default
 # 10.96.0.0/16 Service range, so a recreated boot Service keeps its origin.
@@ -185,10 +185,7 @@ def tools(args):
 
 def environment(state):
     s = pathlib.Path(state)
-    env = json.loads((s / 'gitops-environment.json').read_text())
-    if (s / 'scoped-asset').exists():
-        env['scopedAsset'] = (s / 'scoped-asset').read_text().strip()
-    return env
+    return json.loads((s / 'gitops-environment.json').read_text())
 
 
 def sync_objects(cluster, url):
@@ -274,7 +271,7 @@ def stage(args):
                     data.update(FLEET_BMC_IMAGE=env['bmcImage'], FLEET_BMC_SERVICE_IP=BMC_SERVICE_IP)
             if args.site != 'absent':
                 resources.insert(2, '../../config/multiplane/clusters/cell-site')
-                data.update(FLEET_SCOPED_ASSET=env['scopedAsset'], FLEET_SITE_IMAGE=env['siteImage'], FLEET_BOOT_SERVICE_IP=BOOT_SERVICE_IP,
+                data.update(FLEET_SITE_IMAGE=env['siteImage'], FLEET_BOOT_SERVICE_IP=BOOT_SERVICE_IP,
                             FLEET_SITE_DISPATCH='true' if args.site == 'dispatch' else 'false')
             if args.bad_kro_chart:
                 patches.append(child_patch('kro', [{'target': {'kind': 'OCIRepository', 'name': 'kro-chart'},
@@ -678,7 +675,7 @@ def verify(args):
     for cluster, kind, ns, name in (('cell', 'namespace', None, 'fleet-site'), ('cell', 'namespace', None, 'fleet-coordination'),
                                     ('cell', 'crd', None, 'machineallocationhandoffs.coordination.fleet.datumapis.com'),
                                     ('cell', 'resourcegraphdefinition', None, RGD), ('cell', DISPATCHER[0], SITE, DISPATCHER[1]),
-                                    ('cell', 'storageclass', None, 'fleet-site-retain'), ('hub', 'namespace', None, 'fleet-system-private')):
+                                    ('cell', 'storageclass', None, 'fleet-site-retain')):
         o = kget(s, cluster, *(['-n', ns] if ns else []), 'get', kind, name)
         value = o['metadata'].get('annotations', {}).get('kustomize.toolkit.fluxcd.io/prune')
         protected['%s/%s/%s' % (cluster, kind, name)] = value
@@ -728,12 +725,13 @@ def site_facts(state):
     jobs = sorted((j['metadata']['name'], j['metadata']['uid']) for j in kget(s, 'cell', '-n', 'fleet-site', 'get', 'jobs')['items'])
     pvc = kget(s, 'cell', '-n', 'fleet-site', 'get', 'pvc', 'fleet-site-state')
     pv = kget(s, 'cell', 'get', 'pv', pvc['spec']['volumeName'])
-    journal = kubectl(s, 'cell', '-n', 'fleet-site', 'exec', 'deploy/fleet-site-runtime', '-c', 'libvirt', '--', 'cat', '/var/lib/fleet-local/journal.json').stdout
-    secrets = kget(s, 'hub', '-n', 'fleet-system-private', 'get', 'secrets')['items']
-    custody = hashlib.sha256(json.dumps(sorted((i['metadata']['name'], i['metadata']['uid'], i['metadata']['resourceVersion']) for i in secrets)).encode()).hexdigest()
+    # The provider project's custody and the site store's state for the
+    # Device (its fences and journal).
+    records, custody = harness.custody_digest(s)
+    store = kubectl(s, 'cell', '-n', 'fleet-site', 'exec', 'deploy/fleet-site-runtime', '-c', 'libvirt', '--', 'cat', harness.STATE_PATH).stdout
     return {'jobs': jobs, 'pvcUID': pvc['metadata']['uid'], 'pvUID': pv['metadata']['uid'], 'pvPhase': pv['status'].get('phase'),
-            'reclaimPolicy': pv['spec']['persistentVolumeReclaimPolicy'], 'journalSHA256': hashlib.sha256(journal.encode()).hexdigest(),
-            'custodyRecords': len(secrets), 'custodyDigest': custody}
+            'reclaimPolicy': pv['spec']['persistentVolumeReclaimPolicy'], 'siteStoreSHA256': hashlib.sha256(store.encode()).hexdigest(),
+            'custodyRecords': records, 'custodyDigest': custody}
 
 
 def same_facts(before, after, what):
@@ -862,6 +860,29 @@ def worker_objects(state):
                   for o in kget(s, 'cell', '-n', ns, 'get', kind)['items'] if o['metadata']['name'].startswith('w-op-'))
 
 
+def handoff_outcome(s, handoff):
+    """The install handoff's outcome on the cell. Once the coordinator
+    accepted the result it labels the handoff answered and the cell deletes
+    its copy, so an answered handoff counts as Succeeded only when the
+    provider project's operation for it succeeded."""
+    obj = kget(s, 'cell', '-n', COORD, 'get', 'machineallocationhandoff', handoff)
+    result = obj.get('status', {}).get('observation', {}).get('result')
+    if result:
+        return result.get('phase')
+    if obj['metadata'].get('labels', {}).get('coordination.fleet.datumapis.com/answered') != 'true':
+        return None
+    operation = json.loads(obj['spec']['assignmentJSON'])['operation']
+    kind = {'DeviceInstallation': 'deviceinstallation', 'DeviceWipe': 'devicewipe'}[operation['kind']]
+    r = subprocess.run(['kubectl', '--kubeconfig', str(s / 'provider' / 'bootstrap-project.json'), '-n', 'fleet-provider', 'get', kind, operation['name'], '-o', 'json'], text=True, capture_output=True)
+    if r.returncode != 0:
+        return None
+    current = json.loads(r.stdout)
+    # The operation admitted at the handoff's fence; a same-name operation
+    # created later has another fence.
+    status = current.get('status', {})
+    return status.get('phase') if status.get('fence') == json.loads(obj['spec']['assignmentJSON'])['fence'] else None
+
+
 def graph_lifecycle(args):
     """Deleting the dispatcher instance removes only kro's per-operation objects.
 
@@ -879,7 +900,7 @@ def graph_lifecycle(args):
     if sorted(k for k, n, _ in worker_objects(s) if n == 'w-' + handoff) != want:
         die('expected one kro-written Job, ServiceAccount, Role and RoleBinding for the install handoff: %s' % worker_objects(s))
     before, uids, workers = site_facts(s), shared_uids(s), worker_objects(s)
-    status = kget(s, 'cell', '-n', COORD, 'get', 'machineallocationhandoff', handoff).get('status', {}).get('observation', {}).get('result', {}).get('phase')
+    status = handoff_outcome(s, handoff)
     if status != 'Succeeded':
         die('install handoff is not terminal before the graph lifecycle: %s' % status)
     old = kget(s, 'cell', '-n', SITE, 'get', DISPATCHER[0], DISPATCHER[1])
@@ -920,7 +941,7 @@ def graph_lifecycle(args):
     owners_after, problems = ownership(s, snaps)
     if problems:
         die('ownership after the graph lifecycle:\n  ' + '\n  '.join(problems))
-    status_after = kget(s, 'cell', '-n', COORD, 'get', 'machineallocationhandoff', handoff).get('status', {}).get('observation', {}).get('result', {}).get('phase')
+    status_after = handoff_outcome(s, handoff)
     if status_after != 'Succeeded':
         die('install handoff lost its terminal observation across the graph lifecycle: %s' % status_after)
     # kro deletes Jobs without a propagation policy, so batch/v1 orphans their

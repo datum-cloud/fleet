@@ -60,7 +60,7 @@ func TestExtensionSeams(t *testing.T) {
 		// future provider kind would.
 		e.coord.Registry.Kind("DeviceInstallation").Supersedes = true
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-scope"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-scope"); err != nil {
 			t.Fatal(err)
 		}
 		running := e.installation(device, "alloc-scope", "request-running")
@@ -130,7 +130,7 @@ func TestExtensionSeams(t *testing.T) {
 		settling := e.staffOp(device, "ok")
 		e.settle(device.Name)
 		e.requirePhase(settling, ops.PhaseAdmitted, "")
-		if active := e.custody(device.Name).Spec.ActiveOperation; active.Settles == nil || active.Settles.UID != hold.UID {
+		if active := e.custody(device.Name).Spec.ActiveOperation; active.Settles == nil || *active.Settles != heldReference(hold) {
 			t.Fatalf("active = %+v", active)
 		}
 		if err := e.result(device.Name, ops.PhaseSucceeded, ""); err != nil {
@@ -154,7 +154,7 @@ func TestExtensionSeams(t *testing.T) {
 		other := fresh()
 		custody := e.custody(other.Name)
 		custody.Spec.Holder = ops.Holder{Type: ops.HolderService}
-		custody.Spec.RecoveryHold = &ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: testProviderKind, Name: "alloc-x-test-a", UID: "00000000-0000-4000-8000-00000000abcd"}, Fence: custody.Spec.Fence, Since: metav1.NewTime(e.clock.Now()), Reason: "Test"}
+		custody.Spec.RecoveryHold = &ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: testProviderKind, Name: "alloc-x-test-a"}, Fence: custody.Spec.Fence, Since: metav1.NewTime(e.clock.Now()), Reason: "Test"}
 		if err := e.admin.Update(e.ctx, custody); err != nil {
 			t.Fatal(err)
 		}
@@ -185,7 +185,7 @@ func TestExtensionSeams(t *testing.T) {
 		// unless it declares itself Retryable.
 		e.coord.Registry.Kind("DeviceWipe").Retryable = false
 		wiped := fresh()
-		if err := e.coord.Claim(e.ctx, wiped.Name, "alloc-nr"); err != nil {
+		if err := e.coord.Claim(e.ctx, wiped.Name, wiped.UID, "alloc-nr"); err != nil {
 			t.Fatal(err)
 		}
 		if err := e.coord.BeginRelease(e.ctx, wiped.Name, "alloc-nr"); err != nil {

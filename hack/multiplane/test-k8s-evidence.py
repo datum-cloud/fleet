@@ -5,6 +5,7 @@ Every helper command the live acceptance uses is executed once on the success
 path and on representative failure paths, so call-signature and data-shape
 mistakes fail here instead of mid-run. Never contacts a cluster.
 """
+import hashlib
 import json
 import os
 import pathlib
@@ -40,12 +41,19 @@ if args[:3] == ['config', 'view', '--raw']:
     emit({'clusters': [{'cluster': {}}], 'contexts': [{'context': {}}], 'users': []})
 if 'exec' in args:
     cmd = args[args.index('--') + 1:]
-    if cmd[:1] == ['cat'] and cmd[1].endswith('journal.json'): print(world['journal']); sys.exit(0)
+    if cmd[:1] == ['cat'] and cmd[1].endswith('/state.json'): print(world['store']); sys.exit(0)
+    if cmd[:1] == ['test']: sys.exit(0 if cmd[-1].rsplit('/', 1)[1] in world.get('results', []) else 1)
     if cmd[:1] == ['cat'] and '/qemu/' in cmd[1]: print(world['qemu']); sys.exit(0)
     if cmd[:1] == ['virsh']: print(''); sys.exit(0)
     sys.exit(1)
 if args[:1] == ['create']:
-    obj = json.loads(sys.stdin.read()); world.setdefault('created', []).append(obj['metadata']['name'])
+    obj = json.loads(sys.stdin.read())
+    # The API refuses a handoff field it does not define.
+    if 'credential' in obj.get('spec', {}) and not world.get('acceptCredential'):
+        print('Error from server (BadRequest): strict decoding error: unknown field "spec.credential"', file=sys.stderr); sys.exit(1)
+    if obj['metadata']['name'] in [h['metadata']['name'] for h in world['handoffs']] + world.get('created', []):
+        print('Error from server (AlreadyExists): exists', file=sys.stderr); sys.exit(1)
+    world.setdefault('created', []).append(obj['metadata']['name'])
     json.dump(world, open(os.environ['FAKE_WORLD'], 'w')); sys.exit(0)
 if 'delete' in args:
     name = args[args.index('delete') + 2]
@@ -64,9 +72,14 @@ if kind == 'pvc': emit({'metadata': {'uid': 'pvc-uid'}, 'spec': {'volumeName': '
 if kind == 'pv': emit({'metadata': {'uid': 'pv-uid'}, 'spec': {'persistentVolumeReclaimPolicy': 'Retain'}})
 if kind == 'machine':
     emit(world['machines'][config.split('/')[-2]])
+if kind == 'role' and ns() == 'fleet-site-credentials' and name not in world.get('credentialRoles', []):
+    print('NotFound', file=sys.stderr); sys.exit(1)
 if kind == 'role': emit({'metadata': {'labels': {'kro.run/node-id': 'workerRoles'}}, 'rules': [{'resourceNames': [world['handoff']], 'verbs': ['get']}]})
 if kind == 'machineallocationhandoffs': emit({'items': world['handoffs']})
-if kind == 'machineallocationhandoff': emit({'metadata': {'name': name}, 'spec': {}})
+if kind == 'roles': emit({'items': world.get('roles', [])})
+if kind == 'machineallocationhandoff' and name not in [h['metadata']['name'] for h in world['handoffs']] + world.get('created', []) + [world['handoff']]:
+    print('NotFound', file=sys.stderr); sys.exit(1)
+if kind == 'machineallocationhandoff': emit({'metadata': {'name': name}, 'spec': {}, 'status': world.get('statuses', {}).get(name)})
 sys.exit(1)
 '''.replace('#!PYTHON', '#!' + sys.executable)
 
@@ -92,13 +105,22 @@ with tempfile.TemporaryDirectory() as tmp:
     (state / 'prefix').write_text('fleet-mp-1234abcd\n')
     h = 'op-' + 'a' * 40
     (state / 'install-handoff').write_text(h + '\n')
-    request = {'id': 'install-1', 'kind': 'install', 'assetID': 'x', 'bindingID': 'b', 'epoch': 1, 'fenceToken': 'F' * 32}
-    world = {'handoff': h, 'journal': '{"operations":{}}', 'qemu': 'x: starting up a\nx: starting up b\n',
+    device = 'fleet-provider/synthetic-device-central-01'
+    # The latest delivered assignment: the release wipe at fence 2.
+    wipe = {'device': device, 'operation': {'kind': 'DeviceWipe', 'name': 'alloc-0123456789abcdef-wipe-1'}, 'fence': 2,
+            'admittedAt': '2026-01-01T00:00:00Z', 'deadline': '2026-01-01T01:00:00Z', 'snapshot': {}, 'inputDigest': 'sha256:' + '0' * 64, 'inputs': {}}
+    wipe_name = 'op-' + hashlib.sha256(('%s/devicewipe.alloc-0123456789abcdef-wipe-1.2' % device).encode()).hexdigest()[:40]
+    install = dict(wipe, operation={'kind': 'DeviceInstallation', 'name': 'alloc-0123456789abcdef-install-0123456789ab'}, fence=1)
+    install_key = 'deviceinstallation.alloc-0123456789abcdef-install-0123456789ab.1'
+    store = {'device': device, 'fence': 2, 'stopped': 2, 'journal': [{'operation': install_key, 'fence': 1, 'step': 'prepare-disk', 'state': 'Done', 'at': 'x'}]}
+    world = {'handoff': h, 'store': json.dumps(store), 'qemu': 'x: starting up a\nx: starting up b\n',
              'jobs': {'w-' + h: job('w-' + h, 'job-2', [('Complete', 'CompletionsReached')], succeeded=1)},
              'pods': [pod('p2', 'pod-2', h, 'job-2', 'Succeeded', 0)] + [pod(d, d + '-uid', None, '', 'Running', app=d) for d in ('fleet-site-runtime', 'fleet-site-boot', 'fleet-site-observer')],
              'machines': {'consumer-a': {'status': {'phase': 'Ready', 'conditions': [{'type': 'Bound', 'status': 'True'}, {'type': 'Ready', 'status': 'True'}]}},
                           'consumer-b': {'status': {'phase': 'Bound', 'conditions': [{'type': 'Bound', 'status': 'True'}]}}},
-             'handoffs': [{'metadata': {'name': h}, 'spec': {'cell': 'fleet-mp-1234abcd-cell', 'requestJSON': json.dumps(request)}}]}
+             'statuses': {h: {'observation': {'cell': 'fleet-mp-1234abcd-cell', 'result': {'phase': 'Succeeded', 'operation': install['operation'], 'fence': 1}}}},
+             'handoffs': [{'metadata': {'name': h}, 'spec': {'cell': 'fleet-mp-1234abcd-cell', 'device': device, 'assignmentJSON': json.dumps(install)}},
+                          {'metadata': {'name': wipe_name}, 'spec': {'cell': 'fleet-mp-1234abcd-cell', 'device': device, 'assignmentJSON': json.dumps(wipe)}}]}
     wpath = tmp / 'world.json'
     env = dict(os.environ, PATH=str(bindir) + os.pathsep + os.environ['PATH'], FAKE_WORLD=str(wpath))
 
@@ -119,24 +141,28 @@ with tempfile.TemporaryDirectory() as tmp:
     check('job record', r.returncode == 0 and json.loads(r.stdout)['uid'] == 'job-2', r.stderr)
 
     # Interruption records.
-    ops = lambda stage: json.dumps([{'id': 'install-1', 'kind': 'install', 'stage': stage, 'phase': 'Unknown' if stage != 'done' else 'Succeeded'}])
-    (state / 'interrupt-observed.json').write_text(json.dumps({'operation': {'id': 'install-1', 'stage': 'installer-started', 'domain': 'd'}, 'domainRunning': True}))
-    (state / 'interrupt-after.json').write_text(ops('installer-started'))
+    ops = lambda stage: json.dumps([{'operation': install_key, 'fence': 1, 'kind': 'DeviceInstallation', 'stage': stage, 'stageState': 'Done',
+                                     'done': stage == 'disk-verified', 'phase': 'Succeeded' if stage == 'disk-verified' else None, 'steps': [[stage, 'Done']]}])
+    (state / 'interrupt-observed.json').write_text(json.dumps({'operation': {'operation': install_key, 'fence': 1, 'stage': 'installer-start', 'domain': 'd'}, 'domainRunning': True}))
+    (state / 'interrupt-after.json').write_text(ops('installer-start'))
     (state / 'interrupt-job-before-pod.json').write_text(json.dumps({'uid': 'job-1', 'failed': 0}))
     (state / 'interrupt-job-after-pod.json').write_text(json.dumps({'uid': 'job-1', 'failed': 1}))
     r = run('record-pod-interrupt', 'pod-0', 'pod-1')
     check('record-pod-interrupt', r.returncode == 0, r.stderr)
     (state / 'interrupt-job-before.json').write_text(ops('installer-verified'))
-    (state / 'interrupt-job-after.json').write_text(ops('disk-started'))
+    (state / 'interrupt-job-after.json').write_text(ops('disk-start'))
     r = run('record-job-interrupt', 'job-1', 'job-2', 'pod-1', 'pod-2')
     check('record-job-interrupt', r.returncode == 0, r.stderr)
-    (state / 'interrupt-job-before.json').write_text(ops('done'))
+    (state / 'interrupt-job-before.json').write_text(ops('disk-verified'))
     check('record-job-interrupt rejects finished install', run('record-job-interrupt', 'job-1', 'job-2', 'pod-1', 'pod-2').returncode != 0)
     (state / 'interrupt-job-before.json').write_text(ops('installer-verified'))
     run('record-job-interrupt', 'job-1', 'job-2', 'pod-1', 'pod-2')
-    (state / 'resume-after.json').write_text(ops('done'))
+    (state / 'resume-after.json').write_text(ops('disk-verified'))
     r = run('record-resume', h)
     check('record-resume', r.returncode == 0, r.stderr)
+    world['statuses'][h]['observation']['result']['fence'] = 2
+    check('record-resume rejects a result at another fence', run('record-resume', h).returncode != 0)
+    world['statuses'][h]['observation']['result']['fence'] = 1
 
     # Lifecycle: snapshot, replace site Pods and the Job, record.
     r = run('lifecycle-snapshot', h)
@@ -148,9 +174,9 @@ with tempfile.TemporaryDirectory() as tmp:
     (state / 'lifecycle-after.json').write_text(r.stdout)
     r = run('record-lifecycle', 'job-2', 'job-3')
     check('record-lifecycle', r.returncode == 0 and (state / 'evidence/lifecycle.json').exists(), r.stderr)
-    world['journal'] = '{"operations":{"changed":true}}'
+    world['store'] = json.dumps(dict(store, journal=store['journal'] + [{'operation': install_key, 'fence': 1, 'step': 'installer-start', 'state': 'Intended', 'at': 'y'}]))
     (state / 'lifecycle-after.json').write_text(run('lifecycle-snapshot', h).stdout)
-    check('record-lifecycle rejects journal change', run('record-lifecycle', 'job-2', 'job-3').returncode != 0)
+    check('record-lifecycle rejects a site store change', run('record-lifecycle', 'job-2', 'job-3').returncode != 0)
 
     # Worker RBAC probes.
     (state / 'worker.token').write_text('w' * 40)
@@ -158,15 +184,45 @@ with tempfile.TemporaryDirectory() as tmp:
     check('worker-rbac', r.returncode == 0 and (state / 'k8s-worker-rbac.json').exists(), r.stderr)
 
     # Delivery faults: create, verify failure by policy, prune.
+    # Before the fix the handoff defined a credential field, so the API took a
+    # forged one and kro granted that Secret. The fault refuses that state.
+    world['acceptCredential'] = True
+    check('delivery-faults fails when the API takes a handoff naming a credential', run('delivery-faults', 'create').returncode != 0)
+    world['acceptCredential'] = False
+    world['created'] = []
     r = run('delivery-faults', 'create')
     check('delivery-faults create', r.returncode == 0 and len(world.get('created', [])) == 3, r.stderr)
-    for fault in ('duplicate', 'wrong-cell', 'stale-epoch'):
-        name = (state / ('fault-%s-handoff' % fault)).read_text().strip()
-        check('fault name fits worker names: ' + fault, len('w-' + name) <= 63, name)
+    faults = json.loads((state / 'fault-handoffs.json').read_text())
+    check('duplicate refused by the API', faults['duplicate'] == {'handoff': wipe_name, 'refused': 'AlreadyExists'}, str(faults['duplicate']))
+    check('a handoff naming another Device\'s credential is refused by the API', faults['foreign-credential']['refused'] == 'unknown field spec.credential', str(faults['foreign-credential']))
+    stale = faults['stale-fence']
+    check('stale fault is the same operation below the fence under its own name', stale['operation'] == 'devicewipe.alloc-0123456789abcdef-wipe-1.1' and stale['fence'] == 1
+          and stale['handoff'] == 'op-' + hashlib.sha256(('%s/devicewipe.alloc-0123456789abcdef-wipe-1.1' % device).encode()).hexdigest()[:40], str(stale))
+    check('faults derive from the latest assignment', faults['source']['handoff'] == wipe_name and faults['source']['fence'] == 2)
+    mismatch = faults['device-mismatch']
+    check('the device-mismatch fault names another Device in its assignment', mismatch['handoff'].startswith('op-') and mismatch['handoff'] != faults['stale-fence']['handoff'], str(mismatch))
+    for fault in ('wrong-cell', 'stale-fence', 'device-mismatch'):
+        name = faults[fault]['handoff']
+        check('fault name fits worker names: ' + fault, len('w-' + name) <= 63 and (state / ('fault-%s-job' % fault)).read_text().strip() == 'w-' + name, name)
         world['jobs']['w-' + name] = job('w-' + name, fault, [('Failed', 'PodFailurePolicy')], failed=1)
         world['pods'].append(pod('f-' + fault, 'f-' + fault, name, fault, 'Failed', 65))
+    world['statuses'][stale['handoff']] = {'observation': {'cell': 'fleet-mp-1234abcd-cell', 'fence': {'seen': 2, 'stopped': 2}}}
     r = run('delivery-faults', 'verify')
     check('delivery-faults verify', r.returncode == 0, r.stderr)
+    other = 'bmc-' + hashlib.sha256(b'fleet-provider/synthetic-device-central-02').hexdigest()[:20]
+    world['roles'] = [{'metadata': {'name': 'w-op-forged'}, 'rules': [{'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': [other], 'verbs': ['get']}]}]
+    check('delivery-faults rejects a Role on another Device\'s credential', run('delivery-faults', 'verify').returncode != 0)
+    world['roles'] = []
+    world['credentialRoles'] = ['w-' + faults['device-mismatch']['handoff']]
+    check('delivery-faults rejects a credential Role for a handoff whose Device is not its assignment\'s', run('delivery-faults', 'verify').returncode != 0)
+    world['credentialRoles'] = []
+    world['results'] = ['devicewipe.alloc-0123456789abcdef-wipe-1.1.json']
+    check('delivery-faults rejects a stored stale result', run('delivery-faults', 'verify').returncode != 0)
+    world['results'] = []
+    world['statuses'][faults['wrong-cell']['handoff']] = {'observation': {'cell': 'fleet-mp-1234abcd-cell'}}
+    check('delivery-faults rejects a wrong-cell observation', run('delivery-faults', 'verify').returncode != 0)
+    del world['statuses'][faults['wrong-cell']['handoff']]
+    run('delivery-faults', 'verify')
     r = run('delivery-faults', 'delete')
     check('delivery-faults delete', r.returncode == 0 and json.loads((state / 'evidence/delivery-faults.json').read_text()).get('prunedByKro'), r.stderr)
     world['pods'][-1]['status']['containerStatuses'][0]['state']['terminated']['exitCode'] = 75

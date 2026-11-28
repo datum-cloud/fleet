@@ -2,8 +2,9 @@
 # lab-only adapter (hack/redfish-lab), from a digest-pinned image. It is the
 # only Redfish endpoint and, besides the runtime, the only holder of the
 # libvirt socket. It owns the lab targets' definitions and provisioning
-# network; Fleet workers reach it only over HTTP with the synthetic
-# credential. Plain HTTP on the cluster network is a documented lab seam.
+# network. It serves Redfish over TLS with a key the harness generates per
+# run; Fleet workers reach it only over a connection pinned to that key, with
+# each Device's own synthetic credential.
 apiVersion: v1
 kind: Service
 metadata:
@@ -14,7 +15,7 @@ spec:
   clusterIP: "${FLEET_BMC_SERVICE_IP}"
   selector: {app.kubernetes.io/name: fleet-site-bmc}
   ports:
-    - {name: redfish, port: 8000, targetPort: 8000, protocol: TCP}
+    - {name: redfish, port: 8443, targetPort: 8443, protocol: TCP}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -42,9 +43,9 @@ spec:
             - {name: FLEET_LIBVIRT_URI, value: "qemu:///system?socket=/run/fleet-libvirt/libvirt-sock"}
             - {name: HOME, value: /tmp}
           ports:
-            - {name: redfish, containerPort: 8000}
+            - {name: redfish, containerPort: 8443}
           readinessProbe:
-            httpGet: {path: /redfish/v1/, port: 8000}
+            httpGet: {path: /redfish/v1/, port: 8443, scheme: HTTPS}
             periodSeconds: 5
           securityContext:
             runAsUser: 0
@@ -58,11 +59,14 @@ spec:
             - {name: state, mountPath: /run/fleet-libvirt, subPath: libvirt-socket}
             - {name: state, mountPath: /var/lib/fleet-bmc, subPath: bmc-state}
             - {name: credentials, mountPath: /etc/fleet-bmc-credentials, readOnly: true}
+            - {name: tls, mountPath: /etc/fleet-bmc-tls, readOnly: true}
             - {name: tmp, mountPath: /tmp}
       volumes:
         - name: state
           persistentVolumeClaim: {claimName: fleet-site-state}
         - name: credentials
           secret: {secretName: fleet-site-bmc-credentials, defaultMode: 0400}
+        - name: tls
+          secret: {secretName: fleet-site-bmc-tls, defaultMode: 0400}
         - name: tmp
           emptyDir: {}

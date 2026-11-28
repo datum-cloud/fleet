@@ -18,6 +18,17 @@ spec:
   cpu: {architecture: amd64, cores: 24}
   memory: {capacity: 128Gi}
 ---
+# The synthetic Device behind the capacity. The simulator site serves it, and
+# its fixture discovery writes the Device's status.
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Device
+metadata: {name: synthetic-device-central-01, namespace: fleet-provider}
+spec:
+  claimRef: {name: synthetic-claim-central-01}
+  identity: {model: synthetic, serial: synthetic-serial-central-01, systemUUID: 00000000-0000-4000-8000-000000000021}
+  bmc: {endpoint: "https://[2001:db8::21]"}
+  interfaces: [{name: primary, macAddress: "02:00:00:00:00:21"}]
+---
 apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 metadata:

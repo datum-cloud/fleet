@@ -16,7 +16,7 @@ import (
 
 // ErrProjectConflict reports two engaged clusters claiming one project
 // lifetime. The second engagement is refused rather than allowed to share
-// private custody.
+// custody.
 var ErrProjectConflict = errors.New("project lifetime is already engaged under another cluster name")
 
 var ErrProjectEngagementReentrant = errors.New("nested project engagement cannot wait on an active route")

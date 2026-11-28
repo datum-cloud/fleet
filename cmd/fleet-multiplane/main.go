@@ -1,5 +1,5 @@
 // fleet-multiplane is an opt-in local acceptance binary. Production managers do
-// not import its synthetic admission, quota or hardware enrollment fixtures.
+// not import its synthetic admission, quota or discovery fixtures.
 package main
 
 import (
@@ -13,14 +13,14 @@ import (
 	"syscall"
 	"time"
 
-	"go.datum.net/fleet/internal/coordination"
-	"go.datum.net/fleet/internal/executor"
-	"go.datum.net/fleet/internal/localvm"
-	"go.datum.net/fleet/internal/multiplane"
-	"go.datum.net/fleet/internal/redfish"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"go.datum.net/fleet/internal/coordination"
+	"go.datum.net/fleet/internal/multiplane"
+	"go.datum.net/fleet/internal/redfish"
+	"go.datum.net/fleet/internal/site"
 )
 
 func main() {
@@ -29,145 +29,60 @@ func main() {
 		os.Exit(1)
 	}
 }
+
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: fleet-multiplane site-worker|site-observer|image|boot-service|boot-denials|dhcp-feed|redfish-probe|<management phase> [flags]")
+		return fmt.Errorf("usage: fleet-multiplane coordinator|site-worker|site-observer|image|boot-service|boot-denials|dhcp-feed|redfish-probe|<management phase> [flags]")
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
-	once := fs.Bool("once", false, "one reconcile attempt for fault injection")
+	once := fs.Bool("once", false, "one attempt, for fault injection")
 	handoff := fs.String("handoff", "", "exact delivered handoff name (site-worker)")
-	origin := fs.String("origin", "", "boot listener origin to probe (boot-denials); default the configured origin")
+	origin := fs.String("origin", "", "boot listener origin to probe, http://IPv4:port (boot-denials; required)")
 	interval := fs.Duration("interval", 10*time.Second, "observation refresh interval (site-observer)")
 	configPath := fs.String("config", "", "private acceptance config JSON")
 	kubeconfig := fs.String("kubeconfig", "", "cell-local kubeconfig; default in-cluster ServiceAccount")
 	cell := fs.String("cell", "", "exact Karmada member name")
-	scoped := fs.String("scoped-asset", "", "exact retained provider-scoped Device ID")
 	extraMAC := fs.String("extra-mac", "", "another enrolled NIC whose boot script must be denied (boot-denials, Redfish mode)")
 	endpoint := fs.String("endpoint", "", "Redfish endpoint (redfish-probe)")
 	credentials := fs.String("credentials", "", "directory holding username and password files (redfish-probe)")
 	system := fs.String("system", "", "enrolled Redfish System Id (redfish-probe)")
 	uuid := fs.String("uuid", "", "enrolled Redfish System UUID (redfish-probe)")
+	pin := fs.String("pin", "", "the BMC's approved key digest; the probe connects only to that key (redfish-probe)")
 	syncToken := fs.String("sync-token-file", "", "file holding the DHCP synchronizer bearer token (dhcp-feed)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
 	switch os.Args[1] {
-	case "seed", "allocate", "install", "install-b", "admit-install", "release", "release-b", "reuse", "asset":
+	case "coordinator":
 		config, err := multiplane.ReadConfig(*configPath)
 		if err != nil {
 			return err
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
-		if os.Args[1] == "seed" {
-			return multiplane.Seed(ctx, config)
-		}
-		r, err := multiplane.New(ctx, config)
+		fmt.Println("coordinator: custody coordinator running")
+		return multiplane.Coordinate(ctx, config, func(err error) {
+			fmt.Fprintf(os.Stderr, "%s coordinator: pass incomplete: %v\n", time.Now().UTC().Format(time.RFC3339), err)
+		})
+	case "seed", "allocate", "install", "install-b", "admit-install", "release", "release-b", "reuse":
+		return phase(os.Args[1], *configPath, *once)
+	case "redfish-probe":
+		return probe(*endpoint, *credentials, *system, *uuid, *pin)
+	case "image":
+		image, err := siteImage()
 		if err != nil {
 			return err
 		}
-		if os.Args[1] == "asset" {
-			fmt.Println(r.ScopedAsset())
-			return nil
-		}
-		var action func(context.Context) error
-		switch os.Args[1] {
-		case "allocate":
-			action = r.Allocate
-		case "install", "admit-install":
-			action = r.Install
-		case "install-b":
-			action = r.InstallSecond
-		case "release":
-			action = r.Release
-		case "release-b":
-			action = r.ReleaseSecond
-		case "reuse":
-			action = r.Reuse
-		}
-		for {
-			err = action(ctx)
-			if os.Args[1] == "admit-install" {
-				if errors.Is(err, executor.ErrOutcomeUnknown) {
-					fmt.Println("Installation intent retained; execution result remains Unknown")
-					return nil
-				}
-				if err == nil {
-					return fmt.Errorf("admission probe unexpectedly completed; run before starting cell")
-				}
-				return err
-			}
-			if (*once || terminal(err)) && err != nil {
-				return err
-			}
-			if err == nil {
-				fmt.Println(os.Args[1] + ": verified local acceptance phase (synthetic authority)")
-				return nil
-			}
-			if ctx.Err() != nil {
-				return fmt.Errorf("%s did not converge; authority retained; last error: %w", os.Args[1], err)
-			}
-			time.Sleep(3 * time.Second)
-		}
-	}
-	if os.Args[1] == "redfish-probe" {
-		return probe(*endpoint, *credentials, *system, *uuid)
-	}
-	if redfishMode() {
-		switch os.Args[1] {
-		case "boot-service", "boot-denials", "dhcp-feed":
-			p, err := redfish.OpenReadOnly()
-			if err != nil {
-				return err
-			}
-			if os.Args[1] == "boot-service" {
-				return p.ServeBoot()
-			}
-			if os.Args[1] == "dhcp-feed" {
-				token, err := os.ReadFile(*syncToken)
-				if err != nil {
-					return fmt.Errorf("DHCP synchronizer token: %w", err)
-				}
-				return p.ServeDHCP(strings.TrimSpace(string(token)))
-			}
-			var extra []string
-			if *extraMAC != "" {
-				extra = append(extra, *extraMAC)
-			}
-			summary, err := p.CheckClosedBoot(*origin, extra)
-			if err != nil {
-				return err
-			}
-			fmt.Println(summary)
-			return nil
-		}
-	}
-	switch os.Args[1] {
-	case "image", "boot-service", "boot-denials":
-		// Read-only: the boot service mounts the journal read-only.
-		p, err := localvm.OpenReadOnly()
-		if err != nil {
-			return err
-		}
-		switch os.Args[1] {
-		case "image":
-			fmt.Println(p.ImageReference())
-			return nil
-		case "boot-service":
-			return p.ServeBoot()
-		}
-		summary, err := p.CheckClosedBoot(*origin)
-		if err != nil {
-			return err
-		}
-		fmt.Println(summary)
+		fmt.Println(image)
 		return nil
+	case "boot-service", "boot-denials", "dhcp-feed":
+		return boot(os.Args[1], *origin, *extraMAC, *syncToken)
 	case "site-worker", "site-observer":
 	default:
 		return fmt.Errorf("unknown command")
 	}
-	if *cell == "" || *scoped == "" || (os.Args[1] == "site-worker" && *handoff == "") {
-		return fmt.Errorf("cell, scoped-asset and (for site-worker) handoff required")
+	if *cell == "" || (os.Args[1] == "site-worker" && *handoff == "") {
+		return fmt.Errorf("cell and (for site-worker) handoff required")
 	}
 	cfg, err := rest.InClusterConfig()
 	if *kubeconfig != "" {
@@ -183,65 +98,96 @@ func run() error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	if os.Args[1] == "site-observer" {
-		// The observer never executes: its provider is read-only.
-		var p executor.Client
-		var err error
-		if redfishMode() {
-			p, err = redfish.OpenReadOnly()
-		} else {
-			p, err = localvm.OpenReadOnly()
-		}
-		if err != nil {
-			return err
-		}
-		mapping := &coordination.LocalAssetMapping{API: api, Namespace: coordinationNamespace, Cell: *cell, ScopedAsset: *scoped, PhysicalAsset: localvm.AssetID, Backend: p}
-		observer := coordination.Cell{API: api, Namespace: coordinationNamespace, Name: *cell, Executor: mapping}
-		return observer.Observe(ctx, *interval, func(name string, err error) {
-			fmt.Fprintf(os.Stderr, "observer: handoff %s not published: %s\n", name, classify(err))
-		})
-	}
-	// A Redfish worker has no libvirt fallback: redfish.Open refuses any
-	// hypervisor configuration, and the worker reaches the target only
-	// through its enrolled BMC.
-	var p executor.Client
-	if redfishMode() {
-		p, err = redfish.Open()
-	} else {
-		p, err = localvm.Open()
-	}
+	store, err := openStore()
 	if err != nil {
 		return err
 	}
-	mapping := &coordination.LocalAssetMapping{API: api, Namespace: coordinationNamespace, Cell: *cell, ScopedAsset: *scoped, PhysicalAsset: localvm.AssetID, Backend: p}
-	worker := coordination.Cell{API: api, Namespace: coordinationNamespace, Name: *cell, Executor: mapping}
-	err = worker.Execute(ctx, *handoff)
-	fmt.Fprintf(os.Stderr, "site-worker: handoff %s: %s\n", *handoff, classify(err))
-	if err != nil {
-		if terminal(err) {
-			os.Exit(exitRejected)
-		}
-		os.Exit(exitRetry)
+	cellView := &coordination.Cell{API: api, Namespace: coordinationNamespace, Name: *cell}
+	if os.Args[1] == "site-observer" {
+		// The observer never runs work: it reports what the store holds.
+		return cellView.Observe(ctx, *interval, store, site.NewResults(store), func(name string, err error) {
+			fmt.Fprintf(os.Stderr, "observer: handoff %s not published: %s\n", name, classify(err))
+		})
 	}
+	runner, err := siteRunner(ctx, cfg, *cell, store)
+	if err != nil {
+		return err
+	}
+	err = cellView.Work(ctx, *handoff, runner)
+	fmt.Fprintf(os.Stderr, "site-worker: handoff %s: %s\n", *handoff, classify(err))
+	switch {
+	case err == nil, errors.Is(err, site.ErrAlreadyRunning):
+		return nil
+	case errors.Is(err, site.ErrStaleFence), errors.Is(err, coordination.ErrNotDelivered):
+		os.Exit(exitRejected)
+	}
+	os.Exit(exitRetry)
 	return nil
+}
+
+// phase runs one management phase until it converges, retrying pending
+// effects.
+func phase(name, configPath string, once bool) error {
+	config, err := multiplane.ReadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	if name == "seed" {
+		return multiplane.Seed(ctx, config)
+	}
+	r, err := multiplane.New(ctx, config)
+	if err != nil {
+		return err
+	}
+	action := map[string]func(context.Context) error{
+		"allocate": r.Allocate, "admit-install": r.AdmitInstall, "install": r.Install, "install-b": r.InstallSecond,
+		"release": r.Release, "release-b": r.ReleaseSecond, "reuse": r.Reuse,
+	}[name]
+	last := ""
+	for {
+		err = action(ctx)
+		// Report each new reason a phase is waiting, so a phase that times
+		// out shows what it waited for.
+		if err != nil && err.Error() != last {
+			last = err.Error()
+			fmt.Printf("%s: waiting: %v\n", name, err)
+		}
+		if name == "admit-install" && errors.Is(err, multiplane.ErrAdmittedUnknown) {
+			fmt.Println("Installation admitted and delivered; its result remains Unknown")
+			return nil
+		}
+		if err == nil {
+			fmt.Println(name + ": verified local acceptance phase (synthetic authority)")
+			return nil
+		}
+		if once || multiplane.Terminal(err) || errors.Is(err, multiplane.ErrLocationNotServed) {
+			return err
+		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("%s did not converge; last error: %w", name, err)
+		}
+		time.Sleep(3 * time.Second)
+	}
 }
 
 const coordinationNamespace = "fleet-coordination"
 
-// redfishMode selects the Redfish executor for site roles. The site's Flux
-// layers set it; there is no automatic choice between providers.
+// redfishMode selects the Redfish workers for site roles. The site's Flux
+// layers set it; there is no automatic choice between them.
 func redfishMode() bool { return os.Getenv("FLEET_SITE_PROVIDER") == "redfish" }
 
 // probe performs read-only Redfish discovery of one enrolled System and
 // prints only an outcome class. Exit codes: 0 discovered, 10 credential
 // rejected, 11 capability unsupported, 12 identity mismatch.
-func probe(endpoint, credentials, system, uuid string) error {
+func probe(endpoint, credentials, system, uuid, pin string) error {
 	user, err1 := os.ReadFile(credentials + "/username")
 	password, err2 := os.ReadFile(credentials + "/password")
 	if credentials == "" || err1 != nil || err2 != nil {
 		return fmt.Errorf("redfish-probe: credentials unavailable")
 	}
-	c, err := redfish.NewClient(endpoint, strings.TrimSpace(string(user)), strings.TrimSpace(string(password)), 20*time.Second)
+	c, err := redfish.NewPinnedClient(endpoint, strings.TrimSpace(string(user)), strings.TrimSpace(string(password)), pin, 20*time.Second)
 	if err != nil {
 		return err
 	}
@@ -265,10 +211,11 @@ func probe(endpoint, credentials, system, uuid string) error {
 	return err
 }
 
-// Worker exit codes are the Job podFailurePolicy contract: rejected authority
-// fails the Job without retry; anything else is retried by the Job controller
-// against the same retained operation. Exit 0 only follows a validated
-// terminal journal result, and still does not publish or authorize readiness.
+// Worker exit codes are the Job podFailurePolicy contract: a handoff that is
+// not this cell's, or an assignment below the Device's stored fence, fails
+// the Job without retry; anything else is retried by the Job controller
+// against the same assignment. Exit 0 follows a stored result, which only
+// the coordinator turns into custody.
 const (
 	exitRejected = 65
 	exitRetry    = 75
@@ -278,27 +225,14 @@ const (
 func classify(err error) string {
 	switch {
 	case err == nil:
-		return "terminal result verified in provider journal"
-	case errors.Is(err, executor.ErrFenced):
-		return "fenced: " + err.Error()
-	case errors.Is(err, executor.ErrConflict):
-		return "conflict: " + err.Error()
-	case errors.Is(err, executor.ErrInvalid):
-		return "invalid: " + err.Error()
-	case errors.Is(err, executor.ErrOutcomeUnknown):
-		return "outcome unknown: " + err.Error()
+		return "result stored in the site store"
+	case errors.Is(err, site.ErrAlreadyRunning):
+		return "another worker runs this assignment"
+	case errors.Is(err, site.ErrStaleFence):
+		return "fenced: a newer operation was admitted for the Device"
+	case errors.Is(err, coordination.ErrNotDelivered):
+		return "invalid: not an assignment for this cell"
 	default:
 		return "pending: " + err.Error()
 	}
-}
-
-// terminal errors are authority rejections; retrying cannot change them and
-// Unknown (the only retained-uncertainty result) stays retryable.
-func terminal(err error) bool {
-	for _, target := range []error{executor.ErrConflict, executor.ErrFenced, executor.ErrInvalid, multiplane.ErrLocationNotServed} {
-		if errors.Is(err, target) {
-			return true
-		}
-	}
-	return false
 }

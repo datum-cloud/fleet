@@ -57,8 +57,20 @@ mounts = container.get('volumeMounts', [])
 check('Redfish worker selects the Redfish provider', env.get('FLEET_SITE_PROVIDER') == 'redfish' and 'FLEET_LIBVIRT_URI' not in env, str(env.keys()))
 check('Redfish worker has no libvirt socket or lab disk mount', not any('libvirt' in m.get('subPath', '') + m['mountPath'] or 'lab-disks' in m.get('subPath', '') for m in mounts), str(mounts))
 check('Redfish worker console capture is read-only', any(m.get('subPath') == 'lab-console' and m.get('readOnly') for m in mounts))
-check('Redfish worker credential is the BMC Secret only', [v['secret']['secretName'] for v in worker.get('volumes', []) if 'secret' in v] == ['fleet-site-bmc-credentials']
-      and not any('hostPath' in v for v in worker.get('volumes', [])))
+check('Redfish worker mounts no credential and no host path', not any('secret' in v or 'hostPath' in v for v in worker.get('volumes', [])), str(worker.get('volumes')))
+check('Redfish worker reads per-Device credentials from the credential namespace', env.get('FLEET_SITE_CREDENTIALS_NAMESPACE') == 'fleet-site-credentials'
+      and env.get('FLEET_SITE_PROJECT') == 'provider', str(env.keys()))
+creds = resources.get('workerCredentialRoles', {}).get('template', {})
+check("per-operation credential Role gets only the Secret of the Device its assignment names, in the credential namespace", creds.get('metadata', {}).get('namespace') == 'fleet-site-credentials'
+      and creds.get('rules') == [{'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': ["${'bmc-' + '%x'.format([hash.sha256(json.unmarshal(handoff.spec.assignmentJSON).device)]).substring(0, 20)}"], 'verbs': ['get']}], json.dumps(creds)[:300])
+consistent = "${handoffs.filter(h, h.spec.device == json.unmarshal(h.spec.assignmentJSON).device)}"
+check('only a handoff whose Device is its assignment\'s gets a credential Role or binding',
+      all(resources.get(r, {}).get('forEach') == [{'handoff': consistent}] for r in ('workerCredentialRoles', 'workerCredentialBindings')),
+      json.dumps([resources.get(r, {}).get('forEach') for r in ('workerCredentialRoles', 'workerCredentialBindings')]))
+binding = resources.get('workerCredentialBindings', {}).get('template', {})
+check('per-operation credential RoleBinding binds its own Role to its own ServiceAccount', binding.get('metadata', {}).get('namespace') == 'fleet-site-credentials'
+      and binding.get('roleRef', {}).get('name') == '${"w-" + handoff.metadata.name}'
+      and binding.get('subjects') == [{'kind': 'ServiceAccount', 'name': '${"w-" + handoff.metadata.name}', 'namespace': 'fleet-site'}], json.dumps(binding)[:300])
 check('Redfish worker waits for the Flux-owned BMC', 'bmc' in resources and resources['bmc'].get('externalRef', {}).get('metadata', {}).get('name') == 'fleet-site-bmc'
       and '${bmc.metadata.name}' in json.dumps(resources.get('workers', {})))
 check('graph ids still valid for kro', all(re.fullmatch(r'[a-z][a-zA-Z0-9]*', i) for i in resources) and 'runtime' not in resources, str(list(resources)))
@@ -67,12 +79,13 @@ check('privileged nothing in the Redfish graph', 'privileged' not in json.dumps(
 enrollment = json.loads(env.get('FLEET_REDFISH_ENROLLMENT', '{}'))
 targets = json.loads((root / 'hack/redfish-lab/targets.json').read_text())
 by_system = {t['system']: t for t in targets}
-check('every enrolled BMC endpoint is the fixed BMC Service', enrollment.get('targets') and all(t.get('endpoint') == 'http://%s:8000' % flux.BMC_SERVICE_IP for t in enrollment['targets']))
+check('every enrolled BMC endpoint is the fixed BMC Service', enrollment.get('targets') and all(t.get('endpoint') == 'https://%s:8443' % flux.BMC_SERVICE_IP for t in enrollment['targets']))
 check('lab DHCP is static: no provisioning attachment published', enrollment.get('dhcp') == 'static' and not any('provisioning' in t for t in enrollment.get('targets', [])))
 check('enrollment matches the lab targets exactly', len(enrollment.get('targets', [])) == 2 and all(
     t['systemID'] in by_system and by_system[t['systemID']]['uuid'] == t['systemUUID'] and by_system[t['systemID']]['mac'] == t['mac']
     and by_system[t['systemID']]['console'].endswith('/' + t['console']) for t in enrollment.get('targets', [])), json.dumps(enrollment)[:300])
-check('only target A is the published capacity Device', enrollment['targets'][0]['assetID'].endswith('/synthetic-device-central-01') if enrollment.get('targets') else False)
+check('only target A is the published capacity Device', [t.get('device') for t in enrollment.get('targets', [])][:1] == ['fleet-provider/synthetic-device-central-01']
+      and enrollment['targets'][0].get('systemID') == 'System-1')
 
 services = build(root / 'config/site/redfish/services')
 deployments = {d['metadata']['name']: d for d in services if d.get('kind') == 'Deployment'}
@@ -90,7 +103,14 @@ check('every site role selects the Redfish provider', all(any(e.get('name') == '
 base = build(root / 'config/site/redfish/base')
 policy = next((d for d in base if d.get('kind') == 'ValidatingAdmissionPolicy' and d['metadata']['name'] == 'fleet-site-kro-worker-jobs'), {})
 text = json.dumps(policy)
-check('admission denies libvirt mounts and URIs for kro worker Jobs', "startsWith('/run/fleet-libvirt')" in text and "FLEET_LIBVIRT_URI" in text and 'fleet-site-bmc-credentials' in text)
+check('admission denies libvirt mounts and URIs for kro worker Jobs', "startsWith('/run/fleet-libvirt')" in text and "FLEET_LIBVIRT_URI" in text)
+identity = json.dumps(next((d for d in base if d.get('kind') == 'ValidatingAdmissionPolicy' and d['metadata']['name'] == 'fleet-site-kro-worker-identity'), {}))
+handoff_crd = documents((root / 'config/multiplane/coordination/crd.yaml').read_text())[0]
+handoff_spec = handoff_crd['spec']['versions'][0]['schema']['openAPIV3Schema']['properties']['spec']
+check('no handoff field names a credential Secret, so a forged one is refused', 'credential' not in handoff_spec.get('properties', {})
+      and not handoff_spec.get('x-kubernetes-preserve-unknown-fields'), json.dumps(handoff_spec)[:300])
+check('admission confines credential Roles to get on one named Secret', 'fleet-site-credentials' in identity and "r.verbs == ['get']" in identity and 'size(r.resourceNames) == 1' in identity
+      and "r.verbs == ['list']" not in identity)
 check('BMC identity in the base', any(d.get('kind') == 'ServiceAccount' and d['metadata']['name'] == 'fleet-site-bmc' for d in base))
 check('no Secret in any Redfish overlay', not any(d.get('kind') == 'Secret' for d in base + services + graph))
 
@@ -111,7 +131,6 @@ with tempfile.TemporaryDirectory() as tmp:
     (s / 'gitops-environment.json').write_text(json.dumps({'registryHost': 'fleet-mp-0000abcd-registry', 'registryPort': 5555, 'karmadaPort': 1, 'cell': 'fleet-mp-0000abcd-cell',
                                                            'cellEndpoint': 'https://x:6443', 'siteImage': 'r/fleet-site@sha256:' + 'a' * 64, 'siteImageDigest': 'sha256:' + 'a' * 64,
                                                            'bmcImage': 'r/fleet-bmc@sha256:' + 'b' * 64, 'bmcImageDigest': 'sha256:' + 'b' * 64}))
-    (s / 'scoped-asset').write_text('local-milo/uid/fleet-provider/fleet.datumapis.com/Device/synthetic-device-central-01\n')
     args = argparse.Namespace(state=str(s), root=str(root), revision=2, site='off', bad_kro_chart=False, drop_site_volume=True, purpose='test', cluster=[], timeout=5)
     check('stage a Redfish revision', flux.stage(args) == 0)
     cell = subprocess.run(['kustomize', 'build', str(s / 'gitops/r2/environment/cell')], text=True, capture_output=True).stdout
@@ -138,9 +157,9 @@ order = ['baseline', 'discovery-faults', 'allocate', 'arm-lost-response', 'dispa
          'reuse', 'delivery-faults', 'install-b', 'release-b', 'boot-denials', 'isolation', 'evidence']
 positions = [sequence.find(' ' + n + ' ') for n in order]
 check('Redfish phase order', all(p >= 0 for p in positions) and positions == sorted(positions), str(list(zip(order, positions))))
-for name in ('internal/redfish/client.go', 'internal/redfish/provider.go', 'internal/redfish/boot.go'):
-    src = (root / name).read_text()
-    check('no lab fault hook in production code: ' + name, not re.search(r'\bfaults?\b|drop-response|hide-reset', src, re.I))
+for path in sorted(list((root / 'internal/redfish').glob('*.go')) + list((root / 'internal/site/redfishwork').glob('*.go'))):
+    if not path.name.endswith('_test.go'):
+        check('no lab fault hook in production code: ' + path.name, not re.search(r'\bfaults?\b|drop-response|hide-reset', path.read_text(), re.I))
 adapter = (root / 'hack/redfish-lab/fleet_lab_adapter.py').read_text()
 check('adapter keeps upstream unmodified (imports it)', 'import emulator' in adapter and 'COPY --from=upstream . /opt/redfish-emulator' in (root / 'hack/redfish-lab/Containerfile').read_text())
 check('upstream source pinned by digest and commit', re.search(r'sha256=[0-9a-f]{64}', (root / 'hack/redfish-lab/upstream.sh').read_text()) is not None

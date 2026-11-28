@@ -31,7 +31,7 @@ records, or mark occupied capacity as available to unblock a test or rollout.
 The [provider execution and recovery contract](../enhancements/machine-lifecycle/README.md#provider-execution-and-recovery)
 and [release contract](../enhancements/machine-lifecycle/README.md#release-and-project-lifecycle)
 describe the intended guarantees. Compare them with the
-[implemented lifecycle library](../development/README.md#standalone-lifecycle-library)
+[implemented allocation library](../development/README.md#allocation-on-device-custody)
 and [simulator limits](../development/README.md#explicit-gaps) before choosing a recovery
 action. Real-provider recovery procedures are not established by these fixtures.
 

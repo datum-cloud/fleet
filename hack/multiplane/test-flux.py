@@ -98,7 +98,6 @@ with tempfile.TemporaryDirectory() as tmp:
            'cellEndpoint': 'https://fleet-mp-0000abcd-cell-control-plane:6443', 'siteImage': 'fleet-mp-0000abcd-registry:5000/fleet-site@sha256:' + 'a' * 64,
            'siteImageDigest': 'sha256:' + 'a' * 64}
     (s / 'gitops-environment.json').write_text(json.dumps(env))
-    (s / 'scoped-asset').write_text('local-milo/uid/fleet-provider/fleet.datumapis.com/Device/synthetic-device-central-01\n')
 
     def ns(**kw):
         base = dict(state=str(s), root=str(root), revision=1, site='absent', bad_kro_chart=False, drop_site_volume=False, purpose='test', cluster=[], timeout=5)
@@ -119,7 +118,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check('hub environment beside the Karmada kubeconfig', 'name: fleet-environment\n  namespace: karmada-system' in hub1 and 'name: fleet-environment\n  namespace: flux-system' in hub1)
     check('stage dispatch revision', flux.stage(ns(revision=3, site='dispatch')) == 0)
     cell3 = render(3, 'cell')
-    check('dispatch revision carries the site', 'FLEET_SITE_DISPATCH: "true"' in cell3 and 'path: ./config/site/instance' in cell3 and 'FLEET_SCOPED_ASSET' in cell3
+    check('dispatch revision carries the site', 'FLEET_SITE_DISPATCH: "true"' in cell3 and 'path: ./config/site/instance' in cell3 and 'FLEET_SCOPED_ASSET' not in cell3
           and 'path: ./config/site/services' in cell3 and ('FLEET_BOOT_SERVICE_IP: %s\n' % flux.BOOT_SERVICE_IP) in cell3.replace('"', ''))
     # Flux replaces an undefined variable with an empty string, which would give
     # the boot Service a random ClusterIP: every substituted variable must be defined.

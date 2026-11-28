@@ -12,6 +12,8 @@ mode=${2:-passed}
 [[ $mode == passed || $mode == --discard-unknown ]] || { echo 'usage: teardown.sh STATE [--discard-unknown]' >&2; exit 64; }
 prefix=$(cat "$state/prefix")
 [[ $prefix =~ ^fleet-mp-[a-f0-9]{8}$ ]] || { echo 'unexpected prefix' >&2; exit 1; }
+# The coordinator is a workstation process: stop it before its clusters.
+bash hack/multiplane/coordinator.sh stop "$state" >/dev/null
 export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker
 if [[ $mode == passed ]]; then
  python3 -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("acceptance")!="passed")' "$state/evidence/summary.json" 2>/dev/null || {
@@ -50,7 +52,7 @@ rm -f "$state/kind-delete.kubeconfig"
 if [[ $mode == passed ]]; then
  # Credentials and raw journals are no longer needed once the run has passed.
  rm -rf "$state/provider" "$state/consumer-a" "$state/consumer-b" "$state/provider-private" "$state/redfish"
- rm -f "$state"/*.yaml "$state"/*-hub.json "$state"/private.json "$state"/cell-worker*.json "$state"/federation-cell.json "$state"/*.token "$state"/*-kubeconfig.json \
+ rm -f "$state"/*.yaml "$state"/*-hub.json "$state"/cell-worker*.json "$state"/federation-cell.json "$state"/*.token "$state"/*-kubeconfig.json \
   "$state"/status-fault.json "$state"/acceptance.json "$state"/fleet-multiplane "$state"/fleet-multiplane-host
  rm -rf "$state/site-bin" "$state/kro-chart" "$state/flux-tools/flux" "$state"/flux-tools/*.tar.gz
 fi

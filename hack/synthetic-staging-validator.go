@@ -77,7 +77,10 @@ func main() {
 	}
 	require(has(m.Args, "--synthetic-provider-url=http://"+service.Name+"."+service.Namespace+".svc:8090"), "manager must use provider Service DNS")
 	require(has(m.Args, "--synthetic-provider-token-file=/var/run/fleet/provider/token") && has(p.Args, "--runtime-token-file=/var/run/fleet/provider/token"), "both processes need the dedicated runtime credential")
-	require(has(p.Args, "--listen-address=0.0.0.0:8090") && has(p.Args, "--state-file=/var/lib/fleet/state.json"), "provider runtime and persistent state paths must match mounts")
+	require(has(p.Args, "--listen-address=0.0.0.0:8090") && has(p.Args, "--state-dir=/var/lib/fleet/site"), "provider runtime and persistent store paths must match mounts")
+	require(!has(p.Args, "--discover"), "the provider site has no Kubernetes API credential, so it must not run discovery")
+	require(has(m.Args, "--synthetic-site-enrollment-file=/etc/fleet/enrollment/enrollment.json") && has(p.Args, "--enrollment-file=/etc/fleet/enrollment/enrollment.json"), "the manager and the site must read the same enrollment")
+	require(has(m.Args, "--synthetic-coordinator-client-cert-dir=/var/run/fleet/coordinator") && has(m.Args, "--synthetic-release-client-cert-dir=/var/run/fleet/release"), "the coordinator and release controller need their own Milo client certificates")
 	for _, arg := range p.Args {
 		require(!strings.HasPrefix(arg, "--admin-"), "provider must not expose an admin listener")
 	}
@@ -99,6 +102,36 @@ func main() {
 			}
 		}
 		require(mounted, "runtime token mount must resolve to the external Secret")
+	}
+	// Each component's credential is an external Secret, and both
+	// processes mount the one enrollment ConfigMap.
+	mountsSecret := func(pod core.PodSpec, path, secret string) bool {
+		for _, mount := range pod.Containers[0].VolumeMounts {
+			if mount.MountPath != path || !mount.ReadOnly || mount.SubPath != "" {
+				continue
+			}
+			for _, volume := range pod.Volumes {
+				if volume.Name == mount.Name && volume.Secret != nil && volume.Secret.SecretName == secret {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	require(mountsSecret(manager.Spec.Template.Spec, "/var/run/fleet/coordinator", "fleet-custody-coordinator-client-cert"), "the coordinator's client certificate must resolve to its external Secret")
+	require(mountsSecret(manager.Spec.Template.Spec, "/var/run/fleet/release", "fleet-release-controller-client-cert"), "the release controller's client certificate must resolve to its external Secret")
+	var enrollment core.ConfigMap
+	read("ConfigMap/fleet-synthetic-site-enrollment", &enrollment)
+	for _, pod := range []core.PodSpec{manager.Spec.Template.Spec, provider.Spec.Template.Spec} {
+		mounted := false
+		for _, mount := range pod.Containers[0].VolumeMounts {
+			for _, volume := range pod.Volumes {
+				if mount.MountPath == "/etc/fleet/enrollment" && mount.ReadOnly && volume.Name == mount.Name && volume.ConfigMap != nil && volume.ConfigMap.Name == enrollment.Name {
+					mounted = true
+				}
+			}
+		}
+		require(mounted, "the enrollment mount must resolve to the shared ConfigMap")
 	}
 	persistent := false
 	for _, mount := range p.VolumeMounts {

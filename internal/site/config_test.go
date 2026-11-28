@@ -2,6 +2,7 @@ package site
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -12,7 +13,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func credentialSecret(name, project, device string, data map[string]string) *corev1.Secret {
@@ -26,31 +29,40 @@ func credentialSecret(name, project, device string, data map[string]string) *cor
 	return secret
 }
 
-func TestSecretCredentialsUseThePerDeviceContract(t *testing.T) {
+// TestSecretCredentialsGetOnlyTheDevicesOwnSecret reads a Device's
+// credential by its derived name with one get, and never lists: a reader
+// that refuses every list still works. The Secret must name the Device in
+// the project; a Secret of another name, project or Device is not used.
+func TestSecretCredentialsGetOnlyTheDevicesOwnSecret(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	pin := strings.Repeat("ab", 32)
+	own := CredentialSecretName("default/server-example-001")
 	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		credentialSecret("server-a", "provider-example", "server-example-001", map[string]string{"username": "operator", "password": "synthetic-secret", "tlsPublicKeySHA256": pin}),
-		credentialSecret("server-b", "provider-example", "server-example-002", map[string]string{"username": "operator", "password": "synthetic-secret"}),
-		credentialSecret("server-b-2", "provider-example", "server-example-002", map[string]string{"username": "other", "password": "synthetic-secret"}),
-		credentialSecret("elsewhere", "provider-other", "server-example-003", map[string]string{"username": "operator", "password": "synthetic-secret"}),
-	).Build()
+		credentialSecret(own, "provider-example", "server-example-001", map[string]string{"username": "operator", "password": "synthetic-secret", "tlsPublicKeySHA256": pin}),
+		// Named for server-example-002 but bound to server-example-001.
+		credentialSecret(CredentialSecretName("default/server-example-002"), "provider-example", "server-example-001", map[string]string{"username": "operator", "password": "synthetic-secret"}),
+		// Bound to server-example-003 but not under its derived name.
+		credentialSecret("server-example-003", "provider-example", "server-example-003", map[string]string{"username": "operator", "password": "synthetic-secret"}),
+		credentialSecret(CredentialSecretName("default/server-example-004"), "provider-other", "server-example-004", map[string]string{"username": "operator", "password": "synthetic-secret"}),
+	).WithInterceptorFuncs(interceptor.Funcs{List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+		return errors.New("a worker may not list credential Secrets")
+	}}).Build()
 	credentials := SecretCredentials{Reader: reader, Namespace: "fleet-site", Project: "provider-example"}
 	ctx := context.Background()
 	credential, found, err := credentials.Lookup(ctx, "default/server-example-001")
 	if err != nil || !found || credential.Username != "operator" || credential.Pin != pin {
 		t.Fatalf("credential = %+v %v %v", credential, found, err)
 	}
-	// Two Secrets naming one Device are a conflict, never a choice.
-	if _, _, err := credentials.Lookup(ctx, "default/server-example-002"); err == nil {
-		t.Fatal("two credential Secrets for one Device were accepted")
+	for _, device := range []string{"default/server-example-002", "default/server-example-003", "default/server-example-004"} {
+		if _, found, err := credentials.Lookup(ctx, device); found || err != nil {
+			t.Errorf("%s: found = %v, err = %v; want no credential", device, found, err)
+		}
 	}
-	// A Secret for another project's Device is not this Device's.
-	if _, found, _ := credentials.Lookup(ctx, "default/server-example-003"); found {
-		t.Fatal("another project's credential was used")
+	if CredentialSecretName("default/server-example-001") == CredentialSecretName("other/server-example-001") {
+		t.Fatal("two Devices share a credential Secret name")
 	}
 }
 

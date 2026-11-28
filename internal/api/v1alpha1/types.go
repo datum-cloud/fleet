@@ -23,9 +23,12 @@ type AccessPolicy struct {
 	ConsoleModes []string `json:"consoleModes,omitempty"`
 	PowerControl bool     `json:"powerControl,omitempty"`
 }
+
+// SourceReference names the provider class a published class copies: the
+// provider that publishes it, as a typed reference, and the class's name.
 type SourceReference struct {
-	Project string `json:"project"`
-	Name    string `json:"name"`
+	PublisherRef TypedReference `json:"publisherRef"`
+	Name         string         `json:"name"`
 }
 type ProfilePolicy struct {
 	AllowedProfiles []LocalReference    `json:"allowedProfiles,omitempty"`
@@ -335,22 +338,113 @@ type InstallationStatus struct {
 	Conditions  []metav1.Condition `json:"conditions,omitempty"`
 }
 
-// MachineAllocation is a protected, service-owned record. Its generated name is
-// the allocation identity. The spec is immutable and release is terminal.
+// MachineAllocation is a protected, service-owned record in the provider
+// project, in the namespace of its Device. It holds an allocation's private
+// facts: which Machine holds which Device, the contract Fleet accepted, the
+// hardware it saw, and the authority it acted on. Nothing secret is on it.
+// Its name derives from the Machine's UID, so each Machine gets one
+// allocation. Fleet writes the spec once and the API server keeps it
+// immutable; status carries the lifecycle, and release is terminal.
 type MachineAllocationSpec struct {
-	MachineRef         ProjectNamespacedReference `json:"machineRef"`
-	MachineCapacityRef NamespacedReference        `json:"machineCapacityRef"`
+	// ConsumerRef is the consumer the Machine belongs to: a Milo Project, or
+	// a Namespace in standalone mode. It stays in spec because release needs
+	// it after the consumer is deleted.
+	ConsumerRef        TypedReference            `json:"consumerRef"`
+	MachineRef         AllocatedMachineReference `json:"machineRef"`
+	MachineCapacityRef NamespacedReference       `json:"machineCapacityRef"`
+	DeviceRef          AllocatedDeviceReference  `json:"deviceRef"`
+	Accepted           AcceptedContract          `json:"accepted"`
+	// Hardware is the capacity's hardware when Fleet allocated it.
+	Hardware  Hardware            `json:"hardware"`
+	Authority AllocationAuthority `json:"authority"`
+	// QuotaClaimRef names the quota claim Fleet reserved before the
+	// allocation, in the Machine's namespace. It is absent where no quota
+	// system serves the consumer.
+	QuotaClaimRef *LocalReference `json:"quotaClaimRef,omitempty"`
+	// CleaningPolicyDigest pins the cleaning policy record the release
+	// wipes under.
+	CleaningPolicyDigest string `json:"cleaningPolicyDigest"`
+	// BootInterface and TargetDisks are what installations and wipes for
+	// this allocation use.
+	BootInterface string   `json:"bootInterface"`
+	TargetDisks   []string `json:"targetDisks"`
 }
 
-type ProjectNamespacedReference struct {
-	Project   string `json:"project"`
+// Labels that pin the object incarnations a MachineAllocation was made for.
+// No spec holds an object UID: the allocation's name hashes the consumer
+// project and Machine UIDs, and these labels let a reader confirm them, so a
+// same-name Machine, project or Device never inherits the allocation.
+const (
+	LabelMachineUID  = "fleet.datumapis.com/machine-uid"
+	LabelConsumerUID = "fleet.datumapis.com/consumer-uid"
+	LabelDeviceUID   = "fleet.datumapis.com/device-uid"
+)
+
+// TypedReference names an object by API group, kind and name, with no UID,
+// in the shape of Milo's ResourceClaim consumerRef. An empty APIGroup is the
+// core group.
+type TypedReference struct {
+	APIGroup string `json:"apiGroup"`
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+}
+
+// AllocatedMachineReference names the Machine within its consumer. The
+// incarnation is in the allocation's name and labels.
+type AllocatedMachineReference struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
 }
 
+// AllocatedDeviceReference names the Device in the allocation's namespace.
+// The incarnation is in the allocation's device-uid label.
+type AllocatedDeviceReference struct {
+	Name string `json:"name"`
+}
+
+// AcceptedContract is the class and profile Fleet accepted, with the exact
+// CPU and memory it allocated against.
+type AcceptedContract struct {
+	MachineClassRef   ContentReference  `json:"machineClassRef"`
+	MachineProfileRef ContentReference  `json:"machineProfileRef"`
+	CPU               CPURequirement    `json:"cpu"`
+	Memory            MemoryRequirement `json:"memory"`
+}
+
+// ContentReference pins an object's content by its generation and a digest
+// of its spec, which also tells same-name recreations apart.
+type ContentReference struct {
+	Name       string `json:"name"`
+	Generation int64  `json:"generation"`
+	// Digest is "sha256:<hex>" over the object's complete spec.
+	Digest string `json:"digest"`
+}
+
+// AllocationAuthority is the admission decision Fleet acted on.
+type AllocationAuthority struct {
+	Principal string `json:"principal"`
+	Decision  string `json:"decision"`
+}
+
+// MachineAllocation phases.
+const (
+	AllocationPending   = "Pending"
+	AllocationActive    = "Active"
+	AllocationReleasing = "Releasing"
+	AllocationReleased  = "Released"
+)
+
 type MachineAllocationStatus struct {
-	Phase      string             `json:"phase,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	// Wipe is the latest DeviceWipe the release created.
+	Wipe       *WipeReference     `json:"wipe,omitempty"`
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// WipeReference names a release's DeviceWipe and its step.
+type WipeReference struct {
+	Name string `json:"name"`
+	Step int32  `json:"step"`
 }
 
 type MachineAllocation struct {

@@ -1,5 +1,6 @@
-# Experimental handoff API: install on the Karmada API and participating cells.
-# Never install in consumer project APIs. Payloads contain private authority.
+# Federation handoff API: install on the Karmada API and participating cells.
+# Never install in consumer project APIs. A handoff carries one admitted
+# operation's site assignment, or asks for a Device's fence report.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -27,16 +28,19 @@ spec:
           properties:
             spec:
               type: object
-              required: [cell, requestJSON]
+              required: [cell, device]
               x-kubernetes-validations:
                 - rule: self == oldSelf
-                  message: Retained handoff intent is immutable
+                  message: A handoff is immutable
               properties:
                 cell: {type: string, minLength: 1, maxLength: 63}
-                requestJSON:
+                # The Device as namespace/name in the provider project.
+                device: {type: string, minLength: 3, maxLength: 317}
+                # The exact assignment JSON; absent on a fence report request.
+                assignmentJSON:
                   type: string
                   minLength: 1
-                  maxLength: 1048576
+                  maxLength: 65536
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true

@@ -1,19 +1,28 @@
 # Redfish-mode acceptance with the DMTF Redfish Interface Emulator
 
 This opt-in mode of the [multi-plane acceptance](multiplane.md) replaces the
-cell worker's libvirt path with a Redfish executor. Workers reach two persistent
-lab VMs only through the DMTF Redfish Interface Emulator and a small lab-only
-adapter. Everything else is the existing pipeline:
+cell worker's libvirt path with the Redfish site workers
+(`internal/site/redfishwork`). Workers reach two persistent lab VMs only through
+the DMTF Redfish Interface Emulator and a small lab-only adapter. Everything else
+is the same pipeline:
 
 - native Milo project APIs;
-- the shared allocator and installation lifecycle;
+- the allocator and [Device custody](../development/device-custody.md#cutover-increment-c),
+  with the coordinator running on the workstation;
 - Karmada delivery and reflection;
 - kro-created per-operation Jobs;
 - Flux-owned shared services.
 
+Status: the Redfish workers are **implemented and verified** by unit tests,
+including against TLS BMC stubs. The multi-plane Redfish run on custody is
+**implemented**, and its verification is pending. The execution records at the
+end of this page describe runs on the path before the cutover.
+
 It is a **local MVP proof**, not hardware qualification. No physical server, BMC,
-vendor Redfish implementation, UEFI firmware, TLS or production secret store
-was involved. See [what remains unqualified](#limitations-and-physical-hardware-readiness).
+vendor Redfish implementation, UEFI firmware or production secret store was
+involved. The lab BMC serves TLS with a key generated for each run, but that key
+is not a vendor certificate. See [what remains
+unqualified](#limitations-and-physical-hardware-readiness).
 
 ```sh
 task multiplane:redfish-acceptance
@@ -45,7 +54,7 @@ digest and the archive provenance are recorded in `evidence/image-id` and
 `evidence/redfish-upstream.json`.
 
 **No OpenStack component is used.** The image contains no Sushy, sushy-tools,
-Ironic or VirtualBMC. The Fleet executor's Redfish client is built on gofish
+Ironic or VirtualBMC. Fleet's Redfish client is built on gofish
 ([BMC client library](#bmc-client-library)). `hack/multiplane/test-redfish.py`
 fails if any of these names appears in the lock file, adapter or image
 definition.
@@ -68,6 +77,7 @@ does not fork or patch upstream files.
 | Concern | Served by |
 | --- | --- |
 | Service root, Systems collection and members, Chassis, Managers, ActionInfo, routing and JSON serialization | Upstream, unmodified |
+| TLS on port 8443 with a certificate and key from a mounted Secret, generated for each run | Adapter |
 | HTTP Basic authentication against a mounted credential (the service root stays anonymous, per the Redfish specification) | Adapter |
 | `ComputerSystem.Reset` with `On`, `ForceOff` and `ForceRestart` applied to one exact persistent libvirt domain per System | Adapter (replaces upstream's in-memory handler for the two lab Systems) |
 | `PowerState` read from libvirt on every System read | Adapter |
@@ -87,22 +97,23 @@ upstream emulator and a fake `virsh`, in the `bmc-self-test` phase.
              cell Flux layers (Redfish overlays of config/site)
  fleet-site-runtime (privileged)     fleet-site-bmc (unprivileged, all caps dropped)
    libvirtd + QEMU TCG  ◀── libvirt socket ── DMTF emulator 1.2.2 + lab adapter
-   lab-target-a  lab-target-b                 ▲  Redfish over HTTP, Basic auth
-   (persistent disks, serial capture)         │  Service 10.96.0.81:8000
+   lab-target-a  lab-target-b                 ▲  Redfish over TLS (pinned key), Basic auth
+   (persistent disks, serial capture)         │  Service 10.96.0.81:8443
         │ firmware DHCP/iPXE (static)         │
         ▼                                     │
- fleet-site-boot (journal read-only)   kro worker Job (per handoff, Redfish only)
-   per-MAC chain, artifacts            journal rw, boot evidence ro,
-                                       console capture ro, BMC credential
+ fleet-site-boot (site store read-only) kro worker Job (per handoff, Redfish only)
+   per-MAC chain, artifacts            site store rw, boot evidence ro,
+                                       console capture ro, per-Device credentials
 ```
 
 | Component | Owner | Holds |
 | --- | --- | --- |
 | `fleet-site-runtime` Deployment | Flux `fleet-site-services` (Redfish overlay) | libvirtd and QEMU; creates the two 2 GiB target disks once on the retained volume (`lab-disks`) and the console capture directory (`lab-console`) |
-| `fleet-site-bmc` Deployment and Service (fixed ClusterIP `10.96.0.81`) | Flux `fleet-site-services` | The emulator and adapter; the libvirt socket, NVRAM and audit (`bmc-state`), and the credential Secret |
+| `fleet-site-bmc` Deployment and Service (fixed ClusterIP `10.96.0.81`, port 8443) | Flux `fleet-site-services` | The emulator and adapter; the libvirt socket, NVRAM and audit (`bmc-state`), the credential Secret and the TLS Secret |
 | `fleet-site-bmc` ServiceAccount | Flux `fleet-site-base` (Redfish overlay) | No API token |
-| `fleet-site-bmc-credentials` Secret | Created by the harness in the `redfish-enroll` phase; in no source revision or Flux inventory | A synthetic username and a random 256-bit password per run |
-| Boot service and observer | Flux, as before | The Redfish read-only provider; no credential |
+| `fleet-site-bmc-credentials` and `fleet-site-bmc-tls` Secrets | Created by the harness in the `redfish-enroll` phase; in no source revision or Flux inventory | A synthetic username, a random 256-bit password and a TLS key and certificate generated per run |
+| One credential Secret per Device in the `fleet-site-credentials` namespace, named `bmc-` and 20 hex digits of the Device's SHA-256, labelled `fleet.datumapis.com/bmc-credential` | The harness, in `redfish-enroll` | The same username and password, and `tlsPublicKeySHA256`, the digest of the run's BMC key: each Device's approved pin. This follows the [BMC discovery](bmc-discovery.md) contract. Each operation's worker may get only the Secret of the Device its assignment names. kro derives that name, no handoff field names it, and the worker cannot list, watch or get another's. The `worker-rbac` and `delivery-faults` phases check this. |
+| Boot service and observer | Flux, as before | They read the site store; no credential |
 | `w-<handoff>` Job, ServiceAccount, Role, RoleBinding | kro, as before | The Redfish worker; **no libvirt socket**, no lab disks |
 
 Flux selects the overlays with the same source revision: in Redfish mode the
@@ -113,86 +124,77 @@ ownership audit covers the BMC Deployment, Service and ServiceAccount.
 
 ### Lab targets: identity before allocation
 
-| Target | Redfish System | UUID | NIC MAC / lease | Fleet asset | Role |
+| Target | Redfish System | UUID | NIC MAC / lease | Device | Role |
 | --- | --- | --- | --- | --- | --- |
-| A | `System-1` | `7f3d0c2e-…-0a1b2c3d4e0a` | `52:54:00:77:01:0a` / `.10` | `…/Device/synthetic-device-central-01` | The only published capacity |
-| B | `System-2` | `7f3d0c2e-…-0a1b2c3d4e0b` | `52:54:00:77:01:0b` / `.11` | `…/Device/synthetic-device-central-02` | Enrolled, never allocated; proves target isolation |
+| A | `System-1` | `7f3d0c2e-…-0a1b2c3d4e0a` | `52:54:00:77:01:0a` / `.10` | `fleet-provider/synthetic-device-central-01` | The only published capacity |
+| B | `System-2` | `7f3d0c2e-…-0a1b2c3d4e0b` | `52:54:00:77:01:0b` / `.11` | `fleet-provider/synthetic-device-central-02` | Enrolled at the site only, never a Device: it shares the lab BMC's key; proves target isolation |
 
 The disks, domain UUIDs and MACs exist before any allocation. Each installation
 or cleanup reuses target A's single persistent disk. The site enrollment is an
-explicit asset-to-System mapping in the worker template, with each target's BMC
+explicit Device-to-System mapping in the worker template, with each target's BMC
 endpoint, System Id, UUID, MAC, disk size and console capture name. The lab sets
 `"dhcp": "static"` because its dnsmasq leases are fixed; see
-[Boot network](boot-network.md) for synchronized DHCP. The executor writes the
-enrollment once into the journal directory and refuses a changed enrollment
-later.
+[Boot network](boot-network.md) for synchronized DHCP. Before any request, the
+worker checks the enrollment against the admitted snapshot.
 
-## Redfish executor contract
+## Redfish worker contract
 
-The [site framework for Device custody](../development/device-custody.md#site-execution-increment-b)
-ports the install and wipe phases below to per-Device fencing, a per-Device
-journal and per-Device credentials with the approved TLS pin. It is
-implemented and inert. This lab still runs the executor described here until
-the cutover.
+The Redfish workers (`internal/site/redfishwork`) run on the [site framework for
+Device custody](../development/device-custody.md#site-execution-increment-b).
+The framework owns the per-Device fence, the journal, the credential lookup, the
+TLS pin and identity checks, the deadline and result delivery. A worker has no
+libvirt client or lab dependency. A Redfish site refuses a libvirt URI and a
+mounted libvirt socket, so a Redfish worker has no hypervisor fallback.
 
-`internal/redfish` implements `executor.Client` behind the unchanged
-`LocalAssetMapping`, coordination and lifecycle code. It has no process
-execution, libvirt client or lab dependency. A Go test parses its imports to
-enforce this. `Open` refuses a `FLEET_LIBVIRT_URI` and a mounted
-`/run/fleet-libvirt`, so a Redfish worker has no hypervisor fallback.
-
-**Discovery (GETs only).** The executor walks the service root to the Systems
-collection and reads every member. Exactly one member must carry the enrolled
-UUID, and it must have the enrolled Id. A member with the enrolled Id and
-another UUID is a renumbered or swapped target and is refused. The reset target
-and ActionInfo must belong to that System. `On`, `ForceOff`, `Pxe` and `Hdd` must
-be advertised, and `Once` too when the System advertises its enabled values. It
-never follows redirects or `@odata.id` paths outside `/redfish/v1`. A rejected
-credential, a missing capability or an identity mismatch leaves the operation
-`admitted`, Unknown and effect-free.
+**Credential, pin and identity (GETs only).** Before any effect, the framework
+reads the Device's own credential Secret and connects only to the key its
+approved pin names. It walks the service root to the Systems collection and
+reads every member. Exactly one member must carry the enrolled UUID, and it must
+have the enrolled Id. A member with the enrolled Id and another UUID is a
+renumbered or swapped target and is refused. The reset target and ActionInfo must
+belong to that System. `On`, `ForceOff`, `Pxe` and `Hdd` must be advertised, and
+`Once` too when the System advertises its enabled values. It never follows
+redirects or `@odata.id` paths outside `/redfish/v1`. A rejected credential, a
+missing capability or an identity mismatch sends nothing.
 
 **BMC client library.** See [BMC client library](#bmc-client-library) for
 which requests go through gofish and which helpers are deliberately not used.
 
-**Exact inputs before effects.** The journal retains these before any Redfish
-request, under the same lock and fencing rules as the libvirt provider:
-
-- the exact request and its digest;
-- the enrolled target;
-- a random receipt and boot capability, with a 20-minute boot window;
-- allocation epoch, binding and fence.
-
-The discovered System is retained before the first effect.
+**Exact inputs before effects.** The assignment carries the operation's inputs
+exactly as admitted, with their digest, the fence and the snapshot. The framework
+checks the digest, the fence and the enrollment, and journals each step before it
+sends it. The worker records a boot admission with a random receipt and
+capability and a 20-minute window, at the operation's fence.
 
 **Phases.** An install is a network-boot installer phase (`Pxe`) followed by a
-disk-boot phase (`Hdd`). A cleanup is one network-boot wipe phase. Each phase
-proceeds in order:
+disk-boot phase (`Hdd`). A wipe is one network-boot phase. Each phase proceeds in
+order:
 
-1. Power off if needed. This is idempotent, because nothing of the phase has
+1. Power off if needed. This is safe to repeat, because nothing of the phase has
    booted.
-2. Arm a one-time override and read it back.
-3. Retain `<phase>-requested`, then `POST Reset On`.
-4. Observe until the phase may have started.
-5. Wait for the exact receipt and power off.
+2. Arm a one-time override. This is safe to repeat.
+3. In synchronized DHCP mode, wait until DHCP applied the reservation. See [Boot
+   network](boot-network.md).
+4. Journal `<phase>-power-on`, then `POST Reset On`.
+5. Wait for exactly one console receipt, and for a network boot, the boot
+   server's delivery evidence, and power off.
 
-**Lost responses and recovery.** HTTP success is never evidence. Any sign of a
-boot is treated as "may have run", and the phase is never requested again:
-
-- power not `Off`;
-- the one-time override consumed;
-- a boot delivery for the operation;
-- a receipt.
-
-A repeated `On` is sent only when the target is still `Off`, still armed and
-silent after a 45-second settle window, within three retained attempts.
+**Lost responses and recovery.** HTTP success is never evidence. Power-on is the
+only step that is not sent again: after a crash or a lost response, a resumed
+worker observes whether the boot began. Any sign of a boot counts: power not
+`Off`, a consumed one-time override, a boot delivery for the operation, or a
+receipt. With no sign, the outcome is unknown and nothing is sent again. The old
+executor sent `On` again, up to a small budget, when the server was still off and
+armed after a settle window; the workers do not.
 
 **Completion.** A phase completes only with exactly one console line
 `FLEET-INSTALLED:<receipt>`, `FLEET-DISK-BOOT:<receipt>` or
 `FLEET-WIPED:<receipt>:<disk bytes>`, and power `Off`. A second identical receipt
 means a duplicate execution and fails rather than succeeding. The installer
 phase also requires completed boot deliveries of the script, kernel and initrd;
-boot admission then closes durably. Worker exit codes and the
-Job/observer/management split are unchanged:
+boot admission then closes. Each verified phase is journaled, so a resumed
+worker continues from the next phase. Worker exit codes and the
+Job/observer/coordinator split are unchanged:
 [exit 0 never implies readiness](site-execution.md#authority-and-failure-contract).
 
 **Cleanup uses a booted environment.** The wipe environment is the same pinned
@@ -210,9 +212,9 @@ or DCO areas, firmware caches or crypto-erase.
 newest release at adoption, BSD-3-Clause, no transitive module dependencies). It
 replaced the handwritten `net/http` request helper and the `map[string]any`
 decoding of the service root, Systems collection and ComputerSystem. The
-provider (`provider.go`) is unchanged: it still owns validation, the journal,
-sequencing, recovery and results, and calls the same `Discover`, `Observe`,
-`SetBootOnce` and `Reset` methods.
+Redfish workers call its `Discover`, `Identify`, `Observe`, `SetBootOnce` and
+`Reset` methods. The site framework owns validation, the journal, sequencing,
+recovery and results.
 
 **What gofish provides here:**
 
@@ -232,11 +234,10 @@ sequencing, recovery and results, and calls the same `Discover`, `Observe`,
   query on a mutation, `OData-Version: 4.0`, and a 1 MiB response bound. A
   link returned by the BMC cannot send the credential elsewhere. Redirects are
   never followed. The environment proxy is not used, so the credential goes
-  only to the enrolled endpoint. The executor's TLS uses the system trust
-  store. `NewPinnedClient` verifies a BMC by the SHA-256 of its leaf public key
-  instead, through the same guard; [BMC discovery](bmc-discovery.md) uses it,
-  and the executor does not yet. The endpoint must still be a literal
-  `http(s)://IPv4:port`.
+  only to the enrolled endpoint. `NewPinnedClient` verifies a BMC by the SHA-256 of
+  its leaf public key instead of the system trust store, through the same guard.
+  [BMC discovery](bmc-discovery.md) and the site workers both use it, with the
+  Device's approved pin. The endpoint must still be a literal `http(s)://IPv4:port`.
 - **Identity and capability checks.** These are unchanged: one UUID match
   across all members with the enrolled Id, a reset target and ActionInfo on
   that System, and `On`, `ForceOff`, `Pxe`, `Hdd` and `Once` checked against
@@ -279,7 +280,7 @@ newest release) was rejected for these reasons:
 - Its `bmc` power facade tries the next provider after an error.
 
 Its vendor providers (Dell, Supermicro, ASRockRack, OpenBMC, IPMI) target BIOS,
-firmware and virtual-media work that this executor does not perform. **No
+firmware and virtual-media work that the workers do not perform. **No
 vendor-specific compatibility is added by this change.** It reuses a
 maintained Redfish client and schema model. It also fixes collection paging
 and adds `If-Match` on the boot override.
@@ -299,12 +300,16 @@ and adds `If-Match` on the boot override.
 
 These are documented lab seams, not production designs:
 
-- **Credential.** HTTP Basic over plain HTTP on the cell network, with one
-  synthetic per-run credential shared by the adapter (server side) and Redfish
-  workers (client side). There is no TLS, rotation, vault or per-BMC account.
-  The Secret is never in Git, a source revision or evidence. The harness keeps
-  the password in a `.token` file so the evidence secret scan covers it. Worker
-  and harness logs print outcome classes only.
+- **Credential and transport.** HTTP Basic over TLS. The harness generates one
+  synthetic username, password and TLS key for the run. The adapter serves that
+  key. Each Device has its own credential Secret, which holds the shared username
+  and password and the key's digest as its approved pin. A worker connects only to
+  that key, so a different key aborts the handshake before any credential is sent.
+  The lab seam is that one key and one account serve both targets. There is no
+  rotation, vault or per-BMC account. The Secrets are never in Git, a source
+  revision or evidence. The harness keeps the password in a `.token` file so the
+  evidence secret scan covers it. Worker and harness logs print outcome classes
+  only.
 - **Provisioning network.** The adapter defines one static libvirt network.
   dnsmasq gives each enrolled MAC a fixed address and the same boot file. That
   iPXE script chains to `/pxe/${net0/mac:hexhyp}/boot.ipxe`. The boot service
@@ -316,7 +321,7 @@ These are documented lab seams, not production designs:
   as a stand-in for serial-over-LAN or an installer callback. It is observation,
   not control.
 - **Admission.** The Redfish overlay's admission policy limits kro worker Jobs
-  to the journal claim, `emptyDir` and the BMC credential. It denies a
+  to the site state claim, `emptyDir` and the per-Device credentials. It denies a
   `libvirt*` subPath, `/run/fleet-libvirt` or lab-disk mount and a
   `FLEET_LIBVIRT_URI`, and requires `FLEET_SITE_PROVIDER=redfish`. The `rbac`
   phase proves each denial as kro's identity, and evidence re-checks every real
@@ -326,7 +331,8 @@ These are documented lab seams, not production designs:
 
 `hack/multiplane/acceptance-redfish.sh` runs every scenario of the
 [libvirt-mode sequence](multiplane.md#acceptance-phases) through the same
-federation and kro path, with these differences.
+federation and kro path, with these differences. The phase descriptions follow the
+harness at this change; verification of the run on custody is pending.
 
 **Before topology:**
 
@@ -335,7 +341,10 @@ federation and kro path, with these differences.
 - `bmc-self-test` runs the adapter self-test with no network.
 
 **Before Flux installs the shared services:** `redfish-enroll` creates the
-synthetic credential Secret.
+synthetic credential and TLS Secrets, one credential Secret per Device, and the
+fixture enrollment. The coordinator runs on the workstation
+(`hack/multiplane/coordinator.sh`), and a separate discovery identity writes
+fixture discovery for the lab Devices. Real BMC discovery is not part of this run.
 
 **Redfish phases:**
 
@@ -347,7 +356,7 @@ synthetic credential Secret.
 | `interrupt-pod`, `interrupt-job` | As in libvirt mode, now on the Redfish worker, still inside the installer phase |
 | `redfish-arm-lost-response`, `redfish-lost-response` | Armed before dispatch: the second effective `On` for System-1 (the first install's disk boot) is answered only after 45 seconds. The worker times out and exits 75 (Unknown). Its replacement observes the running or completed target and the consumed override. Exactly one `On` per phase was sent: `powerOnRequests` is one installer and one disk request. |
 | `resume` | The recreated Job completes the exact operation with one succeeded Pod |
-| `install-b` | After verified cleanup and reuse, consumer B installs on the same physical target in epoch 2 with a new receipt |
+| `install-b` | After the wipe and reuse, consumer B installs on the same physical target under a higher fence with a new receipt |
 | `boot-denials` | Closed per-MAC scripts and capabilities of all four operations, target B's MAC and unknown identities are denied over the live boot Service |
 | `redfish-isolation` | Target B: unchanged disk digest, no QEMU start, no console line, no mutating Redfish request. Target A: disk hashes as all zeroes. No domain running. Exports the BMC audit. |
 
@@ -374,24 +383,31 @@ Redfish-specific evidence files are `redfish-upstream.json`,
 ## Offline checks
 
 ```sh
-go test -race -count=1 ./internal/redfish ./cmd/fleet-multiplane ./internal/multiplane
+go test -race -count=1 ./internal/redfish ./internal/site/... ./cmd/fleet-multiplane ./internal/multiplane
 task multiplane:test-harness       # includes hack/multiplane/test-redfish.py
 ```
 
-The Go tests use a fake BMC whose fake guest fetches its script and artifacts
-from the real boot handler and writes console receipts. They cover:
+The Go tests in `internal/site/redfishwork` use a fake BMC whose fake guest
+fetches its script and artifacts from the real boot handler and writes console
+receipts. The site framework's tests in `internal/site` run against TLS stubs.
+Together they cover:
 
-- install, disk boot, cleanup and reuse;
-- exact replay;
-- a rejected credential, unsupported reset and renumbered or swapped UUIDs,
-  each with no effect;
-- a lost response after the effect, recovered without a repeat;
-- a lost request repeated exactly once;
-- duplicate receipts and identity change failing;
-- changed-retry conflict, stale-epoch fencing and an unenrolled asset;
-- journal-lock exclusion;
-- boot scoping by MAC, capability, admission and fence;
-- refusal of libvirt configuration, and the import-graph guard.
+- an install with both phases and one power-on each, a wipe that checks the
+  enrolled disk, and a bootstrap reference refused at the site
+  (`TestInstallationRunsBothPhasesWithOneOnEach`, `TestWipeChecksTheEnrolledDisk`,
+  `TestBootstrapIsRefusedAtTheSiteToo`);
+- a worker interrupted in either phase that resumes without a second power-on
+  (`TestAnInterruptedWorkerResumesWithoutASecondOn`,
+  `TestAWorkerInterruptedInTheDiskPhaseResumes`);
+- a server that never powers off ending the step
+  (`TestAServerThatNeverPowersOffEndsTheStep`);
+- a boot admission open only at the current fence
+  (`TestOnlyTheCurrentFenceHasAnOpenBootAdmission`);
+- synchronized DHCP following the open admission (`TestSyncedDHCPFollowsTheOpenAdmission`);
+- a pin mismatch and an identity mismatch sending nothing
+  (`TestPinMismatchSendsNothing`, `TestIdentityMismatchSendsNothing`), and a
+  rejected credential, unsupported reset and renumbered or swapped UUIDs, each
+  with no effect.
 
 `client_test.go` covers the gofish-backed client against a recording stub:
 
@@ -409,7 +425,7 @@ from the real boot handler and writes console receipts. They cover:
 - no environment proxy;
 - no credential, response body or endpoint in any error.
 
-The provider's fake BMC serves the emulator's string `"Required"` in
+The workers' fake BMC serves the emulator's string `"Required"` in
 ActionInfo.
 
 `test-redfish.py` renders the overlays and a staged Redfish revision with
@@ -424,6 +440,12 @@ kustomize and checks the following:
 - source pins, and no OpenStack dependency.
 
 ## Execution record
+
+The records below describe runs on the path before the cutover to Device custody,
+with the old executor, a site-wide journal and a shared credential over plain
+HTTP. They show what the lab and the harness proved then. They are not evidence
+for the Redfish workers. The multi-plane Redfish run on custody is implemented,
+and its verification is pending.
 
 ### Attempts before the first pass (2026-11-16)
 
@@ -596,7 +618,7 @@ sanitization all remain `false` in `summary.json`.
 These differences from physical hardware are known and **not** addressed by this
 MVP. They are listed as an explicit qualification checklist:
 
-1. **Real BMC.** Qualify the executor against at least one vendor Redfish
+1. **Real BMC.** Qualify the Redfish workers against at least one vendor Redfish
    implementation. Check ActionInfo and inline `AllowableValues`, the actual
    reset semantics (some BMCs reject `On` while on, or report `PoweringOn`), and
    whether `Once` overrides are consumed at POST. Check ETag/`If-Match`
@@ -608,10 +630,11 @@ MVP. They are listed as an explicit qualification checklist:
    order persistence.
 3. **Receipts.** Replace the read-only console capture with serial-over-LAN or
    an authenticated installer callback, and decide its trust model.
-4. **Credentials and transport.** Public-key pinning exists
-   (`NewPinnedClient`) but the executor does not use it. Per-BMC
-   accounts, a credential broker so workers never hold a long-lived password,
-   and rotation and revocation.
+4. **Credentials and transport.** Workers read a per-Device credential Secret
+   and connect only to the approved pin, but the lab uses one account and one key
+   for both targets. Still open: per-BMC accounts, a credential broker so
+   workers never hold a long-lived password, and rotation and revocation of both
+   the credential and the pinned key.
 5. **Provisioning network.** Synchronized DHCP reservations with served and
    withdrawn evidence are implemented and unit tested
    ([Boot network](boot-network.md)) but not exercised at a site. Still open:
@@ -622,19 +645,22 @@ MVP. They are listed as an explicit qualification checklist:
    Distinguish it from this logical overwrite.
 7. **Power semantics.** Physical power transitions take longer, may fail and may
    report intermediate states. Revisit the settle window, the outage tolerance
-   and the three-attempt `On` budget. Revisit installer and disk-boot power-off
-   as the completion signal; a real OS reboots and keeps running.
-8. **Fencing and journal.** One site journal fences all targets with one
-   allocatable target. Per-asset fencing, journal durability and HA are not
-   designed. Never reset the journal of a retained target
+   and the five-minute power-off bound. A worker never sends `On` a second time;
+   it observes. Revisit installer and disk-boot power-off as the completion
+   signal; a real OS reboots and keeps running.
+8. **Fencing and the site store.** Each Device has its own fence and journal on
+   one retained volume. Store durability across volume loss and HA are not
+   designed. Never reset the store of a retained target
    ([known limitations](multiplane.md#known-limitations-of-the-local-mvp)).
-9. **Enrollment.** The asset-to-System mapping is a static source value.
+9. **Enrollment.** The Device-to-System mapping is a static source value.
    Enrollment trust and attestation of the System identity (beyond Id and
    UUID) are open. Read-only [BMC discovery](bmc-discovery.md) reports
    observed identity into Device status but does not enroll.
-10. **Operator recovery.** Unknown operations, for example a power-off without
-    a receipt or an exhausted `On` budget, have no automated resolution. The
-    only recovery is to discard the disposable topology after inspection.
+10. **Operator recovery.** An unknown operation, for example a power-on with no
+    sign that the boot began, holds the Device. A person settles it with a
+    `DeviceRecovery`. Nothing retries it automatically, and the multi-plane run
+    does not exercise recovery. Its only resolution there is to discard the
+    disposable topology after inspection.
 
 The existing local-MVP limitations also apply: single node, trusted graph and
 service authors, and no image upgrade lifecycle.

@@ -36,4 +36,7 @@ config/multiplane/flux/gotk-components.yaml
 
 # Locally built binaries
 /fleet-multiplane
-/fleet-local-vm
+/fleet-manager
+/fleet-registration
+/fleet-simulator
+/fleet-standalone-smoke

@@ -2,7 +2,6 @@ package manager
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"go/ast"
 	"go/parser"
@@ -14,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/util/workqueue"
@@ -25,7 +23,6 @@ import (
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
-	"go.datum.net/fleet/internal/milo"
 )
 
 func TestInitialDependencyAddRetriesFirstListFailure(t *testing.T) {
@@ -41,9 +38,9 @@ func TestInitialDependencyAddRetriesFirstListFailure(t *testing.T) {
 		}).Build()
 	reader := &failFirstListReader{Reader: base, remaining: 1}
 	project := testProject("milo", "project")
-	mappers := Mappers{Reader: reader, Project: project, PrivateNamespace: "private"}
+	mappers := Mappers{Reader: reader, Project: project}
 	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[RouteRequest]())
-	typedRouteMap(mappers.Route(RouteClass, "")).Create(context.Background(), event.TypedCreateEvent[client.Object]{Object: class, IsInInitialList: true}, queue)
+	typedRouteMap(mappers.Route(RouteClass)).Create(context.Background(), event.TypedCreateEvent[client.Object]{Object: class, IsInInitialList: true}, queue)
 	route, shutdown := queue.Get()
 	if shutdown {
 		t.Fatal("initial Add did not enqueue route work")
@@ -258,62 +255,6 @@ func TestDeadlineStopWaitsForInFlightEmission(t *testing.T) {
 	}
 }
 
-func TestPrivateSecretRoutingRejectsForgedIdentities(t *testing.T) {
-	project := testProject("milo", "project")
-	valid := privateSecret(t, project, "default", "claim", "claim-uid", "machine-uid")
-	mapper := Mappers{Project: project, PrivateNamespace: "private"}
-	mutations := []*corev1.Secret{valid.DeepCopy(), valid.DeepCopy(), valid.DeepCopy(), valid.DeepCopy(), valid.DeepCopy(), valid.DeepCopy(), valid.DeepCopy(), valid.DeepCopy()}
-	mutations[0].Namespace = "wrong"
-	mutations[1].Type = corev1.SecretTypeOpaque
-	mutations[2].Labels["fleet.datumapis.com/private-record"] = "other"
-	mutations[3].Name = "user-chosen"
-	mutateCustody := func(secret *corev1.Secret, mutate func(*controller.ClaimCustodyRecord)) {
-		var record controller.ClaimCustodyRecord
-		if err := json.Unmarshal(secret.Data["record.json"], &record); err != nil {
-			t.Fatal(err)
-		}
-		mutate(&record)
-		secret.Data["record.json"], _ = json.Marshal(record)
-	}
-	mutateCustody(mutations[4], func(record *controller.ClaimCustodyRecord) { record.SchemaVersion = 99 })
-	mutateCustody(mutations[5], func(record *controller.ClaimCustodyRecord) { record.Scope.ProjectUID = "other-project" })
-	mutateCustody(mutations[6], func(record *controller.ClaimCustodyRecord) { record.ConsumerProject.UID = "other-project" })
-	mutateCustody(mutations[7], func(record *controller.ClaimCustodyRecord) { record.ClaimNamespace = "" })
-	for i, secret := range mutations {
-		if requests := mapper.RequestForPrivate(context.Background(), secret); len(requests) != 0 {
-			t.Fatalf("forgery %d amplified to %v", i, requests)
-		}
-		if values := privateMetadataIndexer("private", func(route controller.PrivateRecordRoute) []string { return one(string(route.ClaimUID)) })(secret); len(values) != 0 {
-			t.Fatalf("forgery %d entered reverse index: %v", i, values)
-		}
-	}
-	if requests := mapper.RequestForPrivate(context.Background(), valid); len(requests) != 1 {
-		t.Fatalf("valid private record routes %v", requests)
-	}
-}
-
-func TestPrivateIndexesIgnoreUnknownNestedRoutingLookalikes(t *testing.T) {
-	project := testProject("milo", "project")
-	secret := privateSecret(t, project, "default", "claim", "consumer-claim", "machine")
-	var raw map[string]any
-	if err := json.Unmarshal(secret.Data["record.json"], &raw); err != nil {
-		t.Fatal(err)
-	}
-	raw["unknown"] = map[string]any{"machineUID": "injected-machine", "networkUID": "injected-network", "networkInterfaceUID": "injected-interface", "claimUID": "injected-nic"}
-	secret.Data["record.json"], _ = json.Marshal(raw)
-	indexes := map[string]client.IndexerFunc{
-		"machine":   privateMetadataIndexer("private", func(route controller.PrivateRecordRoute) []string { return uidStrings(route.MachineUIDs) }),
-		"network":   privateMetadataIndexer("private", func(route controller.PrivateRecordRoute) []string { return uidStrings(route.NetworkUIDs) }),
-		"nic":       privateMetadataIndexer("private", func(route controller.PrivateRecordRoute) []string { return uidStrings(route.NICClaimUIDs) }),
-		"interface": privateMetadataIndexer("private", func(route controller.PrivateRecordRoute) []string { return uidStrings(route.InterfaceUIDs) }),
-	}
-	for name, index := range indexes {
-		if values := index(secret); len(values) != 0 {
-			t.Fatalf("unknown nested field entered %s index: %v", name, values)
-		}
-	}
-}
-
 func TestProjectVerifierBlocksHandlers(t *testing.T) {
 	project := testProject("milo", "project")
 	request := ProjectRequest{AuthorityID: "milo", ProjectUID: "project", Namespace: "default", Name: "claim", UID: "uid"}
@@ -334,14 +275,6 @@ func TestRouteVerifierUnavailableRetriesExactEvent(t *testing.T) {
 	reconciler := RouteReconciler{Project: project, Verifier: ProjectVerifierFunc(func(context.Context, controller.ProjectIdentity) error { return ErrEventWiringUnavailable }), Handler: HandlerFunc(func(context.Context, ProjectRequest) Outcome { t.Fatal("handler ran without wiring"); return Outcome{} })}
 	if result, err := reconciler.Reconcile(context.Background(), route); !errors.Is(err, ErrEventWiringUnavailable) || result.Requeue || result.RequeueAfter != 0 {
 		t.Fatalf("unwired route result=%#v err=%v", result, err)
-	}
-}
-
-func TestEntitlementRouteRequiresExactName(t *testing.T) {
-	mapper := Mappers{Project: testProject("milo", "project")}
-	wrong := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "other", UID: "uid"}}
-	if routes := mapper.Route(RouteEntitlement, "")(context.Background(), wrong); len(routes) != 0 {
-		t.Fatalf("wrong entitlement routed: %v", routes)
 	}
 }
 
@@ -379,87 +312,10 @@ func TestInstallationEventRoutesOnlySameNamespaceInitialReference(t *testing.T) 
 	project := testProject("milo", "project")
 	mapper := Mappers{Reader: kube, Project: project}
 	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: "left", Name: "bootstrap", UID: "installation"}}
-	routes := mapper.Route(RouteInstallation, "")(context.Background(), installation)
+	routes := mapper.Route(RouteInstallation)(context.Background(), installation)
 	requests, err := mapper.ResolveRoute(context.Background(), routes[0])
 	if err != nil || len(requests) != 1 || requests[0].UID != left.UID {
 		t.Fatalf("requests=%v err=%v", requests, err)
-	}
-}
-
-func TestPrivateInstallationInitialAddRecoversWithoutPublicInstallation(t *testing.T) {
-	project := testProject("milo", "project-a")
-	mapper := Mappers{Project: project, PrivateNamespace: "private"}
-	owned := privateInstallationSecret(t, project, "default", "bootstrap", "shared-installation-uid", "claim-uid")
-	want := ProjectRequest{AuthorityID: "milo", ProjectUID: "project-a", Namespace: "default", Name: "bootstrap", UID: "shared-installation-uid"}
-	for restart := 0; restart < 2; restart++ {
-		queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[ProjectRequest]())
-		typedMap(mapper.RequestForPrivateInstallation).Create(context.Background(), event.TypedCreateEvent[client.Object]{Object: owned, IsInInitialList: true}, queue)
-		request, shutdown := queue.Get()
-		if shutdown || request != want {
-			t.Fatalf("restart %d request=%#v want=%#v shutdown=%t", restart, request, want, shutdown)
-		}
-		queue.Done(request)
-		queue.ShutDown()
-	}
-	foreign := owned.DeepCopy()
-	var foreignRecord controller.InstallationRecord
-	if err := json.Unmarshal(foreign.Data["record.json"], &foreignRecord); err != nil {
-		t.Fatal(err)
-	}
-	foreignRecord.ConsumerProject = testProject("milo", "project-b")
-	foreignRecord.ClaimScope = controller.ProjectClaimScope(foreignRecord.ConsumerProject)
-	foreign.Data["record.json"], _ = json.Marshal(foreignRecord)
-	if requests := mapper.RequestForPrivateInstallation(context.Background(), foreign); len(requests) != 0 {
-		t.Fatalf("equal UID from foreign project lifetime routed: %v", requests)
-	}
-}
-
-func TestPendingEntitlementIndexAcceptsOnlyPreparedMiloAuthority(t *testing.T) {
-	project := testProject("milo", "project")
-	base := privateMiloAuthoritySecret(t, project, "default", "claim", "claim-uid")
-	index := pendingEntitlementProjects("private")
-	if values := index(base); len(values) != 1 || values[0] != "milo/project" {
-		t.Fatalf("prepared Milo authority index=%v", values)
-	}
-	for name, mutate := range map[string]func(*corev1.Secret){
-		"lifecycle": func(secret *corev1.Secret) {
-			secret.Name = "fleet-asset-record"
-			secret.Type = corev1.SecretType("fleet.datumapis.com/private-lifecycle")
-			secret.Labels["fleet.datumapis.com/private-record"] = "asset"
-		},
-		"wrong-state": func(secret *corev1.Secret) {
-			secret.Data["record.json"] = []byte(`{"state":"QuotaIntent","claimNamespace":"default","claimName":"claim","claimUID":"claim-uid","consumerProject":{"authorityID":"milo","uid":"project"}}`)
-		},
-		"has-entitlement": func(secret *corev1.Secret) {
-			secret.Data["record.json"] = []byte(`{"state":"Prepared","claimNamespace":"default","claimName":"claim","claimUID":"claim-uid","consumerProject":{"authorityID":"milo","uid":"project"},"entitlement":{"uid":"entitlement"}}`)
-		},
-	} {
-		secret := base.DeepCopy()
-		mutate(secret)
-		if values := index(secret); len(values) != 0 {
-			t.Fatalf("%s amplified into pending project index: %v", name, values)
-		}
-	}
-}
-
-func TestMiloOuterClaimMismatchCannotRouteOrIndex(t *testing.T) {
-	project := testProject("milo", "project")
-	secret := privateMiloAuthoritySecret(t, project, "default", "claim", "claim-uid")
-	var record milo.AuthorityRecord
-	if err := json.Unmarshal(secret.Data["record.json"], &record); err != nil {
-		t.Fatal(err)
-	}
-	record.ClaimUID = "substituted-outer-claim"
-	secret.Data["record.json"], _ = json.Marshal(record)
-	mapper := Mappers{Project: project, PrivateNamespace: "private"}
-	if requests := mapper.RequestForPrivate(context.Background(), secret); len(requests) != 0 {
-		t.Fatalf("mismatched authority record routed: %v", requests)
-	}
-	if values := privateMetadataIndexer("private", func(route controller.PrivateRecordRoute) []string { return one(string(route.ClaimUID)) })(secret); len(values) != 0 {
-		t.Fatalf("mismatched authority record indexed: %v", values)
-	}
-	if values := pendingEntitlementProjects("private")(secret); len(values) != 0 {
-		t.Fatalf("mismatched authority record entered pending index: %v", values)
 	}
 }
 

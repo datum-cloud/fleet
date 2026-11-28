@@ -160,18 +160,10 @@ func (d StaticDiscovery) Expected(context.Context) ([]multicluster.ClusterName, 
 	return append([]multicluster.ClusterName(nil), d...), nil
 }
 
-// NamedCache is an additional cache whose initial sync gates readiness, such
-// as the manager's private-record cache.
-type NamedCache struct {
-	Name  string
-	Cache interface{ WaitForCacheSync(context.Context) bool }
-}
-
 // AddHealthChecks registers liveness and the readiness boundary: discovery
-// has synced, every expected project is engaged, every engaged project cache
-// has synced, and every named cache has synced. Readiness never depends on a
-// provider integration.
-func AddHealthChecks(mgr mcmanager.Manager, discovery Discovery, tracker *EngageTracker, caches ...NamedCache) error {
+// has synced, every expected project is engaged, and every engaged project
+// cache has synced. Readiness never depends on a provider integration.
+func AddHealthChecks(mgr mcmanager.Manager, discovery Discovery, tracker *EngageTracker) error {
 	if mgr == nil || discovery == nil || tracker == nil {
 		return errors.New("health checks require a manager, discovery, and engagement tracker")
 	}
@@ -184,30 +176,7 @@ func AddHealthChecks(mgr mcmanager.Manager, discovery Discovery, tracker *Engage
 	if err := mgr.AddReadyzCheck("projects-engaged", ProjectsEngagedCheck(discovery, tracker)); err != nil {
 		return err
 	}
-	if err := mgr.AddReadyzCheck("project-caches-synced", EngagedCachesSyncedCheck(tracker)); err != nil {
-		return err
-	}
-	for _, c := range caches {
-		if c.Name == "" || c.Cache == nil {
-			return errors.New("named readiness cache requires a name and a cache")
-		}
-		if err := mgr.AddReadyzCheck(c.Name+"-synced", CacheSyncedCheck(c)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// CacheSyncedCheck fails until c has completed its initial sync.
-func CacheSyncedCheck(c NamedCache) healthz.Checker {
-	return func(req *http.Request) error {
-		ctx, cancel := context.WithTimeout(req.Context(), readinessProbeBudget)
-		defer cancel()
-		if !c.Cache.WaitForCacheSync(ctx) {
-			return fmt.Errorf("%s cache has not synced", c.Name)
-		}
-		return nil
-	}
+	return mgr.AddReadyzCheck("project-caches-synced", EngagedCachesSyncedCheck(tracker))
 }
 
 func DiscoverySyncedCheck(discovery Discovery) healthz.Checker {

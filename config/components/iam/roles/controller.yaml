@@ -19,6 +19,9 @@ spec:
     - metal.datumapis.com/machineallocations.get
     - metal.datumapis.com/machineallocations.watch
     - metal.datumapis.com/machineallocations.create
+    # An allocation that lost its Device before it ever held it is deleted,
+    # and the allocator selects again.
+    - metal.datumapis.com/machineallocations.delete
     - metal.datumapis.com/machineallocations.update
     - metal.datumapis.com/machineallocations.patch
     - metal.datumapis.com/machineallocations.updateStatus

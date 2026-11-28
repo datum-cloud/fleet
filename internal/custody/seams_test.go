@@ -99,6 +99,24 @@ func TestPrincipals(t *testing.T) {
 			t.Fatalf("%+v classified %s, want %s", creator, got, want)
 		}
 	}
+	// Credentials that carry no UID are identified by username alone.
+	byName := Principals{CreatorMetalProvider: {{Username: "svc-a"}}, CreatorReleaseController: {{Username: "svc-b"}}}
+	if err := byName.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for creator, want := range map[ops.Creator]CreatorClass{
+		{Username: "svc-a"}: CreatorMetalProvider,
+		{Username: "svc-b"}: CreatorReleaseController,
+		{Username: "svc-c"}: CreatorStaff,
+	} {
+		if got := byName.Classify(creator); got != want {
+			t.Fatalf("%+v classified %s, want %s", creator, got, want)
+		}
+	}
+	// A configured UID is checked: a creator without it is staff.
+	if got := principals.Classify(ops.Creator{Username: "svc-a"}); got != CreatorStaff {
+		t.Fatalf("a creator without the configured UID classified %s", got)
+	}
 	for _, bad := range []Principals{{CreatorStaff: {{Username: "x"}}}, {CreatorMetalProvider: {{}}}, {CreatorMetalProvider: {{Username: "x"}}, CreatorReleaseController: {{Username: "x"}}}} {
 		if bad.Validate() == nil {
 			t.Fatalf("%v validated", bad)
@@ -263,7 +281,7 @@ func TestCRDRules(t *testing.T) {
 		custody = e.custody(device.Name)
 		custody.Spec.DeviceRef.Name = "another"
 		requireInvalid(t, e.admin.Update(ctx, custody))
-		requireInvalid(t, e.admin.Create(ctx, &ops.DeviceCustody{ObjectMeta: metav1.ObjectMeta{Name: "mismatch", Namespace: "default"}, Spec: ops.DeviceCustodySpec{DeviceRef: ops.DeviceReference{Name: "other", UID: "u"}, State: ops.CustodyUnverified, Holder: ops.Holder{Type: ops.HolderNone}}}))
+		requireInvalid(t, e.admin.Create(ctx, &ops.DeviceCustody{ObjectMeta: metav1.ObjectMeta{Name: "mismatch", Namespace: "default"}, Spec: ops.DeviceCustodySpec{DeviceRef: ops.DeviceReference{Name: "other"}, State: ops.CustodyUnverified, Holder: ops.Holder{Type: ops.HolderNone}}}))
 		custody = e.custody(device.Name)
 		custody.Spec.Holder = ops.Holder{Type: ops.HolderAllocation}
 		requireInvalid(t, e.admin.Update(ctx, custody))

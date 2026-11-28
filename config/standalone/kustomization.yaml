@@ -4,11 +4,14 @@ commonAnnotations:
   fleet.datumapis.com/standalone-only: "true"
 resources:
   - ../base/crd
+  - ../components/inventory/crds
+  - ../components/device-operations/crds
   - ../base/simulator
   - namespaces.yaml
   - runtime-secret.yaml
   - rbac.yaml
   - fixtures.yaml
+  - site.yaml
   - smoke-cronjobs.yaml
 images:
   - name: ghcr.io/datum-cloud/fleet-simulator

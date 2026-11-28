@@ -65,7 +65,11 @@ type Config struct {
 	// PowerOffBound bounds how long the server may take to power off. It
 	// defaults to five minutes.
 	PowerOffBound time.Duration
-	Now           func() time.Time
+	// Synced means the site's DHCP is synchronized: a network boot waits
+	// until DHCP applied the boot NIC's reservation, and the operation ends
+	// only once every DHCP instance that served it withdrew it.
+	Synced bool
+	Now    func() time.Time
 }
 
 func (c Config) now() time.Time {
@@ -197,13 +201,16 @@ type powerOn struct {
 // boot only while an admission is open and its fence is still the Device's
 // stored fence.
 type Boot struct {
-	Operation string    `json:"operation"`
-	Fence     int64     `json:"fence"`
-	Mode      string    `json:"mode"`
-	MAC       string    `json:"mac"`
-	Receipt   string    `json:"receipt"`
-	Token     string    `json:"token"`
-	Expires   time.Time `json:"expires"`
+	Operation string `json:"operation"`
+	Fence     int64  `json:"fence"`
+	Mode      string `json:"mode"`
+	MAC       string `json:"mac"`
+	Receipt   string `json:"receipt"`
+	Token     string `json:"token"`
+	// Created is when the admission was created; DHCP reports before it
+	// are not this operation's.
+	Created time.Time `json:"created"`
+	Expires time.Time `json:"expires"`
 	// Phase is the network-booting phase, set while it may boot.
 	Phase  string `json:"phase,omitempty"`
 	Closed bool   `json:"closed,omitempty"`
@@ -216,7 +223,7 @@ const bootRecords = "boot"
 func (c Config) boot(ctx context.Context, work *site.Work, mode string) (Boot, error) {
 	store := work.Store()
 	var boot Boot
-	found, err := store.GetRecord(work.Device, bootRecords, work.Operation.UID, &boot)
+	found, err := store.GetRecord(work.Device, bootRecords, work.Key(), &boot)
 	if err != nil || found {
 		return boot, err
 	}
@@ -228,12 +235,12 @@ func (c Config) boot(ctx context.Context, work *site.Work, mode string) (Boot, e
 		return boot, err
 	}
 	_, _, _, window := c.durations()
-	boot = Boot{Operation: work.Operation.UID, Fence: work.Fence, Mode: mode, MAC: strings.ToLower(conn(work).Target.MAC), Receipt: hex.EncodeToString(receipt), Token: hex.EncodeToString(token), Expires: c.now().Add(window).UTC()}
-	return boot, store.PutRecord(work.Device, work.Fence, bootRecords, work.Operation.UID, boot)
+	boot = Boot{Operation: work.Key(), Fence: work.Fence, Mode: mode, MAC: strings.ToLower(conn(work).Target.MAC), Receipt: hex.EncodeToString(receipt), Token: hex.EncodeToString(token), Created: c.now().UTC(), Expires: c.now().Add(window).UTC()}
+	return boot, store.PutRecord(work.Device, work.Fence, bootRecords, work.Key(), boot)
 }
 
 func (c Config) saveBoot(work *site.Work, boot Boot) error {
-	return work.Store().PutRecord(work.Device, work.Fence, bootRecords, work.Operation.UID, boot)
+	return work.Store().PutRecord(work.Device, work.Fence, bootRecords, work.Key(), boot)
 }
 
 func (c Config) run(ctx context.Context, work *site.Work, phases []phase) ([]ops.StepEvidence, error) {
@@ -271,6 +278,11 @@ func (c Config) run(ctx context.Context, work *site.Work, phases []phase) ([]ops
 				return nil, err
 			}
 		}
+		if ph.mode != "" && c.Synced && !requested {
+			if err := c.awaitReservation(ctx, work, boot); err != nil {
+				return nil, err
+			}
+		}
 		// Power on is sent once. After a crash or lost response it is
 		// observed: any sign that the boot began counts, and no sign leaves
 		// the outcome unknown rather than sending it again.
@@ -296,6 +308,11 @@ func (c Config) run(ctx context.Context, work *site.Work, phases []phase) ([]ops
 			return nil, err
 		}
 		evidence = append(evidence, ops.StepEvidence{Name: ph.name, CompletedAt: metaNow(c.now())})
+	}
+	if c.Synced {
+		if err := c.awaitWithdrawal(ctx, work, boot); err != nil {
+			return nil, err
+		}
 	}
 	return evidence, nil
 }
@@ -440,7 +457,7 @@ func BootDirectory(root, operationUID string) string {
 }
 
 func (c Config) deliveries(work *site.Work) map[string]bool {
-	data, _ := os.ReadFile(filepath.Join(BootDirectory(c.BootRoot, work.Operation.UID), "boot-delivery.log"))
+	data, _ := os.ReadFile(filepath.Join(BootDirectory(c.BootRoot, work.Key()), "boot-delivery.log"))
 	done := map[string]bool{}
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
@@ -488,7 +505,7 @@ func OpenAdmission(store *site.Store, mac string, now time.Time) (Boot, bool, er
 		if json.Unmarshal(record.Data, &boot) != nil || boot.MAC != strings.ToLower(mac) || boot.Phase == "" || boot.Closed || !now.Before(boot.Expires) {
 			continue
 		}
-		fence, _, err := store.Current(record.Device)
+		fence, _, err := store.Peek(record.Device)
 		if err != nil {
 			return Boot{}, false, err
 		}

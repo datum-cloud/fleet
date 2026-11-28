@@ -30,14 +30,28 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: {name: fleet-synthetic-provider-writer, namespace: fleet-provider}
 rules:
+  # The Metal provider selects capacity, records allocations and creates
+  # installations. It reads custody and Devices only to skip taken capacity;
+  # custody decides.
   - apiGroups: [metal.datumapis.com]
     resources: [machinecapacities]
-    resourceNames: [central1-baremetal-01]
-    verbs: [get]
+    verbs: [get, list]
   - apiGroups: [metal.datumapis.com]
     resources: [machinecapacities/status]
     resourceNames: [central1-baremetal-01]
     verbs: [get, update]
+  - apiGroups: [metal.datumapis.com]
+    resources: [machineallocations]
+    verbs: [get, list, create, delete]
+  - apiGroups: [metal.datumapis.com]
+    resources: [machineallocations/status]
+    verbs: [get, update]
+  - apiGroups: [fleet.datumapis.com]
+    resources: [deviceinstallations]
+    verbs: [get, list, create]
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devices, devicecustodies]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -94,17 +108,110 @@ roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-synthetic
 subjects:
   - {kind: ServiceAccount, name: fleet-standalone-smoke, namespace: fleet-system}
 ---
+# The custody coordinator writes custody and operation status, and reads the
+# Devices, allocations and operations custody depends on.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-custody-coordinator, namespace: fleet-system}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fleet-custody-coordinator-token
+  namespace: fleet-system
+  annotations: {kubernetes.io/service-account.name: fleet-custody-coordinator}
+type: kubernetes.io/service-account-token
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
-metadata: {name: fleet-private-record-writer, namespace: fleet-system-private}
+metadata: {name: fleet-custody-coordinator, namespace: fleet-provider}
 rules:
-  - apiGroups: [""]
-    resources: [secrets]
-    verbs: [get, list, watch, create, update]
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devices]
+    verbs: [get, list, watch]
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devicecustodies]
+    verbs: [get, list, watch, create, update, delete]
+  - apiGroups: [fleet.datumapis.com]
+    resources: [deviceinstallations, devicewipes, devicerecoveries]
+    verbs: [get, list, watch, delete]
+  - apiGroups: [fleet.datumapis.com]
+    resources: [deviceinstallations/status, devicewipes/status, devicerecoveries/status]
+    verbs: [get, update]
+  - apiGroups: [metal.datumapis.com]
+    resources: [machineallocations]
+    verbs: [get, list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
-metadata: {name: fleet-private-record-writer, namespace: fleet-system-private}
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-private-record-writer}
+metadata: {name: fleet-custody-coordinator, namespace: fleet-provider}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-custody-coordinator}
 subjects:
-  - {kind: ServiceAccount, name: fleet-standalone-smoke, namespace: fleet-system}
+  - {kind: ServiceAccount, name: fleet-custody-coordinator, namespace: fleet-system}
+---
+# A BMC key must be unique among every Device that is not retired, so the
+# coordinator reads Devices in every namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: fleet-custody-coordinator-devices}
+rules:
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devices]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: fleet-custody-coordinator-devices}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: fleet-custody-coordinator-devices}
+subjects:
+  - {kind: ServiceAccount, name: fleet-custody-coordinator, namespace: fleet-system}
+---
+# The release controller creates the wipes of a release.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-release-controller, namespace: fleet-system}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fleet-release-controller-token
+  namespace: fleet-system
+  annotations: {kubernetes.io/service-account.name: fleet-release-controller}
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-release-controller, namespace: fleet-provider}
+rules:
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devicewipes]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-release-controller, namespace: fleet-provider}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-release-controller}
+subjects:
+  - {kind: ServiceAccount, name: fleet-release-controller, namespace: fleet-system}
+---
+# The simulator site's fixture discovery writes only the status of the
+# Device it serves.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-simulator-discovery, namespace: fleet-provider}
+rules:
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devices]
+    resourceNames: [synthetic-device-central-01]
+    verbs: [get]
+  - apiGroups: [fleet.datumapis.com]
+    resources: [devices/status]
+    resourceNames: [synthetic-device-central-01]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-simulator-discovery, namespace: fleet-provider}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-simulator-discovery}
+subjects:
+  - {kind: ServiceAccount, name: fleet-simulator, namespace: fleet-system}

@@ -34,7 +34,7 @@ type Config struct {
 	APIVersion string `json:"apiVersion"`
 	Kind       string `json:"kind"`
 	// AuthorityID names the configured Milo authority recorded in every
-	// project identity and private custody record.
+	// project identity.
 	AuthorityID string          `json:"authorityID"`
 	Discovery   DiscoveryConfig `json:"discovery"`
 }

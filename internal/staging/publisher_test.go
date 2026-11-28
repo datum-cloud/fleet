@@ -12,6 +12,7 @@ import (
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
+	"go.datum.net/fleet/internal/tenancy"
 )
 
 func TestPublisherCreatesProtectedReferenceAndExactProfileCopy(t *testing.T) {
@@ -35,7 +36,7 @@ func TestPublisherCreatesProtectedReferenceAndExactProfileCopy(t *testing.T) {
 	if err := consumer.Get(ctx, client.ObjectKey{Name: class.Name}, &publishedClass); err != nil {
 		t.Fatal(err)
 	}
-	if publishedClass.Spec.Source == nil || publishedClass.Spec.Source.Project != providerProject.RouteName || publishedClass.Spec.Source.Name != class.Name || !sourceResolved(&publishedClass) {
+	if publishedClass.Spec.Source == nil || publishedClass.Spec.Source.PublisherRef != tenancy.Project(providerProject.RouteName) || publishedClass.Spec.Source.Name != class.Name || !sourceResolved(&publishedClass) {
 		t.Fatalf("published class = %#v", publishedClass)
 	}
 	if publishedClass.Status.ResolvedClass.ProfilePolicy.AllowedProfiles[0].Name != profile.Name || publishedClass.Annotations[publicationSourceUIDAnnotation] != string(class.UID) {

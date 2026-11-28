@@ -2,15 +2,21 @@ package custody
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -33,15 +39,16 @@ var (
 // SiteResult is what a site reports for one operation. It always carries the
 // operation's fence.
 type SiteResult struct {
-	Site      string
-	Device    string
-	Operation ops.OperationReference
-	Fence     int64
+	Site      string                 `json:"site"`
+	Device    string                 `json:"device"`
+	Operation ops.OperationReference `json:"operation"`
+	Fence     int64                  `json:"fence"`
 	// Phase is Dispatched, Verifying, Succeeded, Failed or OutcomeUnknown.
-	Phase    ops.Phase
-	Reason   string
-	Message  string
-	Evidence []byte
+	Phase   ops.Phase `json:"phase"`
+	Reason  string    `json:"reason,omitempty"`
+	Message string    `json:"message,omitempty"`
+	// Evidence is the kind's typed evidence as JSON.
+	Evidence json.RawMessage `json:"evidence,omitempty"`
 }
 
 // update reads custody, applies change and writes it with the
@@ -75,6 +82,22 @@ func ignoreNoChange(err error) error {
 	return err
 }
 
+// OperationKey is the site's name for one admission of an operation: its
+// lowercased kind, name and fence. A same-name operation admitted later has
+// a higher fence and so another key. It is a valid site record and file
+// name: a name too long for that is replaced by its digest.
+func OperationKey(reference ops.OperationReference, fence int64) string {
+	kind, suffix := strings.ToLower(reference.Kind), "."+strconv.FormatInt(fence, 10)
+	if key := kind + "." + reference.Name + suffix; len(key) <= maxOperationKey {
+		return key
+	}
+	sum := sha256.Sum256([]byte(reference.Name))
+	return kind + "." + hex.EncodeToString(sum[:])[:32] + suffix
+}
+
+// maxOperationKey is the site store's limit on a record name.
+const maxOperationKey = 128
+
 // AcceptResult records a site result in custody. A result whose fence or
 // operation does not match the active operation is rejected and recorded as
 // a rejected fence; ErrStaleFence is returned either way, so the site
@@ -85,7 +108,7 @@ func (c *Coordinator) AcceptResult(ctx context.Context, result SiteResult) error
 	// unregistered kind is rejected as stale below.
 	var operation ops.Operation
 	if kind := c.Registry.Kind(result.Operation.Kind); kind != nil && len(result.Evidence) != 0 {
-		found, _, err := c.get(ctx, result.Operation)
+		found, _, err := c.get(ctx, result.Operation, result.Fence)
 		if err != nil {
 			return err
 		}
@@ -161,7 +184,7 @@ func (c *Coordinator) AcceptResult(ctx context.Context, result SiteResult) error
 		case ops.PhaseFailed:
 			c.finishActive(custody, *active, ops.PhaseFailed, result.Reason, result.Message, evidence)
 		case ops.PhaseSucceeded:
-			if hold := spec.RecoveryHold; hold != nil && active.Settles != nil && *active.Settles == hold.OperationReference {
+			if hold := spec.RecoveryHold; hold != nil && active.Settles != nil && *active.Settles == heldReference(*hold) {
 				spec.RecoveryHold = nil
 			}
 			c.finishActive(custody, *active, ops.PhaseSucceeded, result.Reason, result.Message, evidence)
@@ -185,22 +208,34 @@ func progressRank(phase ops.Phase) int {
 // The allocator decides with this update, never with the advisory Available
 // condition. A claim that already names the allocation succeeds, so a retry
 // after a lost response does not claim a second server.
-func (c *Coordinator) Claim(ctx context.Context, deviceName, allocation string) error {
-	device, err := c.device(ctx, deviceName)
-	if err != nil {
-		return err
-	}
-	if device == nil || inventory.LifecycleOf(device) != inventory.DeviceActive {
-		return fmt.Errorf("%w: the Device is not Active", ErrUnavailable)
+//
+// deviceUID is the Device incarnation the allocation was made against, from
+// its device-uid label. Each attempt of the conditional update reads the
+// Device again and requires both it and custody's label to name that
+// incarnation, so a Device recreated after selection is never claimed for an
+// allocation made against the earlier one.
+func (c *Coordinator) Claim(ctx context.Context, deviceName string, deviceUID types.UID, allocation string) error {
+	if deviceUID == "" {
+		return fmt.Errorf("%w: the allocation names no Device incarnation", ErrUnavailable)
 	}
 	return ignoreNoChange(c.update(ctx, deviceName, func(custody *ops.DeviceCustody) error {
+		device, err := c.device(ctx, deviceName)
+		if err != nil {
+			return err
+		}
+		switch {
+		case device == nil, device.UID != deviceUID:
+			return fmt.Errorf("%w: the Device is not the incarnation the allocation names", ErrUnavailable)
+		case !custody.DeletionTimestamp.IsZero(), custody.Labels[ops.LabelDeviceUID] != string(deviceUID):
+			return fmt.Errorf("%w: custody is for another Device incarnation", ErrUnavailable)
+		}
 		spec := &custody.Spec
 		if spec.Holder.Type == ops.HolderAllocation && spec.Holder.AllocationRef != nil && spec.Holder.AllocationRef.Name == allocation {
 			return errNoChange
 		}
 		switch {
-		case !custody.DeletionTimestamp.IsZero(), spec.DeviceRef.UID != string(device.UID):
-			return fmt.Errorf("%w: custody is for another Device incarnation", ErrUnavailable)
+		case inventory.LifecycleOf(device) != inventory.DeviceActive:
+			return fmt.Errorf("%w: the Device is not Active", ErrUnavailable)
 		case spec.State != ops.CustodyVerified:
 			return fmt.Errorf("%w: custody is Unverified", ErrUnavailable)
 		case spec.Holder.Type != ops.HolderNone:

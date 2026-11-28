@@ -18,7 +18,8 @@ type Results struct{ store *Store }
 
 func NewResults(store *Store) *Results { return &Results{store: store} }
 
-type storedResult struct {
+// Stored is one result the site holds, with its "<namespace>/<name>" Device.
+type Stored struct {
 	Device string             `json:"device"`
 	Result custody.SiteResult `json:"result"`
 }
@@ -37,7 +38,7 @@ func (r *Results) Put(device string, result custody.SiteResult) (custody.SiteRes
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return result, err
 	}
-	data, err := json.Marshal(storedResult{Device: device, Result: result})
+	data, err := json.Marshal(Stored{Device: device, Result: result})
 	if err != nil {
 		return result, err
 	}
@@ -61,7 +62,7 @@ func (r *Results) Put(device string, result custody.SiteResult) (custody.SiteRes
 	// content, so a reader never sees a partial result.
 	if err := os.Link(file.Name(), filepath.Join(dir, resultName(result))); err != nil {
 		if os.IsExist(err) {
-			stored, found, readErr := r.Get(device, result.Operation.UID, result.Fence)
+			stored, found, readErr := r.Get(device, result.Operation, result.Fence)
 			if readErr != nil || !found {
 				return result, errors.New("site: a stored result is unreadable")
 			}
@@ -78,15 +79,15 @@ func (r *Results) Put(device string, result custody.SiteResult) (custody.SiteRes
 }
 
 // Get returns the stored result for an operation and fence.
-func (r *Results) Get(device, operation string, fence int64) (custody.SiteResult, bool, error) {
-	data, err := os.ReadFile(filepath.Join(r.dir(device), resultName(custody.SiteResult{Operation: ops.OperationReference{UID: operation}, Fence: fence})))
+func (r *Results) Get(device string, operation ops.OperationReference, fence int64) (custody.SiteResult, bool, error) {
+	data, err := os.ReadFile(filepath.Join(r.dir(device), resultName(custody.SiteResult{Operation: operation, Fence: fence})))
 	if os.IsNotExist(err) {
 		return custody.SiteResult{}, false, nil
 	}
 	if err != nil {
 		return custody.SiteResult{}, false, err
 	}
-	var stored storedResult
+	var stored Stored
 	if err := json.Unmarshal(data, &stored); err != nil {
 		return custody.SiteResult{}, false, errors.New("site: a stored result is unreadable")
 	}
@@ -94,31 +95,40 @@ func (r *Results) Get(device, operation string, fence int64) (custody.SiteResult
 }
 
 func resultName(result custody.SiteResult) string {
-	return result.Operation.UID + "-" + jsonInt(result.Fence) + ".json"
+	return custody.OperationKey(result.Operation, result.Fence) + ".json"
 }
 
 func jsonInt(value int64) string { data, _ := json.Marshal(value); return string(data) }
 
 // Pending returns every stored result, oldest file name first.
-func (r *Results) Pending() ([]storedResult, error) {
+func (r *Results) Pending() ([]Stored, error) {
 	paths, err := filepath.Glob(filepath.Join(r.store.root, "devices", "*", "results", "*.json"))
 	if err != nil {
 		return nil, err
 	}
 	sort.Strings(paths)
-	var out []storedResult
+	var out []Stored
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err
 		}
-		var stored storedResult
+		var stored Stored
 		if err := json.Unmarshal(data, &stored); err != nil {
 			return nil, errors.New("site: a stored result is unreadable")
 		}
 		out = append(out, stored)
 	}
 	return out, nil
+}
+
+// Forget deletes the site's copy of a result after the coordinator accepted
+// it or rejected it for a stale fence.
+func (r *Results) Forget(device string, result custody.SiteResult) error {
+	if err := os.Remove(filepath.Join(r.dir(device), resultName(result))); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // Deliver offers every stored result to accept, which reports it to the
@@ -137,7 +147,7 @@ func (r *Results) Deliver(ctx context.Context, accept func(context.Context, cust
 			failed = errors.Join(failed, err)
 			continue
 		}
-		if err := os.Remove(filepath.Join(r.dir(stored.Device), resultName(stored.Result))); err != nil && !os.IsNotExist(err) {
+		if err := r.Forget(stored.Device, stored.Result); err != nil {
 			return err
 		}
 	}

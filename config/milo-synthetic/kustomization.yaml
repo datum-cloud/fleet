@@ -5,3 +5,8 @@ resources:
   - ../components/iam
   - ../components/service-catalog
   - ../components/inventory
+  # Device custody and operations without the creator webhook: this root
+  # installs no webhook, as it installs no registration webhook.
+  - ../components/device-operations/crds
+  - ../components/device-operations/protected-resources
+  - ../components/device-operations/roles

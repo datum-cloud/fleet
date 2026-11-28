@@ -6,7 +6,6 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -18,17 +17,19 @@ import (
 func (c *Coordinator) SweepRetention(ctx context.Context) (int, error) {
 	cfg := c.config()
 	cutoff := c.now().Add(-cfg.Retention)
-	referenced := map[types.UID]bool{}
+	// Custody names operations by kind and name, with the fence they were
+	// admitted at.
+	referenced := map[ops.OperationReference]bool{}
 	var custodies ops.DeviceCustodyList
 	if err := c.Client.List(ctx, &custodies, client.InNamespace(cfg.Namespace)); err != nil {
 		return 0, err
 	}
 	for _, custody := range custodies.Items {
 		if active := custody.Spec.ActiveOperation; active != nil {
-			referenced[types.UID(active.UID)] = true
+			referenced[active.OperationReference] = true
 		}
 		if hold := custody.Spec.RecoveryHold; hold != nil {
-			referenced[types.UID(hold.UID)] = true
+			referenced[hold.OperationReference] = true
 		}
 	}
 	deleted := 0
@@ -39,7 +40,7 @@ func (c *Coordinator) SweepRetention(ctx context.Context) (int, error) {
 		}
 		for _, operation := range kind.Items(list) {
 			status := operation.OperationStatus()
-			if !status.Phase.Ended() || status.FinishedAt == nil || !status.FinishedAt.Time.Before(cutoff) || referenced[operation.GetUID()] {
+			if !status.Phase.Ended() || status.FinishedAt == nil || !status.FinishedAt.Time.Before(cutoff) || referenced[ops.OperationReference{Kind: kind.GVK.Kind, Name: operation.GetName()}] {
 				continue
 			}
 			// A succeeded retirement is the only record of it until

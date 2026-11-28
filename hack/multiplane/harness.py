@@ -26,15 +26,34 @@ STATUS_BY_EXIT = {EXIT_PASSED: 'passed', EXIT_FAILED: 'failed', EXIT_PREFLIGHT: 
 DEBIAN = 'debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc'
 # Subcommands and errors the live harness depends on. A missing one blocks before any resource exists.
 REQUIRED_SOURCE_MARKERS = tuple('"%s"' % c for c in ('seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse',
-                                                     'asset', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer')) + ('multiplane.ErrLocationNotServed',)
-READINESS_PACKAGES = ('./internal/coordination', './internal/multiplane', './internal/localvm', './cmd/fleet-multiplane')
+                                                     'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer')) + ('multiplane.ErrLocationNotServed',)
+READINESS_PACKAGES = ('./internal/coordination', './internal/custody', './internal/site/...', './internal/multiplane', './cmd/fleet-multiplane')
 # Redfish mode (run.sh --redfish) adds its executor and probe to the readiness gate.
 PROVIDER = os.environ.get('FLEET_SITE_PROVIDER', 'libvirt')
 if PROVIDER == 'redfish':
-    REQUIRED_SOURCE_MARKERS += ('"redfish-probe"', '"install-b"', 'redfish.Open()')
+    REQUIRED_SOURCE_MARKERS += ('"redfish-probe"', '"install-b"', 'redfish.NewPinnedClient')
     READINESS_PACKAGES += ('./internal/redfish',)
-# Lab targets behind the Redfish emulator: System Id -> persistent libvirt domain.
-LAB_DOMAINS = {'System-1': 'fleet-lab-target-a', 'System-2': 'fleet-lab-target-b'}
+# The one Device the acceptance allocates, as the site store names it. In
+# Redfish mode it is enrolled as lab target A (System-1), a persistent domain.
+DEVICE = 'fleet-provider/synthetic-device-central-01'
+LAB_DOMAIN = 'fleet-lab-target-a'
+# The site store on the cell's retained volume (internal/site/store.go): one
+# directory per Device, named by the first 16 bytes of the Device's SHA-256.
+SITE_STORE = '/var/lib/fleet-local/site'
+
+
+def device_dir(device=DEVICE):
+    return SITE_STORE + '/devices/' + hashlib.sha256(device.encode()).hexdigest()[:32]
+
+
+STATE_PATH = device_dir() + '/state.json'
+RESULTS_DIR = device_dir() + '/results'
+# The journaled step that ends each kind, in either mode (internal/site/vmwork
+# and internal/site/redfishwork).
+FINAL_STEPS = {'DeviceInstallation': ('disk-verified',), 'DeviceWipe': ('wipe', 'wipe-verified')}
+# Provider-project custody records, read with the provider's bootstrap credential.
+CUSTODY_KINDS = ('devicecustodies.fleet.datumapis.com', 'deviceinstallations.fleet.datumapis.com', 'devicewipes.fleet.datumapis.com',
+                 'devicerecoveries.fleet.datumapis.com', 'machineallocations.metal.datumapis.com')
 
 
 def now():
@@ -256,11 +275,25 @@ def runtime_exec(state, *command, timeout=20):
                     'deploy/fleet-site-runtime', '-c', 'libvirt', '--', *command], timeout)
 
 
-def journal(state):
-    code, out, err = runtime_exec(state, 'cat', '/var/lib/fleet-local/journal.json')
+def read_site_store(run):
+    """The Device's site store state and its stored results, or (None, []).
+    run(*command) runs a read-only command in the runtime Pod and returns
+    (exit code, stdout)."""
+    code, out = run('cat', STATE_PATH)
     if code != 0:
-        return None
-    return json.loads(out)
+        return None, []
+    store = json.loads(out)
+    code, out = run('sh', '-c', 'for f in %s/*.json; do [ -f "$f" ] && cat "$f" && echo; done; true' % RESULTS_DIR)
+    return store, [json.loads(l) for l in out.splitlines() if l.strip()] if code == 0 else []
+
+
+def site_store(state):
+    return read_site_store(lambda *command: runtime_exec(state, *command)[:2])
+
+
+def journal(state):
+    store, results = site_store(state)
+    return None if store is None else sanitized_operations(store, results)
 
 
 def domains(state):
@@ -269,18 +302,72 @@ def domains(state):
     return out.split() if code == 0 else None
 
 
-def domain_name(operation_id):
-    return 'fleet-local-' + hashlib.sha256(operation_id.encode()).hexdigest()[:24]
+def key(operation_uid):
+    """An operation's 16-character key in domain, disk and boot evidence names."""
+    return hashlib.sha256(operation_uid.encode()).hexdigest()[:16]
 
 
-def sanitized_operations(j):
-    """Only non-secret fields: no fence, boot capability or receipt."""
-    ops = []
-    for r in (j or {}).get('operations', {}).values():
-        ops.append({'id': r['request']['id'], 'kind': r['request']['kind'], 'epoch': r['request']['epoch'],
-                    'stage': r.get('stage'), 'phase': r.get('result', {}).get('phase'), 'bootClosed': r.get('bootClosed', False),
-                    'domain': LAB_DOMAINS.get(r.get('target', {}).get('systemID'), '?') if (j or {}).get('provider') == 'redfish' else domain_name(r['request']['id'])})
-    return ops
+def domain_name(operation_uid):
+    return 'fleet-local-' + key(operation_uid)
+
+
+def operation_kind(steps):
+    return 'DeviceWipe' if any(s == 'wipe' or s.startswith('wipe-') for s in steps) else 'DeviceInstallation'
+
+
+def operation_key(kind, name, fence):
+    """The site's key for one admission of an operation, as
+    custody.OperationKey builds it: no object UID is in any spec."""
+    key = '%s.%s.%d' % (kind.lower(), name, fence)
+    if len(key) <= 128:
+        return key
+    return '%s.%s.%d' % (kind.lower(), hashlib.sha256(name.encode()).hexdigest()[:32], fence)
+
+
+def provider_key(item):
+    """A provider-project operation's site key, from its admitted fence."""
+    return operation_key(item['kind'], item['metadata']['name'], item.get('status', {}).get('fence', 0))
+
+
+def sanitized_operations(store, results=(), redfish=None):
+    """Each journaled operation in admission order: its site key, fence, kind
+    (from its step names), steps with their states, and its stored result
+    phase. Step payloads are never read out."""
+    redfish = PROVIDER == 'redfish' if redfish is None else redfish
+    ops = {}
+    for e in (store or {}).get('journal') or []:
+        o = ops.setdefault(e['operation'], {'operation': e['operation'], 'fence': e['fence'], 'steps': []})
+        o['steps'].append([e['step'], e['state']])
+    phases = {(operation_key(r['result']['operation']['kind'], r['result']['operation']['name'], r['result']['fence']), r['result']['fence']): r['result'].get('phase') for r in results}
+    out = []
+    for o in ops.values():
+        kind = operation_kind([n for n, _ in o['steps']])
+        o.update(kind=kind, stage=o['steps'][-1][0], stageState=o['steps'][-1][1],
+                 done=any(n in FINAL_STEPS[kind] and st == 'Done' for n, st in o['steps']),
+                 phase=phases.get((o['operation'], o['fence'])), domain=LAB_DOMAIN if redfish else domain_name(o['operation']))
+        out.append(o)
+    return out
+
+
+def past_installer(op):
+    """Whether an install verified its installer phase or began its disk phase."""
+    return any(n == 'installer-verified' or n.startswith('disk-') for n, _ in op['steps'])
+
+
+def custody(state):
+    """The provider project's custody, operations and allocations."""
+    config = pathlib.Path(state) / 'provider' / 'bootstrap-project.json'
+    code, out, err = capture(['kubectl', '--kubeconfig', str(config), '--request-timeout=15s', '-n', 'fleet-provider', 'get', ','.join(CUSTODY_KINDS), '-o', 'json'], 30)
+    if code != 0:
+        raise SystemExit('provider custody unreadable: ' + err.strip()[-200:])
+    return json.loads(out)['items']
+
+
+def custody_digest(state):
+    """Count and digest of the custody facts: spec, phase and fence of each record."""
+    rows = sorted((i['kind'], i['metadata']['name'], i['metadata']['uid'], json.dumps(i.get('spec'), sort_keys=True),
+                   i.get('status', {}).get('phase'), i.get('status', {}).get('fence')) for i in custody(state))
+    return len(rows), hashlib.sha256(json.dumps(rows).encode()).hexdigest()
 
 
 def wait_stage(args):
@@ -288,14 +375,13 @@ def wait_stage(args):
     deadline = time.monotonic() + args.timeout
     last = None
     while time.monotonic() < deadline:
-        ops = sanitized_operations(journal(args.state))
-        installs = [o for o in ops if o['kind'] == 'install']
+        installs = [o for o in journal(args.state) or [] if o['kind'] == 'DeviceInstallation']
         running = domains(args.state) or []
         last = {'installs': installs, 'runningDomains': len(running)}
         if len(installs) > 1:
             print(json.dumps({'error': 'more than one install operation', **last}))
             return EXIT_FAILED
-        if installs and installs[0]['stage'] in ('installer-verified', 'disk-armed', 'disk-requested', 'disk-started', 'disk-verified', 'done'):
+        if installs and past_installer(installs[0]):
             print(json.dumps({'error': 'installer completed before the interrupt window', **last}))
             return EXIT_FAILED
         if installs and installs[0]['stage'] == args.stage and installs[0]['domain'] in running:
@@ -307,7 +393,12 @@ def wait_stage(args):
 
 
 def journal_cmd(args):
-    print(json.dumps(sanitized_operations(journal(args.state)), sort_keys=True))
+    print(json.dumps(journal(args.state) or [], sort_keys=True))
+    return 0
+
+
+def custody_cmd(args):
+    print('%d %s' % custody_digest(args.state))
     return 0
 
 
@@ -332,17 +423,12 @@ def secrets(state):
             found.update(line.split(',')[0] for line in text.splitlines() if line.count(',') >= 2)
         for m in TOKEN.finditer(text):
             found.add(m.group(1))
-        if p.name == 'journal.json':
+        # Copied site store boot admissions carry the one-time boot capability.
+        if p.suffix == '.json' and p.parent.name in ('vmboot', 'boot'):
             try:
-                j = json.loads(text)
-            except ValueError:
-                continue
-            if j.get('fence'):
-                found.add(j['fence'])
-            for r in j.get('operations', {}).values():
-                for value in (r.get('bootToken'), r.get('request', {}).get('fenceToken')):
-                    if value:
-                        found.add(value)
+                found.add(json.loads(text).get('token') or '')
+            except (ValueError, AttributeError):
+                pass
         for m in re.finditer(r'-----BEGIN [A-Z ]*PRIVATE KEY-----[^-]+', text):
             found.add(m.group(0)[40:100])
     return {s for s in found if s and len(s) >= 16}
@@ -411,6 +497,8 @@ def main():
     s.add_argument('--interval', type=float, default=1.0)
     s = sub.add_parser('journal')
     s.add_argument('--state', required=True)
+    s = sub.add_parser('custody-digest')
+    s.add_argument('--state', required=True)
     s = sub.add_parser('scan')
     s.add_argument('--state', required=True)
     s.add_argument('--extra', nargs='*')
@@ -423,7 +511,7 @@ def main():
             a.command = a.command[1:]
         if not a.command or not re.match(r'^[a-z0-9-]+$', a.name):
             return EXIT_USAGE
-    return {'preflight': preflight, 'phase': phase, 'wait-stage': wait_stage, 'journal': journal_cmd,
+    return {'preflight': preflight, 'phase': phase, 'wait-stage': wait_stage, 'journal': journal_cmd, 'custody-digest': custody_cmd,
             'scan': scan, 'result': result}[a.cmd](a)
 
 

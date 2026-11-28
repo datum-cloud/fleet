@@ -6,19 +6,21 @@ This development guide records the implemented subset and its limitations.
 See [build, test, and run](#build-test-and-run) for local commands and the
 [implementation roadmap](roadmap.md) for proposed milestones and required evidence.
 
-Status: public API foundation, standalone synthetic provider simulator,
-same-cluster allocation/installation lifecycle library, unwired NSO network
-lifecycle adapter, unwired Milo tenancy/quota authority contracts, and an
-event-only manager wiring scaffold with an injected Machine lifecycle
-handler implemented. The public allocation API now uses customer `Machine`,
-provider `MachineCapacity`, protected immutable `MachineAllocation`, and
-`Installation.machineRef`; authored references contain names while exact
-incarnation evidence remains private. A packaged standalone synthetic smoke
-scenario exercises local-scope contention, install recovery, cleanup, and
-capacity reuse. An explicit Milo-routed synthetic staging overlay exercises
-event-driven Machine allocation, contention, cleanup, and reuse through the
-public project API. Production caller-preserving allocation
-admission, replayable Milo event adapters, and production provider integration are not implemented.
+Status: public API foundation, the persistent simulator site, an
+allocation and release library on Device custody, an unwired NSO network
+lifecycle adapter, a Milo quota claim, and an event-only manager wiring scaffold
+with an injected Machine lifecycle handler. The public allocation API uses
+customer `Machine`, provider `MachineCapacity`, protected immutable
+`MachineAllocation`, and `Installation.machineRef`. Authored references contain
+names. A MachineAllocation names its consumer, a Milo Project or a standalone
+Namespace, with a typed `consumerRef`, and its name and labels record the exact
+incarnations. A packaged
+standalone synthetic smoke scenario exercises local-scope contention, install
+recovery, release with a wipe, and capacity reuse on Device custody. An explicit
+Milo-routed synthetic staging overlay exercises event-driven Machine allocation,
+contention, release, and reuse through the public project API. Production
+caller-preserving allocation admission, replayable Milo event adapters, and
+production provider integration are not implemented.
 Inert [inventory-backed capacity registration](inventory-capacity-registration.md)
 now has a stateless caller-preserving admission service that checks live
 Devices, one capacity per Device through a Device-derived name, a Device
@@ -28,37 +30,33 @@ a deleting namespace, and a session-fenced default-namespace Device picker. It a
 unconfigured, and governs only capacity that carries the registration marker;
 synthetic, hand-made and legacy capacity and all capacity status writes are not
 routed to it. Deployment trust inputs and live Milo acceptance remain required.
-An opt-in [local KVM installation harness](../operations/local-vm.md) implements
-a bounded libvirt executor and guest installer using the same lifecycle library.
-It uses a disposable Kubernetes API and explicit local authority fixtures; it is
-not wired into the production manager.
+
+[Device custody and operations](device-custody.md) is **implemented** through
+Increment C, the cutover. Every mode allocates, installs and releases on
+`DeviceCustody`, with the custody coordinator as its only writer. The
+Secret-backed coordinator, its private records and the old executors are deleted,
+and an allocation's private facts live on its MachineAllocation. The standalone
+smoke verifies it. The end-to-end failure scenarios (Increment D) are proposed.
+
 The opt-in [multi-plane acceptance harness](../operations/multiplane.md) composes
-that executor with native Milo project APIs and actual Karmada delivery. On the
-selected cell it runs as [Flux-owned site Deployments and kro-created per-operation worker Jobs](../operations/site-execution.md).
+the [local VM site](../operations/local-vm.md) with native Milo project APIs, the
+custody coordinator, and actual Karmada delivery. On the selected cell the site
+runs as [Flux-owned Deployments and kro-created per-assignment worker Jobs](../operations/site-execution.md).
 Each local cluster's [Flux](../operations/gitops.md) installs Milo, Karmada, kro and the shared site services from
 an OCI artifact staged from the checkout. Run it
 with `task multiplane:acceptance`. Its exit codes, bounded phases and sanitized
 `evidence/` directory are documented there; `task multiplane:test-harness` runs its
-offline tests, which CI also runs.
-`internal/redfish` implements a Redfish executor behind the same contracts: discovery,
-one-time boot overrides, power, observation-based recovery and a booted wipe
-cleanup. [Redfish-mode acceptance](../operations/redfish-lab.md)
-(`task multiplane:redfish-acceptance`) exercises it against the unmodified DMTF Redfish
-Interface Emulator and a lab-only libvirt adapter. It is not qualified against a
-physical BMC or server, and the production manager does not use it.
+offline tests, which CI also runs. Verification of that run on custody is
+pending. The Redfish site workers (`internal/site/redfishwork`) read each
+Device's own credential and connect only to its approved TLS key.
+[Redfish-mode acceptance](../operations/redfish-lab.md)
+(`task multiplane:redfish-acceptance`) exercises them against the unmodified DMTF
+Redfish Interface Emulator and a lab-only libvirt adapter, and its verification is
+pending too. They are not qualified against a physical BMC or server, and the
+production manager does not use them.
 
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
-
-[Device custody and operations](device-custody.md) Increment A is implemented
-and inert: the `DeviceCustody` and Device operation kinds, the creator webhook,
-the kind registry and admission rule table, and the coordinator that admits,
-fences, holds, recovers and rebuilds custody. Tests against a real API server
-verify it. No deployment root, manager or staging overlay includes it, and the
-Secret-backed lifecycle is unchanged. Increment B, the site framework with
-per-Device fencing, journal, credentials and pinned TLS and the Redfish
-install and wipe workers, is implemented and inert until the cutover. The
-cutover and the end-to-end failure scenarios are proposed.
 
 ## API group naming
 
@@ -84,22 +82,18 @@ The implemented alpha surface follows the current machine-allocation proposal:
   `machineClassRef`, `machineProfileRef`, and `locationRef` names;
 - provider projects publish `MachineCapacity` objects whose immutable
   `deviceRef` names the separately owned physical inventory record;
-- Fleet owns `MachineAllocation` records in the provider project. Their generated
-  names are allocation identities, their specs are immutable, and `Released` is
-  terminal; and
+- Fleet owns `MachineAllocation` records in the provider project. Each is named
+  `alloc-` and 16 hex characters of the SHA-256 of the consumer UID and
+  the Machine UID, its spec is immutable, and `Released` is terminal; and
 - `Installation` names its Machine and, for reinstalls, the preceding
-  Installation. Fleet retains exact local object incarnations privately instead
-  of exposing Kubernetes UIDs in authored specs or status.
+  Installation. A MachineAllocation records the exact Machine, project and Device
+  incarnations, so authored specs and status expose no Kubernetes UIDs.
 
 CRDs, Go types, scheme registration, IAM ProtectedResources and roles, manager
 watches and routes, quota labels, standalone fixtures, and smoke assertions use
-those names. The lifecycle library's existing service-owned Secret is still the
-implemented storage encoding for the protected allocation record; introducing
-the `MachineAllocation` kind does not make that record customer-writable. The
-simulator continues to carry a private binding token and monotonic executor epoch
-to fence its legacy single-file backend. Those values are absent from the public
-and proposed resource contracts and must be replaced by immutable allocation
-name plus executor fencing token before a production backend is connected.
+those names. The MachineAllocation is the stored record, and no customer role can
+write it. Fences are Device custody's, not an epoch or token in a record; see
+[Device custody](device-custody.md#cutover-increment-c).
 
 ## Requested hardware
 
@@ -109,14 +103,10 @@ removed as a breaking `v1alpha1` change with no conversion or migration. Stored
 profiles with the old shape must be recreated before upgrading. The allocator
 matches capacity only when the observed cores and memory equal the request.
 
-Private asset records, custody proposals, and Milo authority records retain
-`acceptedRequirements` as the exact `MachineProfileSpec`. A private record whose
-requirements use any other shape fails to decode, like a version 1
-installation record or any other malformed record. Fleet keeps no decoder or
-release path for older record shapes. How the coordinator contains such a
-record, and how an operator removes it, is described in
-[Undecodable private records](#undecodable-private-records). See the
-[MachineProfile notes](../enhancements/machine-lifecycle/README.md#machineprofile).
+A MachineAllocation records the accepted class and profile references, with the
+exact CPU and memory it allocated against. Fleet keeps no decoder or release
+path for older record shapes, because the Secret-backed records are deleted. See
+the [MachineProfile notes](../enhancements/machine-lifecycle/README.md#machineprofile).
 
 `requestedhardware.Project` is the one projection that writes
 `status.requestedHardware` and `RequestResolved`, and
@@ -141,86 +131,6 @@ validation and CEL pinning with the API server's validators, resolver
 provenance, missing and invalid profiles, post-acceptance profile changes,
 inert-mode wiring, and staging and standalone carry-forward. See
 [requested hardware](../enhancements/machine-lifecycle/README.md#requested-hardware).
-
-## Undecodable private records
-
-A private lifecycle record that does not decode into the current shape returns
-`controller.ErrRecordUnreadable`, which wraps `ErrRecordInvalid`. This covers
-asset, claim custody, installation, and Milo authority records. The record
-blocks only the claim it belongs to (implemented):
-
-- **Attribution.** The coordinator does not trust the body of a record it cannot
-  decode. It attributes the record by the `fleet.datumapis.com/claim-uid`
-  label, which `encodeRecord` and the Milo record store write on every record.
-- **Scans across claims.** The asset scan behind allocation, installation,
-  network refresh, and release, and the installation scan by binding, skip a
-  record labeled for another claim. A record labeled for the scanning claim
-  fails that claim closed. A record with no claim label might belong to any
-  claim, so it fails every claim-scoped scan closed. Fleet never writes an
-  unlabeled record, so this case means the Secret was edited by hand. One such
-  Secret halts allocation, installation, and release for every claim on the
-  coordinator until an operator removes it.
-- **Release from a selection.** A claim released while its custody only
-  proposes an asset reads that asset's record by name. If the record is
-  labeled for another claim, that claim holds the asset and the releasing
-  claim never did, so its custody is released without touching the record.
-  The record keeps fencing the asset's epoch. A record labeled for the
-  releasing claim, or with no label, fails release closed.
-- **Capacity and epoch fencing.** Allocation reads each candidate asset's
-  record by name. If that record, or the custody record of the claim that last
-  held the asset, cannot be decoded, the asset is never proposed and allocation
-  tries the next candidate. Nothing proves that asset was released or what
-  epoch it reached, so treating it as free could double-bind it or restart its
-  epoch below a stale operation. A retained `Released` record that cannot be
-  decoded therefore keeps its asset out of allocation. It does not admit any
-  operation for its former claim either, because that claim's own scans fail
-  closed on it.
-- **The claim's own work.** Allocation, installation, and release for the
-  attributed claim return `ErrRecordUnreadable`. They do not treat the claim as
-  having no record, and they never rewrite the record. Synthetic staging
-  reports the Machine as `Phase=Pending` with `Bound=False` and `Ready=False`,
-  reason `UnreadablePrivateRecord`, and does not requeue it. The managed
-  Machine handler also stops requeueing, and sets no condition: it writes no
-  Machine status at all, so synthetic staging is the only writer of Machine
-  lifecycle conditions. Release never removes the finalizer through such a
-  record.
-- **Signals.** Every lifecycle decode goes through one reporting decoder, so
-  each record is logged once per lifecycle call at error level, whichever read
-  found it.
-  The log names the Secret and the attributed claim UID, never record
-  contents. The counter `fleet_private_lifecycle_record_undecodable_total`
-  counts the same events, labeled only by `record_type` (`asset`, `custody`,
-  `installation`, or `milo-authority`).
-
-Fleet has no automated release for an undecodable record. To clear an affected
-Machine, an operator does the following:
-
-1. Find the Machine's UID. List the Secrets in `fleet-system-private` that
-   carry `fleet.datumapis.com/claim-uid=<UID>`. The error log names the
-   undecodable one.
-2. If the Machine held an asset, set that MachineCapacity's
-   `allocationPolicy` to `Disabled`. Removing the records discards the binding,
-   its epoch, and any pending cleanup, so the physical machine's state is
-   unknown. Re-enable allocation only after the machine has been verified clean.
-   The next binding starts again at epoch 1, and an executor that retained a
-   higher epoch refuses it until its own fence is reset.
-3. Delete the Machine. Release stops at the undecodable record and leaves the
-   finalizer in place.
-4. Remove the `fleet.datumapis.com/machine-protection` finalizer from the
-   Machine by hand. Fleet cannot release through the record, so it never
-   removes the finalizer itself.
-5. Delete every listed private record Secret for that claim UID, not only the
-   undecodable one. The claim no longer exists, and a record left behind keeps
-   describing authority that nothing will ever release.
-
-A retained `Released` asset record whose Machine is already gone affects only
-that asset. Delete that Secret after step 2 to return the asset to allocation.
-
-Event routing reads only records that decode, so editing or deleting an
-undecodable Secret wakes no claim. This is why the procedure deletes the
-Machine and removes its finalizer before deleting the records. A claim blocked
-by an unlabeled record is reconciled again on its next own event, or when the
-manager restarts.
 
 ## Multi-project discovery
 
@@ -248,14 +158,10 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   `SameProject` against its identity, run its verifier, and delegate to the
   existing `ProjectReconciler` and `RouteReconciler`. A request for a project
   that is not engaged is dropped with no effect.
-- **Private records.** All projects share the host namespace
-  `fleet-system-private`. Custody, operation, and authority record names hash
-  `(authorityID, projectUID, claimUID)`; asset records are keyed by provider
-  asset and are deliberately global, which is what makes allocation exclusive
-  across consumers. The private-record watch routes a record by its recorded
-  consumer project to the runtime engaged for exactly that lifetime. The
-  unscoped `Coordinator.Release(claimUID)` requires exactly one match, so equal
-  claim UIDs in two projects fail closed instead of colliding.
+- **Allocations.** A MachineAllocation lives in the provider project and is named
+  from the consumer project UID and the Machine UID, so equal Machine UIDs in two
+  consumer projects never share one. Exclusivity belongs to Device custody, which
+  is global to the Device and so spans consumers.
 - **Handlers.** `manager.DefaultHandlers` gives each project blocked lifecycle
   handlers and the requested-hardware projector. `--synthetic-staging` uses
   `staging.ConsumerHandlers`, which installs the staging handler only for
@@ -264,7 +170,7 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   into that project. Provider MachineCapacity events wake only that project.
 - **Provider as consumer.** The synthetic provider project may also be an
   Active metal consumer. It engages with `DefaultHandlers`; its runtime maps
-  only its own Machines and private records whose consumer is that project, so
+  only its own Machines, so
   provider MachineCapacity events cannot reach the synthetic consumer's claims
   through it, and its blocked handlers never write MachineCapacity status. The
   synthetic consumer itself must still differ from the provider.
@@ -281,7 +187,7 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   consumer set. It does not release custody, call a provider, delete records,
   or rewrite status, including for a project with active custody. Its
   deadlines and queued events are dropped, and re-engagement resumes from the
-  retained private records. Unbinding drains direct and dependency-route
+  retained allocations. Unbinding drains direct and dependency-route
   reconciliations that already acquired the runtime before removing it from the
   registry; a retained runtime pointer cannot start work after that barrier.
   A blocked in-flight handler therefore delays completed departure rather than
@@ -302,7 +208,7 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   A handler that never returns still prevents safe replacement; cancellation is
   not evidence that its effects have stopped. Deterministic direct/routed replacement,
   cancellation, stale-pointer, registry-revalidation and concurrent engagement
-  tests cover these process-local barriers, not distributed executor fencing.
+  tests cover these process-local barriers, not distributed site fencing.
   A per-cluster-route engagement gate also serializes publication through the
   entire downstream controller setup call and failure cleanup. Draining alone
   was insufficient: a paused predecessor's setup could otherwise resume after
@@ -345,8 +251,7 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   always-running group. Unlike Compute, this is done for every
   `ProviderRunnable`, so the consumer provider is not started twice.
 - **Readiness.** `/readyz` requires discovery to have synced, every consuming
-  project to be engaged, every engaged project cache to have synced, and the
-  private-record cache to have synced. It fails with `ErrDiscoveryMisconfigured`
+  project to be engaged, and every engaged project cache to have synced. It fails with `ErrDiscoveryMisconfigured`
   while the metal Service is missing or its producer project differs from
   `consumerScopedProjection.providerProject`. The former integration gate, which
   failed unless synthetic staging was on, is removed. Removing it enables no
@@ -365,21 +270,21 @@ API servers (`internal/multiclustertest`) whose writes produce watch events.
 They cover:
 
 - no provider: two projects with identical Machine names and UIDs each pin from
-  their own profile, with no private record, finalizer, lifecycle condition,
+  their own profile, with no allocation, finalizer, lifecycle condition,
   or Installation change;
-- custody isolation: a custody record wakes only its own project, and scoped
-  reads and an unscoped release cannot cross projects;
+- project isolation: an event wakes only its own project, and scoped reads cannot
+  cross projects;
 - departure with active custody, re-engagement, restart with a replaced
   profile, and identity failures (unknown project, two clusters for one
   lifetime, project recreated while engaged);
 - synthetic staging end to end: allocation only in the publication consumer,
   with another engaged project untouched.
 
-Coordinator tests already cover custody, allocation, and installation scoping
-across project APIs with equal claim UIDs. An envtest test runs the real
-consumer provider against separate API servers that serve every watched kind,
-behind a Milo-shaped project router, with a real host lease and private cache.
-It needs envtest binaries and is skipped without them.
+Allocation tests cover custody and installation scoping with equal Machine UIDs
+in separate project lifetimes. An envtest test runs the real consumer provider
+against separate API servers that serve every watched kind, behind a Milo-shaped
+project router, with a real host lease. It needs envtest binaries and is skipped
+without them.
 
 ## Location authority
 
@@ -414,33 +319,31 @@ ServiceAvailability can project a Location into entitled projects.
 ## Standalone synthetic smoke environment
 
 `cmd/fleet-standalone-smoke` is a test-only, phase-oriented harness around the
-implemented lifecycle coordinator. The packaged fixture uses two Kubernetes
+allocation library on Device custody. The packaged fixture uses two Kubernetes
 namespaces as project stand-ins and one synthetic `us-central-1` machine with 24
-cores and 128Gi of memory. The allocate phase retains custody before adding the
-Fleet finalizer, binds one claim, and leaves the competing claim pending. The
-install phase admits one exact digest-pinned operation through the persistent
+cores and 128Gi of memory. A coordinator Deployment runs the custody loop, and
+the simulator is the only site. The allocate phase waits for the Device's custody
+to be `Verified`, allocates for one claim, and leaves the competing claim pending.
+The install phase admits one exact digest-pinned `DeviceInstallation` through the
 simulator and is idempotent across worker and simulator restart. A bounded
 reinstall phase uses a distinct Installation naming the initial Installation as
 its predecessor, retains the same allocation, and recovers the same successor
-operation across retries and restart. Unknown completion closes readiness and
-keeps the capacity occupied. The release
-phase verifies cleanup before finalizer removal and advances the retained asset
-epoch before the waiting claim binds.
+operation across retries and restart. An unknown result keeps readiness unknown
+and the Device held. The release phase wipes the Device with a `DeviceWipe`, under
+a fence above both installations, before the waiting claim is allocated.
 
-The harness is the designated writer for one retained synthetic Machine evidence
-record and public fixture status. The evidence pins the Machine UID, configured
-location, hardware, and observation time; it is not refreshed across phases.
-Both contenders pass capacity preflight against the same retained
-`Available=True` evidence before private custody selects the sole winner. The
-lifecycle coordinator remains the writer of custody, asset,
-and operation records. It does not patch status from shell, delete private
-records, strip finalizers, or use public status as authority. The simulator runs
-under an explicit non-root UID/GID with a writable `fsGroup` PVC and group-readable
-runtime-only bearer Secret; its admin listener is off. Docker bases are digest
-pinned, and the smoke script derives a source-specific local image tag and
-verifies the running workloads use it with pulls disabled. That identity commits
-to HEAD, its tree, the tracked diff, and untracked file contents; a CI regression
-test proves distinct clean commits produce distinct IDs.
+The phases run as the Metal provider, with the custody coordinator's and the
+release controller's tokens in their own clients, so each write carries its
+component's identity. The harness is the designated writer for the synthetic
+capacity conditions and the public fixture status, because the capacity projector
+is not wired. It does not patch custody or operation status, strip finalizers, or
+use public status as authority. The simulator runs under an explicit non-root
+UID/GID with a writable `fsGroup` PVC and group-readable runtime-only bearer
+Secret; its admin listener is off. Docker bases are digest pinned, and the smoke
+script derives a source-specific local image tag and verifies the running
+workloads use it with pulls disabled. That identity commits to HEAD, its tree,
+the tracked diff, and untracked file contents; a CI regression test proves
+distinct clean commits produce distinct IDs.
 
 This is not the proposal acceptance environment. Namespace stand-ins do not
 model Milo project APIs, caller identity, IAM, entitlement, quota, purge, or
@@ -476,23 +379,12 @@ freshness deadline scheduler. Queue keys include the Milo authority ID, root
 Project UID, namespace, name, and object UID. Equal names or UIDs in separate
 project lifetimes cannot share work.
 
-The manager uses two controller-runtime caches with explicitly non-nil zero
-`SyncPeriod` values. Its primary cache is scoped by Milo's project control-plane
-URL and contains public Fleet, NSO, quota, entitlement, and Namespace resources.
-A separate management-cluster cache is confined to `fleet-system-private` and
-contains service-owned Secrets. Public and private reverse indexes are
-registered on their owning caches, and Secret event sources explicitly use the
-host cache. Leader election also uses the management-cluster configuration.
-Dependency mappers use exact field indexes; private indexes consume only typed metadata exposed after the lifecycle
-or Milo record owner validates the complete record and deterministic Secret
-identity. Unknown or nested JSON lookalike fields have no routing meaning. The
-manager's private-record predicate treats the Secret type and complete label set
-as part of that trusted envelope, so a valid record that is relabelled or has
-its type substituted is immediately reconciled into quarantine rather than
-being hidden as a data-no-op update. The
-mappers do not perform unqualified application Lists. Informer initial Add
-events route retained private records after restart, including when the consumer
-object is gone. Public status-only updates, including status written by an
+The manager uses a controller-runtime cache with an explicitly non-nil zero
+`SyncPeriod`. It is scoped by Milo's project control-plane URL and contains
+public Fleet, NSO, quota, entitlement, and Namespace resources. Reverse indexes
+are registered on that cache. Leader election uses the management-cluster
+configuration. Dependency mappers use exact field indexes and do not perform
+unqualified application Lists. Public status-only updates, including status written by an
 external actor, do not feed the lifecycle coordinator; external facts that must
 drive lifecycle work require an owned dependency resource and route.
 Claim and Installation spec generations, labels, annotations, finalizers, and
@@ -505,30 +397,17 @@ a cache read or List failure is retried as the same source event instead of bein
 mistaken for an empty target set. Every direct and routed handler also verifies
 the configured Project lifetime through an injected trusted verifier.
 
-`MachineHandler` implements the lifecycle ordering at the manager boundary. It
-exact-reads the queued Machine and namespace lifetimes, resolves only injected
-authoritative inputs, retains authority and custody before adding Fleet's
-finalizer, waits for the finalizer update event before allocation, and removes
-the finalizer only after verified cleanup and external settlement. Dependency
-waits return without a timed requeue. Trusted evidence expiry can request one
-exact coordinator-owned deadline; it is not a polling interval. Deletion and
-same-name recreation use exact Machine incarnation evidence retained privately.
-
-`MiloMachineLifecycle` is the concrete bridge to the existing Milo adapter and
-allocator. `PrepareOrRecoverClaim` validates current resolved inputs against the
-immutable private authority record, so the finalizer event and manager restart
-reuse the retained caller receipt rather than reauthorizing a different caller.
-Release recovers from the exact consumer Project and Machine lifetimes and does
-not require the public Machine, class, or profile to remain present.
-
-This handler is an orchestration seam, not a live integration. Watched objects
-do not contain the create-time caller identity, protected publication
-provenance, or trusted Machine observation time and location required by the
-lifecycle contract. The manager binary therefore does not instantiate the
-handler; lifecycle handlers stay blocked. An environment must provide those
-inputs plus the Milo admission fence and quota custodian before enabling effects;
-controller credentials, annotations, public status, and synthetic timestamps
-are not accepted substitutes.
+The manager has no production lifecycle handler. Allocation, installation and
+release are the `internal/allocation` library on Device custody, which the
+synthetic staging handler, the standalone smoke and the multi-plane runner call.
+The Machine handler and Milo lifecycle bridge of the Secret-backed design are
+deleted. A production handler needs the inputs the manager cannot get from
+watched objects: the create-time caller identity, protected publication
+provenance, and a trusted Machine observation time and location. The manager
+binary therefore instantiates no handler, and lifecycle handlers stay blocked. An
+environment must provide those inputs plus the Milo admission fence and quota
+custodian before enabling effects; controller credentials, annotations, public
+status, and synthetic timestamps are not accepted substitutes.
 
 Every dependency route now retains the source object's UID and exact routing
 snapshot. Non-delete work checks that UID against the current named object; if a
@@ -553,10 +432,10 @@ drains timers, waits for any in-flight emission, and prevents post-stop work.
 Informer initial Add processing reconstructs still-relevant deadlines after a
 fresh process starts.
 
-The setup watches the implemented Fleet resources, private records, NSO Network,
+The setup watches the implemented Fleet resources, NSO Network,
 NetworkInterfaceClaim and NetworkInterface resources, Milo quota claims, and the
 reviewed ServiceEntitlement shape. External IAM, project-lifecycle, catalog, and
-executor sources must provide durable cursor/replay or materialize watched state;
+site sources must provide durable cursor/replay or materialize watched state;
 a lossy channel is not sufficient. Business pending states wait for their next
 dependency event and do not return a timed requeue.
 
@@ -572,8 +451,8 @@ remain integration-owner responsibilities.
 
 `cmd/fleet-manager` discovers every consuming project, resolves each project's
 exact lifetime from Milo, derives each routed Milo REST host from an
-environment-owned project kubeconfig template, keeps host-private records and
-leader election on the management cluster, and starts the event graph. Its
+environment-owned project kubeconfig template, keeps leader election on the
+management cluster, and starts the event graph. Its
 readiness reports discovery and cache health only. Its
 production handlers deliberately perform no lifecycle or provider effects until trusted create-time
 caller/finalizer admission and live, replayable Milo adapters are supplied. A
@@ -583,36 +462,35 @@ with annotations or controller credentials.
 
 The opt-in `--synthetic-staging` mode is a temporary acceptance boundary. It
 accepts only powered-off, networkless claims in `us-central-1`, synthesizes
-clearly labelled admission and provider evidence, and invokes the same durable
-coordinator used by the standalone and future production adapters. It is
-event-driven: claim, class, profile, Machine, namespace, private-record, and
-deletion events route exact work; it adds no periodic re-sync. One synthetic
-Machine is exclusively bound, competing claims remain pending, cleanup must
-complete before finalizer removal, and release wakes waiting claims for reuse.
+clearly labelled admission and provider evidence, and uses the same allocation
+library on Device custody as the standalone smoke. The manager also runs the
+custody coordinator loop and fixture discovery under its leader lease. It is
+event-driven: claim, class, profile, Machine, namespace, and deletion events
+route exact work; it adds no periodic re-sync. One synthetic Machine is
+exclusively bound, competing claims remain pending, release must complete before
+finalizer removal, and release wakes waiting claims for reuse.
 Public conditions say `SyntheticStagingAdmission`, so this result cannot be
 mistaken for Milo caller-preserving authorization.
 
 `config/overlays/synthetic-staging` is the only packaged activation path. It
-packages the simulator as a separate single-replica Deployment and ClusterIP
-Service using the same immutable Fleet release image. The manager reaches it
-through Service DNS with an environment-owned shared runtime Secret; the provider
+packages the simulator site as a separate single-replica Deployment and
+ClusterIP Service using the same immutable Fleet release image. The manager
+reaches it through Service DNS with an environment-owned site token; the provider
 has no Kubernetes API credential or RBAC grants. A NetworkPolicy restricts access
 to same-namespace manager pods, and the admin listener stays disabled.
-The simulator's operation state resides on a retained PVC and survives manager
-and provider pod replacement. A `Recreate` rollout avoids overlapping file-store
-writers. The durable private coordinator continues to retain exact operation
-inputs and recover idempotently. Store persistence and credential reload are
-covered by local tests; independent Deployment restart recovery still requires
-live staging verification after rollout. This remains synthetic API validation,
-not production provider qualification. See the
-[deployment and migration contract](../../config/README.md#moving-from-the-colocated-simulator).
+The site store resides on a retained PVC and survives manager and provider pod
+replacement. A `Recreate` rollout avoids overlapping store writers. Custody and
+the site store retain exact operation inputs, and recovery is idempotent. Site
+store persistence is covered by local tests. This remains synthetic API
+validation, not production provider qualification. The overlay needs imported
+records and two new credentials; see the [deployment and migration
+contract](../../config/README.md#moving-from-the-secret-backed-staging).
 
 
 `config/overlays/management-plane` now packages the manager Deployment so its
 identity, RBAC, admission, image, and readiness boundary can be reviewed and
-rolled out fail-closed. Its service account receives Secret permissions only
-through a namespaced Role for `fleet-system-private`; cache scoping is not an
-authorization boundary, and it has no host ClusterRole. The environment must
+rolled out fail-closed. Its service account receives only leader-election access
+in `fleet-system` and has no host ClusterRole. The environment must
 provide the authority ID and Project name in `fleet-manager-config`, mount the
 generated `milo-configuration-kubeconfig` Secret, and pin the image. The
 manager resolves the immutable Project UID from Milo at startup and fails
@@ -632,67 +510,47 @@ source-specific publication example. Those remain environment/provider state.
 The two production roots target different API servers and must not be combined
 into one Flux reconciliation.
 
-## Standalone lifecycle library
+## Allocation on Device custody
 
-`internal/controller` implements the recovery-critical core without installing a
-manager or watches. Callers first create retained claim custody before adding a
-claim finalizer, retaining the namespace lifetime plus a trusted caller-supplied
-principal UID and admission decision ID; the library never manufactures an
-authorization result. Allocation requires that exact finalizer and authority and
-rejects deleting claims.
-Allocation then selects only current, healthy, available machines
-with fresh externally supplied evidence. It atomically reserves each physical
-asset through deterministic private Secrets and retains `Preparing`, `Committed`,
-`Releasing`, and `Released` authority. Released records are not deleted; a later
-binding advances the provider epoch and receives new binding and fence tokens.
-The claim-level `Selecting` record retains the complete proposed asset authority
-before creation, allowing deletion to materialize and tombstone the proposal so
-a delayed allocator cannot resurrect it.
+`internal/allocation` is the recovery-critical core. It allocates, installs and
+releases through Device custody and creates no Secret record. The allocator takes
+an admitted request: the Machine's exact project and Machine incarnation, the
+class and profile, and the admission decision. It writes in a fixed order: the
+quota claim, then the MachineAllocation (create only), then the custody claim (a
+conditional update). A retry finds the same allocation by its name. An allocation
+whose Device another holder took, and which never held it, is deleted, and the
+allocator selects again. An `Active` allocation that lost custody is not repaired
+(`ErrCustodyLost`).
 
-An independent custody record distinguishes a claim proven never bound from a
-claim whose sole asset authority is unexpectedly missing. Release removes a
-finalizer only after an unbound proof or retained cleanup completion. Corrupt,
-duplicate, or cross-lifetime deterministic records fail closed.
+Installation admission creates a `DeviceInstallation` named from the allocation
+and the Installation UID. The Installation's predecessor must be the Machine's
+current installation, and a bootstrap reference is refused. Response-loss
+recovery is an exact lookup by name, not a second effect. Release moves the
+holder to `Release`, closes the gates, wipes the Device, deletes the quota claim,
+and only then returns the Device to `None`. The allocation, installations and
+wipes remain as the fence history. See [Cutover](device-custody.md#cutover-increment-c)
+for the gates, wipe steps and recovery.
 
-Installation admission retains exact inputs and a private predecessor before the
-provider effect, including the initiating principal and installation decision plus
-the image catalog authority, revision, and image decision. The operation also
-retains the installation and claim namespace, name, and UID, so an informer
-initial Add can route unfinished work after restart even when the public
-Installation has been deleted. This is installation-record schema v2. A record
-in any other schema version is invalid: it is quarantined from event routing
-and effects and is never rewritten, guessed, or treated as ready. Image
-references must
-resolve to canonical lowercase SHA-256 digests. Stable operation and result
-identities include the authority/project claim scope, so equal claim UIDs from
-independent project APIs cannot share an operation record. Installation custody
-and asset lookup use that same scope; standalone requests derive an explicit
-local scope from the Namespace UID. Response-loss recovery is therefore an exact
-operation lookup rather than a second effect. Public claim status is not used as
-predecessor authority. Before image resolution, operation creation, or a provider
-effect, installation also requires Bound custody whose asset, claim identity,
-scope, consumer/provider Projects, authority record, and external hold exactly
-match the selected retained asset.
-
-`internal/executor` is the typed bearer-authenticated client for the simulator's
-runtime surface. Transport failures, unavailable responses, malformed terminal
-results, and lost responses are classified as unknown outcomes for lookup-based
-recovery. Bearer HTTP remains a test-only transport, not a production identity
-contract.
-
-The private namespace is a security boundary: the Fleet service account must be
-its exclusive writer, and the `fleet-claim-`, `fleet-asset-`, and
-`fleet-install-` name prefixes are reserved. Provider health, availability, and
-observation timestamps supplied to the library must come from a trusted,
-authenticated provider-status path; this increment does not establish that path.
+The component identities are separate: the Metal provider creates allocations
+and installations, the release controller creates wipes, and the custody
+coordinator is the only writer of custody and operation status. Provider health,
+availability and observation timestamps supplied to the library must come from a
+trusted, authenticated provider-status path; this increment does not establish
+that path.
 
 ## Network lifecycle adapter
+
+Status: **implemented and inert**. The allocation library on Device custody does
+not call this adapter, because no mode provisions Network or Address. Those
+release gates close at once. The private asset and operation records this section
+names were deleted in the cutover. The retention they describe is the contract a
+future wiring must keep. Where it keeps it is **proposed**.
 
 `internal/network` defines an NSO-independent lifecycle contract. Allocation
 preflights every requested interface before hardware selection, requiring exact
 namespace and location lifetime authority plus a caller-preserving network-use
 decision. The accepted Network UIDs, normalized request, decisions, and request
-digest are retained in the private asset record before any NSO effect.
+digest must be retained by the caller before any NSO effect.
 Fleet validates NSO's attachment shape before preflight and physical selection:
 families are unique `IPv4`/`IPv6` values with at most two entries, and address
 classes are unique with at most four entries. The Fleet CRD carries the same
@@ -713,10 +571,10 @@ against guard closure; a separate pre-create check is insufficient. Immediately 
 retained Network UID and generation are currently Ready and every retained
 address-class name still has the exact authorized lifetime UID.
 
-The coordinator retains exact claim and interface UIDs plus current-generation
-`Allocated`, `Prepared`, and `Programmed` observations. Installation admission
-requires fresh `Allocated` and `Prepared` evidence and copies the exact network
-revision and inputs into the private operation record. Public projection is a
+The contract has the caller retain exact claim and interface UIDs plus
+current-generation `Allocated`, `Prepared`, and `Programmed` observations.
+Installation admission requires fresh `Allocated` and `Prepared` evidence and
+copies the exact network revision and inputs into the operation's inputs. Public projection is a
 pure helper that publishes only Network names, MTU, addresses, and normalized
 conditions only while the observation is within the configured evidence age;
 stale evidence projects `NetworkReady=Unknown`. Internal UIDs, NSO claim names,
@@ -726,8 +584,8 @@ Create intent for every interface is durably returned before any NSO create.
 Release first durably admits an exact per-interface delete vector without effects,
 then retries execute and verify individual deletes. Provider cleanup and finalizer release remain blocked while
 network deletion, retained-interface detachment, or outcome evidence is pending
-or unknown. Object absence counts only after the private record proves deletion
-was admitted for the exact retained UID. `Retain` additionally requires the
+or unknown. Object absence counts only after the caller's retained record proves
+deletion was admitted for the exact retained UID. `Retain` additionally requires the
 same retained interface UID to report `Available` with no claim reference.
 For `Retain`, an absent claim completes only when the closed guard proves the
 claim was never created, or when an exact interface name and UID retained before
@@ -740,114 +598,54 @@ Production wiring must supply a location-scoped client, caller-preserving
 authorizer, and durable object guard; otherwise networked allocations fail
 closed before selection.
 
-## Milo authority contracts
+## Milo quota claim
 
-`internal/milo` composes the lifecycle library with internal Milo project,
-source-use, entitlement, quota, admission-fence, and release-custody contracts.
-It is a library and test-fake integration only; it does not register a manager,
-watches, webhooks, deployment, or acceptance environment.
+`internal/milo` holds Fleet's Milo service identity (`metal.datumapis.com`) and one
+quota claim. The authority contracts of the Secret-backed design, which retained
+project, source-use, entitlement and admission-fence evidence in private records,
+are deleted. Production source-use, entitlement and admission-fence integration
+is not implemented.
 
-Project identity retains the configured Milo authority ID, route name, and root
-Project UID. The authority ID and root UID identify the lifetime; the route name
-only selects a control plane. Preparation verifies both consumer and provider
-lifetimes, then retains consumer Namespace UID, claim UID, local and canonical
-class/profile UIDs, canonical class revision and content digest, immutable
-profile requirements, publisher revision, initiating principal UID, and the
-caller-preserving source decision in a private service-controlled Secret. The
-lifecycle custody record links that protected authority record before later
-work. Custody names and claim lookups include the authority ID, consumer Project
-UID, and claim UID; standalone use has an explicit local scope keyed by the
-Namespace UID. Equal claim UIDs from independent project API servers therefore
-cannot occupy the same private record. Provider asset identity includes the Milo
-authority and provider Project UID, preventing reuse across project lifetimes.
+The quota claim is **implemented and verified** by unit tests, and **implemented
+and inert** end to end: no mode in this repository has Milo quota. The allocator
+creates a Milo `ResourceClaim` named `fleet-machine-` and 16 hex characters of the
+SHA-256 of the consumer project UID and the Machine UID, in the Machine's
+namespace, before it creates the MachineAllocation. A retried create finds the
+claim by name. Only a granted claim reserves quota, so a pending claim returns
+`ErrQuotaPending` and the allocator retries. A claim that is not the claim Fleet
+would create for that Machine is `ErrQuotaInvalid`. Release deletes the claim and
+reports it released only once it is gone (`TestReleaseIsObservedNotAssumed`).
 
-The adapter checks the exact retained claim, class, profile, location authority
-(name, UID, and revision), revision, and content before capacity, quota,
-fencing, or provider work. The source-use decision and admission commit bind
-that complete class/profile/location combination. Current Machine inventory
-does not carry separately authoritative placement evidence, so proving that a
-selected Machine is physically in the retained location remains an upstream API
-and provider-authority gap. The adapter accepts the
-reviewed Milo v0.32.5 ServiceEntitlement evidence shape: Active phase plus a
-current Ready condition on the exact entitlement UID. That API does not publish
-the proposal's separate suspension evidence; ordering suspension against binding
-remains an upstream admission-fence requirement rather than an invented local
-condition.
+Milo v0.32.5 supplies ResourceClaim evidence but no service-owned quota custody
+anchor or explicit release acknowledgment, so deletion is observed, not
+acknowledged.
 
-Deleting claims and claims missing Fleet's protection finalizer are rejected
-before quota acquire, admission fencing, or any provider effect.
+## Simulator site
 
-Quota preparation durably records a deterministic intent before creating or
-recovering one exact Milo ResourceClaim for
-`metal.datumapis.com/machines`. Grant evidence requires the exact object UID,
-request, consumer and resource references, and current status
-`observedGeneration`. ResourceClaim deletion or `NotFound` is never
-quota-settlement proof. Allocation requires an injected protected custodian
-before requesting quota. Acquire, intent recovery/no-hold closure, and settlement
-all pass through that custodian under the exact Project, authority record, and
-intent lifetime. A no-hold receipt closes that intent against a later acquire;
-the adapter never calls the ResourceClaim manager directly. A full
-admission-commit digest binds the retained
-source decision, exact entitlement lifetime, and exact quota hold UID,
-generation, and evidence to the fence receipt. Sequential checks are not
-presented as ordering concurrent invalidation against binding.
+`cmd/fleet-simulator` is a test-only site for exercising the custody delivery and
+recovery paths before a real hardware adapter exists. It serves a site HTTP API
+(`internal/site/siteapi`) with a bearer token: it takes an assignment
+(`PUT /v1/assignments`), reports a Device's fences (`GET /v1/fences/{namespace}/{name}`),
+lists the results it holds (`GET /v1/results`) and forgets a result the
+coordinator answered (`DELETE /v1/results`). It never contacts, enrolls or
+authorizes real hardware.
 
-Cleanup advances assets only to `CleanupVerified` while an external hold exists.
-Fleet persists an exact custodian settlement receipt before releasing lifecycle
-custody, and only then advances the asset to `Released` and permits finalizer
-removal. Any retained hold is first installed into core custody even when a
-crash occurred before that write. Quota recovery and settlement use the exact
-retained consumer Project lifetime through the service-owned custodian rather
-than resolving a possibly deleted or route-name-reused consumer API endpoint.
-Retried allocation and release resume persisted fence, binding, intent, and
-settlement states before considering new work. Persisted fence receipts are
-revalidated against the complete retained commit on every decode. Unknown
-create, release, or project outcomes retain custody and remain unknown.
+Its workers (`internal/site/simwork`) run on the [site
+framework](device-custody.md#site-execution-increment-b). They keep a simulated
+server in fenced records of the site store, so an older fence is refused, a
+newer assignment stops an older worker, and a result is fenced and typed like a
+real site's. With `--discover`, the process also writes fixture discovery for its
+enrolled Devices, as BMC discovery would. Fixture access checks the enrollment
+against the snapshot, with no BMC. The site store is an owner-only directory, and
+every write replaces a file atomically and syncs it, so the simulator refuses
+older fences after a restart.
 
-The tests verify source and lifetime substitution rejection before effects,
-concurrent authority-record creation, both admission-fence orderings, stale or
-corrupt persisted fence receipt rejection, lost quota-create recovery, a paused
-acquire racing no-hold closure, hold-write crash recovery, pending-hold deletion,
-binding recovery after a lost response, retry after a crash between core hold
-clear and authority reset, cross-project claim-UID collisions,
-cleanup-before-quota ordering, settlement-receipt replay, deleted or
-route-name-reused consumer-project cleanup, malformed authority state rejection,
-and delayed allocation or settlement racing completed release. These are
-contract tests with fakes, not evidence of
-a working Milo production integration.
-
-## Persistent provider simulator
-
-`cmd/fleet-simulator` is a test-only process for exercising provider-operation
-recovery before a real hardware adapter exists. It supports synchronous
-`install`, `power`, and `cleanup` operations plus operation lookup. It never
-contacts, enrolls, or authorizes real hardware.
-
-The simulator writes one versioned JSON state file. Each mutation writes and
-syncs a temporary file, atomically renames it over the retained state, and syncs
-the parent directory. Operation IDs are idempotency keys: replaying the exact
-request returns its retained result, while different retained input conflicts.
-Every effect carries an asset ID, binding ID, monotonically increasing epoch,
-and fencing token. Cleanup closes that epoch so delayed work from the released
-binding cannot reactivate the asset; a later binding must advance the epoch.
-
-The `lost-response` fault persists the completed effect and consumes the fault in
-the same state write before returning an unavailable response. A caller recovers
-the retained result by operation ID instead of submitting new authority. A
-failure after the state-file rename remains queryable in memory and is reported
-as an unknown response outcome rather than rolling the process back behind the
-visible file.
-
-The runtime and fault-injection surfaces use separate bearer credentials. The
-admin listener is disabled by default, and the runtime listener defaults to
-loopback. Runtime responses omit binding IDs, fencing tokens, and exact inputs.
-Request bodies, identifiers, headers, and server timeouts are bounded. These
-controls limit the local test surface; bearer authentication over plain HTTP is
-not a production executor identity protocol.
-
-The persisted schema and HTTP endpoints are internal alpha interfaces. No
-compatibility promise exists yet. The process fails closed if retained state is
-corrupt or uses an unsupported schema version.
+The runtime listener defaults to loopback, and the admin listener of the earlier
+simulator is gone. Request bodies, identifiers, headers, and server timeouts are
+bounded. The simulator refuses to start without a token and an enrollment.
+Bearer authentication over plain HTTP is not a production site identity protocol.
+The persisted store and the HTTP endpoints are internal alpha interfaces with no
+compatibility promise.
 
 ## Physical inventory subset
 
@@ -901,28 +699,25 @@ go test -race ./...
 
 `task test:envtest` runs the same command.
 
-For an isolated local run, create a synthetic credential file and keep the
-default loopback listener:
+For an isolated local simulator site, create a synthetic token file and a
+synthetic enrollment, and keep the default loopback listener:
 
 ```sh
+state_dir=$(mktemp -d)
 runtime_token_file=$(mktemp)
 chmod 600 "$runtime_token_file"
 openssl rand -hex 32 >"$runtime_token_file"
+cat >"$state_dir/enrollment.json" <<'JSON'
+{"default/server-example-001": {"bmcEndpoint": "https://[2001:db8::31]", "systemUUID": "00000000-0000-4000-8000-000000000031", "bootMACAddress": "02:00:00:00:00:31", "bmcPublicKeySHA256": "3131313131313131313131313131313131313131313131313131313131313131", "disks": ["disk-0"]}}
+JSON
 go run ./cmd/fleet-simulator \
   --runtime-token-file="$runtime_token_file" \
-  --state-file=/tmp/fleet-simulator-state.json
+  --enrollment-file="$state_dir/enrollment.json" \
+  --state-dir="$state_dir/site"
 ```
 
-Fault injection and full retained-state inspection are disabled by default. To
-enable them locally, create a second credential with a different value and add:
-
-```text
---admin-listen-address=127.0.0.1:8081
---admin-token-file=/path/to/distinct-admin-token
-```
-
-The process refuses to start if the runtime and admin credential values match.
-Remove the synthetic token and state files when the local run is complete.
+Add `--discover` to write fixture discovery with the in-cluster credential. Remove
+the synthetic token and state files when the local run is complete.
 
 ## Explicit gaps
 
@@ -972,7 +767,7 @@ acceptance inventory.
   surfaces, but production lifecycle handlers and public status writes remain
   unwired. Trusted create-time caller capture and protected finalizer admission
   cannot be reconstructed from informer events.
-- Live Milo project/IAM/catalog/quota event adapters and asynchronous executor
+- Live Milo project/IAM/catalog/quota event adapters and asynchronous site
   completion sources are not implemented. They must support durable replay;
   polling is intentionally not a fallback.
 - Cross-project class sources and bootstrap secret retention are rejected rather
@@ -981,25 +776,21 @@ acceptance inventory.
   and profile across two exact Milo project lifetimes. It uses synthetic
   admission, quota-hold, and source-use evidence, labels that boundary in public
   status, refuses publication collisions or profile drift, and is not production
-  authorization. The Milo adapter can
-  resolve a canonical source only when injected with trusted source authority,
-  fence, and custody implementations. The network adapter remains deliberately
-  unwired until production location, authorization, and object-guard owners are
-  available.
+  authorization. The network adapter remains deliberately unwired until
+  production location, authorization, and object-guard owners are available.
 - Milo v0.32.5 supplies ResourceClaim evidence but no service-owned quota custody
   anchor or explicit release acknowledgment. It also does not supply Fleet's
   caller-preserving source/provenance receipt, atomic invalidation-versus-bind
   fence, consumer-project deletion recovery, or provider-project purge guard.
-  Production cross-project allocation therefore fails closed; only test fakes
-  implement these interfaces in this increment.
+  Production cross-project allocation therefore fails closed, and the quota claim
+  has no end-to-end run.
 - `LocalDigestImageResolver` is test-only. Production image authority,
   namespace authorization, catalog lifetime identity, and digest resolution are
   not implemented.
 - No container image or Kubernetes deployment is delivered in this increment.
 - There is no mTLS workload identity, target-level authorization, or production
-  provider credential protocol.
-- Operations complete synchronously. Delayed completion, partial effects,
-  cancellation boundaries, synchronization barriers, and worker takeover remain
-  unimplemented.
-- The state file is intended for a single simulator process. Replication,
+  site credential protocol.
+- The capacity projector is unwired (O1) and bootstrap is refused (O10); see
+  [Device custody](device-custody.md#points-for-a-person).
+- The site store is intended for a single site process per Device. Replication,
   migration, backup, and upgrade/downgrade compatibility are not implemented.

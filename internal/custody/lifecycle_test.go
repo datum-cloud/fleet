@@ -19,13 +19,13 @@ func TestImportedDeviceGetsUnverifiedCustodyAndSendsNothing(t *testing.T) {
 	device := e.device("server-example-001", uid(1), testKeyA)
 	e.settle(device.Name)
 	custody := e.custody(device.Name)
-	if custody.Spec.State != ops.CustodyUnverified || custody.Spec.Holder.Type != ops.HolderNone || custody.Spec.ActiveOperation != nil || custody.Spec.DeviceRef.UID != string(device.UID) {
+	if custody.Spec.State != ops.CustodyUnverified || custody.Spec.Holder.Type != ops.HolderNone || custody.Spec.ActiveOperation != nil || custody.Labels[ops.LabelDeviceUID] != string(device.UID) {
 		t.Fatalf("new custody = %+v", custody.Spec)
 	}
 	if len(custody.Finalizers) != 1 || custody.Finalizers[0] != ops.CustodyFinalizer {
 		t.Fatalf("finalizers = %v", custody.Finalizers)
 	}
-	if err := e.coord.Claim(e.ctx, device.Name, "alloc-example"); !errors.Is(err, ErrUnavailable) {
+	if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-example"); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("Unverified custody was claimed: %v", err)
 	}
 	conditions := ProjectCapacity(CapacityInputs{Custody: &custody.Spec, AllocationPolicyEnabled: true, DiscoveryCurrent: true})
@@ -62,10 +62,10 @@ func TestLifecycle(t *testing.T) {
 	t.Run("holder transitions None Allocation Release None", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-a"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-a"); err != nil {
 			t.Fatal(err)
 		}
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-b"); !errors.Is(err, ErrUnavailable) {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-b"); !errors.Is(err, ErrUnavailable) {
 			t.Fatalf("a second allocation claimed the server: %v", err)
 		}
 		if err := e.coord.BeginRelease(e.ctx, device.Name, "alloc-b"); !errors.Is(err, ErrUnavailable) {
@@ -179,7 +179,7 @@ func TestLifecycle(t *testing.T) {
 	t.Run("pending operations are admitted oldest first", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-q"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-q"); err != nil {
 			t.Fatal(err)
 		}
 		e.providerOp(device, "alloc-q", "first")
@@ -203,7 +203,7 @@ func TestLifecycle(t *testing.T) {
 	t.Run("a newer pending operation supersedes an older one for the same authority", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-s"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-s"); err != nil {
 			t.Fatal(err)
 		}
 		running := e.installation(device, "alloc-s", "request-running")
@@ -220,7 +220,7 @@ func TestLifecycle(t *testing.T) {
 	t.Run("a holder change cancels pending operations that no longer match", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-c"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-c"); err != nil {
 			t.Fatal(err)
 		}
 		running := e.installation(device, "alloc-c", "request-a")
@@ -258,9 +258,9 @@ func TestLifecycle(t *testing.T) {
 		}
 		other := stale
 		other.Fence = active.Fence
-		other.Operation.UID = "00000000-0000-4000-8000-000000000999"
+		other.Operation.Name = "another-operation"
 		if err := e.coord.AcceptResult(e.ctx, other); !errors.Is(err, ErrStaleFence) {
-			t.Fatalf("result for another incarnation: %v", err)
+			t.Fatalf("result for another operation: %v", err)
 		}
 		after := e.custody(device.Name)
 		if after.Spec.ActiveOperation == nil || after.Spec.Holder.Type != custody.Spec.Holder.Type || after.Spec.RejectedResults == nil || after.Spec.RejectedResults.Count != 2 || after.Spec.RejectedResults.Last.Fence != active.Fence || after.Spec.RejectedResults.Last.Site != testSite {

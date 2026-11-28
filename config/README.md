@@ -14,8 +14,9 @@ target different API servers and must be reconciled independently.
 
 | Root | Destination | Contents |
 | --- | --- | --- |
-| `config/milo` | Milo root control plane | Fleet CRDs (including the `fleet.datumapis.com` inventory kinds), IAM protected resources and roles, service/quota registration, and the mandatory capacity-registration webhook. Devices can be deleted. |
-| `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, manager and inert-registration workloads and RBAC, private-record namespaces, and admission fences |
+| `config/milo` | Milo root control plane | Fleet CRDs (including the `fleet.datumapis.com` inventory kinds), IAM protected resources and roles, service/quota registration, the Device custody and operation kinds with their roles and creator webhook, and the mandatory capacity-registration webhook. Devices can be deleted. |
+| `config/milo-synthetic` | A separate non-production Milo control plane | The same kinds, ProtectedResources and roles, with the Device custody kinds but without the creator webhook and the capacity-registration webhook |
+| `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, manager and inert-registration workloads and RBAC, and admission fences. It holds no private records: the Secret-backed records and their namespace are removed. |
 | `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
 
 `config/components/device-deletion-protection` is a reusable component: a
@@ -63,8 +64,14 @@ legacy management-cluster install and will be removed. See
 
 `config/components/device-operations` registers `DeviceCustody`, the Device
 operation kinds, their ProtectedResources, the coordinator, requester, viewer
-and recovery operator roles, and the creator webhook. It is implemented and
-inert: no root includes it yet. See [device custody](../docs/development/device-custody.md).
+and recovery operator roles, and the creator webhook. `config/milo` includes all
+of it, and the `fleet-registration` server serves the webhook at
+`/validate-operation-creator`. `config/milo-synthetic` includes the kinds,
+ProtectedResources and roles without the webhook, because it installs no
+registration webhook. `config/standalone` includes only the CRDs and enforces the
+creator rule with a ValidatingAdmissionPolicy. Including the kinds installs no
+coordinator: the production manager has no provider, so nothing creates
+custody operations there. See [device custody](../docs/development/device-custody.md#cutover-increment-c).
 
 `config/base/bmc-discovery` runs read-only BMC discovery for one Milo project
 in a cluster that can reach the BMC network: one replica, no leader election,
@@ -84,7 +91,7 @@ graph. The harness stages them into an OCI artifact; see
 production roots, and neither production root may reference them.
 
 `config/overlays/synthetic-staging` is the temporary Milo-routed acceptance
-environment. It uses the real private custody, exclusivity, cleanup, and reuse
+environment. It uses the real Device custody, exclusivity, release, and reuse
 implementation, but substitutes synthetic admission and provider evidence. It
 accepts only powered-off, networkless claims in `us-central-1`; its status
 conditions identify that boundary. The manager still engages every consuming
@@ -93,42 +100,67 @@ configured consumer project (`consumerProjectName`); every other engaged
 project gets blocked lifecycle handlers and requested-hardware resolution. With
 the publication keys documented below it uses one distinct provider project,
 publishes a locked class reference and exact profile copy into the consumer,
-and retains both project lifetimes in allocation custody. Provider Machine events wake
+and records both project lifetimes on each allocation. Provider Machine events wake
 consumer claims directly; no polling resync is enabled.
 
-The simulator runs in a separate `fleet-synthetic-provider` Deployment behind a
-ClusterIP Service. The manager uses Service DNS and mounts the same dedicated
-runtime credential as the provider. The environment must supply the
-`fleet-system/fleet-synthetic-provider-auth` Secret with a `token` key; the
-staging infra overlay generates it through External Secrets with `CreatedOnce`.
-Neither process uses a Kubernetes API token to authenticate provider requests.
-The provider has its own service account with token automount disabled and no
-RBAC grants. Its NetworkPolicy permits runtime ingress only from manager pods
-in the same namespace and denies egress. The runtime uses cluster-local HTTP;
-this is a synthetic staging boundary, not a production transport-security design.
-The admin listener is disabled.
+The simulator is a site. It runs in a separate `fleet-synthetic-provider`
+Deployment behind a ClusterIP Service. The manager runs the custody coordinator
+loop, and reaches the site through Service DNS with the site API bearer token.
+The environment must supply the `fleet-system/fleet-synthetic-provider-auth`
+Secret with a `token` key; the environment generates it, for example through
+External Secrets with `CreatedOnce`. The provider has its own service account with token
+automount disabled and no RBAC grants. Its NetworkPolicy permits runtime ingress
+only from manager pods in the same namespace and denies egress. The runtime uses
+cluster-local HTTP; this is a synthetic staging boundary, not a production
+transport-security design. The admin listener is disabled.
 
-The provider keeps its operation log on a retained 1 Gi ReadWriteOnce PVC using
-the cluster's default StorageClass. It runs one replica with a `Recreate` strategy:
-its file store is not safe for multiple writers. Do not scale it above one or
-force-delete a running provider pod. Manager rollouts do not restart the provider
-or discard its state. Provider rollouts briefly interrupt runtime calls; private
-Fleet authority and the persisted simulator log retain exact inputs and outcomes.
-Both mounts read the credential from the projected Secret directory, allowing
-rotation without a restart; projection skew may temporarily reject requests.
-This overlay must never be promoted to production.
+The site keeps its store on a retained 1 Gi ReadWriteOnce PVC using the cluster's
+default StorageClass. The store holds each Device's fence and its simulated
+server. It runs one replica with a `Recreate` strategy: the store is not safe for
+multiple writers. Do not scale it above one or force-delete a running provider
+pod. Manager rollouts do not restart the provider or discard its state. Provider
+rollouts briefly interrupt site calls; custody and the site store retain exact
+inputs and outcomes. The site reads its token from the projected Secret
+directory, allowing rotation without a restart; projection skew may temporarily
+reject requests. This overlay must never be promoted to production.
 
-### Moving from the colocated simulator
+### Moving from the Secret-backed staging
 
-Deploy the environment's generated credential before publishing this overlay.
-Stop the old manager and verify all synthetic allocations and private custody
-have completed release before replacing the sidecar. Do not treat missing public
-Machines as proof of cleanup. The new PVC starts empty: this change does not copy
-the sidecar's ephemeral state and must not be used to abandon active operations.
-After rollout, verify both Deployments, Service routing, PVC binding, and a fresh
-allocation and verified release. Check provider restart recovery with an active
-synthetic claim before treating persistent-state recovery as verified in staging.
-Do not delete the PVC as a recovery shortcut.
+The cutover to Device custody deletes the private records, their namespace and
+RBAC, and the manager's `--private-namespace` flag. It adds no migration and
+reads no old record. An environment that ran the old overlay must do the
+following before the new manager runs:
+
+1. Release every old synthetic allocation, or discard the synthetic state. Do not
+   treat missing public Machines as proof of cleanup.
+2. Make sure the provider project has its records: Devices with their BMC
+   endpoints and identities, and the capacities, as in [Planning and
+   registering physical devices](../docs/operations/physical-inventory.md).
+   Records GitOps already manages stay with it; import by hand only the ones it
+   does not.
+3. Create two Milo identities that sign in with client certificates, bind one
+   to `fleet.datumapis.com-device-coordinator` and the other to
+   `fleet.datumapis.com-device-wipe-requester` in the provider project, and
+   issue each a client certificate with a cert-manager Certificate whose
+   Secret is the one below.
+4. Give the manager's own identity, the Metal provider, these roles in the
+   provider project: `metal.datumapis.com-controller`, which now deletes an
+   allocation that lost its Device before it held it;
+   `fleet.datumapis.com-device-installation-requester`; and
+   `fleet.datumapis.com-inventory-discoverer`, because in synthetic staging the manager writes the
+   fixture discovery of the site's Devices. One manager process holds all
+   three component credentials. Each write carries its own component's
+   identity, but the process can act as any of them: this is the synthetic
+   seam, not production separation.
+5. Replace the site enrollment placeholder with the Devices the site serves.
+6. Delete the old `fleet-system-private` namespace and its Secrets by hand.
+   Its manifest was never pruned, so Flux leaves it in place.
+7. Delete the publisher's copy of the MachineClass in the consumer project. Its
+   source names the old `project` field and is immutable, so the publisher
+   recreates it with `publisherRef`.
+8. After rollout, verify both Deployments, Service routing, PVC binding, and a
+   fresh allocation and verified release. Do not delete the PVC as a recovery
+   shortcut.
 
 
 Render the Milo and management-cluster roots before publishing the Kustomize bundle:
@@ -215,6 +247,21 @@ data:
   publishedProfileName: <allowed provider MachineProfile name>
 ```
 
+The overlay also takes these inputs for the custody coordinator, which the
+manager runs under its leader lease together with fixture discovery:
+
+| Input | Flag | Content |
+| --- | --- | --- |
+| Secret `fleet-system/fleet-custody-coordinator-client-cert`, keys `tls.crt` and `tls.key` | `--synthetic-coordinator-client-cert-dir` | The Milo client certificate of an identity with the `fleet.datumapis.com-device-coordinator` role in the provider project, as a cert-manager Certificate writes it. Supplied by the environment. |
+| Secret `fleet-system/fleet-release-controller-client-cert`, keys `tls.crt` and `tls.key` | `--synthetic-release-client-cert-dir` | The Milo client certificate of an identity with the `fleet.datumapis.com-device-wipe-requester` role in the provider project. Supplied by the environment. |
+| ConfigMap `fleet-system/fleet-synthetic-site-enrollment`, key `enrollment.json` | `--synthetic-site-enrollment-file` | The Devices the synthetic site serves, keyed `<namespace>/<name>`, each with its BMC endpoint, system UUID, boot MAC address, key digest and disks. The overlay ships a synthetic placeholder for `server-example-001`, and an environment replaces it with the Devices it imports. |
+| `--synthetic-device-namespace` | Default `default` | The namespace of the Devices, capacities and allocations in the provider project. Every enrolled Device must be in it. |
+
+The manager's own identity is the Metal provider. Fixture discovery is written by
+the manager because the synthetic site has no API credential. The cutover
+requires a person to re-import the records and create the two credentials; see
+[Moving from the Secret-backed staging](#moving-from-the-secret-backed-staging).
+
 The publisher refuses name collisions, reference chains, mutable profile-copy
 drift, a profile not allowed by the source class, or replacement source/project
 lifetimes. It writes only into the engaged consumer project, and only a
@@ -266,11 +313,10 @@ the discovery role and the project identity needs the controller role plus
 
 Fleet, NSO, quota, entitlement, Namespace, and Event access goes through the
 routed Milo project credential. The management-cluster service account has no
-cluster-wide role. It receives only leader-election access in `fleet-system`
-and Secret access in `fleet-system-private`; the separate host cache is confined
-to that private namespace. Cache scoping is not an authorization boundary. The
-private namespace and `fleet-system` have Flux pruning disabled so uninstalling
-one release cannot implicitly delete retained lifecycle authority.
+cluster-wide role. It receives only leader-election access in `fleet-system`.
+It holds no Secret access: allocations, custody and operations live in the
+provider project, not in the management cluster. `fleet-system` has Flux pruning
+disabled.
 
 ## Project discovery
 
@@ -281,10 +327,9 @@ gets its own runtime: the identity read from Milo, a client and cache bound to
 that project's control plane, a verifier run before every reconcile, its own
 mappers, and its own lifecycle owners. Every request carries its project's
 cluster name and is reconciled only through that runtime, and only when the
-runtime's identity matches the request. Private records stay in the one host
-namespace `fleet-system-private`; their names and indexes already key on the
-consumer project's authority and UID, and a private-record event reaches only
-the runtime engaged for exactly that project lifetime.
+runtime's identity matches the request. A MachineAllocation lives in the
+provider project and is named from the consumer project's UID and the Machine
+UID, so equal Machine UIDs in two projects never share one.
 
 The synthetic provider project may itself be an Active `metal` consumer. It
 then engages like any other consumer, with blocked lifecycle handlers and the
@@ -306,9 +351,9 @@ standby is warm.
 When a project leaves the consumer set (its ServiceConsumer is Denied or
 deleted), the manager only stops reconciling it. It does not release custody,
 call a provider, delete Fleet records, or rewrite Machine status, including
-for a project with active custody. Private records for the departed project
-stay in place, and its queued events and deadlines are dropped. If the project
-is engaged again, reconciliation resumes from the retained records. Discovery
+for a project with active custody. Its allocations stay in place, and its queued
+events and deadlines are dropped. If the project is engaged again,
+reconciliation resumes from the retained allocations. Discovery
 is observational: the manager adds no ServiceConsumer finalizer, so it never
 gates a project's deletion, and it does not confirm platform suspension (it
 drops the consumer library's `Paused` status patch, because Fleet implements no
@@ -319,8 +364,8 @@ suspension).
 `/readyz` on port `health` (8081) reports discovery and cache health, not
 provider readiness. It passes when the provider project's ServiceConsumer cache
 has synced, every project with an Active `metal` ServiceConsumer is engaged on
-that replica, every engaged project cache has synced, and the private-record
-cache has synced. It never depends on a provider integration. It also keeps
+that replica, and every engaged project cache has synced. It never depends on a
+provider integration. It also keeps
 failing, with an explicit `project discovery is misconfigured` error, while no
 Service is registered for `metal.datumapis.com`, or while
 `consumerScopedProjection.providerProject` differs from that Service's
@@ -363,7 +408,7 @@ removing the manifest does not authorize deletion or settle old obligations.
 Before explicitly deleting an existing legacy registration, verify there are no
 legacy grants, claims, allowance buckets, or creation policies, and all legacy
 allocations have verified release. Never retarget its immutable `spec.resourceType`
-or delete retained private allocation records. Environments that have not completed
+or delete a retained MachineAllocation. Environments that have not completed
 this audit must retain their existing registration.
 
 Coordinate environment changes before publishing the corrected bundle: publication
@@ -372,55 +417,4 @@ must use `metal.datumapis.com/v1alpha1`, location availability must reference
 `metal`, and staff bindings must reference the Metal IAM roles. Gate the manager
 on inventory and service availability as well as the Milo configuration. Confirm
 old allocations are released immediately before rollout; absence of public
-Machines alone does not prove private cleanup is complete.
-
-### Hand off bootstrap field ownership before removing the sidecar
-
-A staging Deployment initially applied by `fleet-staging-bootstrap` may retain
-that server-side apply owner's fields alongside `kustomize-controller`. Removing
-the sidecar from the Flux manifest can then fail with
-`spec.template.spec.containers[1].image: Required value`: Flux removes the image
-it owns, while bootstrap ownership retains the rest of the obsolete container.
-The new provider Deployment does not cause this validation error.
-
-After stopping the manager, waiting for its Pods to terminate, and verifying
-all private custody/asset records are Released, inspect the Deployment with
-`kubectl get deployment fleet-manager -n fleet-system --show-managed-fields -o json`.
-Use the explicit staging context for every command. Confirm that the obsolete
-sidecar is co-owned by `fleet-staging-bootstrap` and `kustomize-controller`.
-Do not remove managedFields directly or delete/recreate the Deployment.
-
-The old bootstrap apply owner can relinquish its fields by applying only the
-Deployment's identity under its original field-manager name:
-
-```sh
-kubectl --context "$staging_context" -n fleet-system apply \
-  --server-side --field-manager=fleet-staging-bootstrap \
-  --dry-run=server --show-managed-fields -o json -f - <<'YAML'
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: fleet-manager
-  namespace: fleet-system
-YAML
-```
-
-Compare the returned `spec` with a fresh live read. They must be identical,
-including `replicas: 0`, and the sidecar's remaining apply owner must be
-`kustomize-controller`. If these checks fail, stop and investigate exclusive
-bootstrap-owned fields rather than forcing the change. This relinquishes the
-bootstrap **Apply** ownership; any historical **Update** entries are distinct
-and must not be erased indiscriminately.
-
-Once reviewed, repeat the same command without `--dry-run=server`. Re-read the
-Deployment to confirm the same invariants, then request reconciliation of
-`fleet-system/fleet-host`. Flux can now remove the entire obsolete container and
-install the separate provider. This handoff changes ownership only; it must not
-restart the old manager, modify private records, rotate credentials, or remove
-provider state. Continue with the allocation, restart recovery, and release
-checks described above.
-
-On November 12, 2026, the staging server accepted this ownership-only dry run:
-the complete Deployment spec remained identical at zero replicas, and only
-`kustomize-controller` retained sidecar ownership. Execution and successful
-post-handoff reconciliation must be verified separately.
+Machines alone does not prove cleanup is complete.

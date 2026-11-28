@@ -2,8 +2,8 @@
 """Kubernetes site observation, fault injection and sanitized execution records.
 
 Every call goes through the selected cell's API with its bootstrap kubeconfig.
-Records keep names, UIDs, phases, exit codes and conditions only: never handoff
-specs, journal records, fences, boot capabilities or tokens.
+Records keep names, UIDs, fences, phases, exit codes and conditions only: never
+assignment inputs, journal payloads, boot capabilities or tokens.
 """
 import datetime
 import hashlib
@@ -13,9 +13,13 @@ import pathlib
 import subprocess
 import sys
 
-NS, SITE = 'fleet-coordination', 'fleet-site'
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import harness  # noqa: E402  (site store layout)
+
+NS, SITE, CREDENTIALS = 'fleet-coordination', 'fleet-site', 'fleet-site-credentials'
 LIBVIRT = 'qemu:///system?socket=/run/fleet-libvirt/libvirt-sock'
 REDFISH = os.environ.get('FLEET_SITE_PROVIDER') == 'redfish'
+CELL_LABEL, ROLE_LABEL = 'coordination.fleet.datumapis.com/cell', 'coordination.fleet.datumapis.com/role'
 
 
 def now():
@@ -76,7 +80,26 @@ def write(path, value):
 
 
 def installs(path):
-    return [o for o in json.loads(pathlib.Path(path).read_text()) if o['kind'] == 'install']
+    return [o for o in json.loads(pathlib.Path(path).read_text()) if o['kind'] == 'DeviceInstallation']
+
+
+def assignment_name(assignment):
+    """internal/coordination.AssignmentName: the only name an assignment's handoff may have."""
+    key = harness.operation_key(assignment['operation']['kind'], assignment['operation']['name'], assignment['fence'])
+    return 'op-' + hashlib.sha256(('%s/%s' % (assignment['device'], key)).encode()).hexdigest()[:40]
+
+
+def observation(state, name):
+    return (get(state, '-n', NS, 'get', 'machineallocationhandoff', name).get('status') or {}).get('observation')
+
+
+DEVICE = 'fleet-provider/synthetic-device-central-01'
+OTHER_DEVICE = 'fleet-provider/synthetic-device-central-02'
+
+
+def credential_name(device):
+    """The only name a Device's credential Secret may have at the site."""
+    return 'bmc-' + hashlib.sha256(device.encode()).hexdigest()[:20]
 
 
 def worker_rbac(state, name):
@@ -94,15 +117,36 @@ def worker_rbac(state, name):
     for args in (('-n', NS, 'get', 'machineallocationhandoff', 'op-other-operation'), ('-n', NS, 'get', 'machineallocationhandoffs'),
                  ('-n', NS, 'patch', 'machineallocationhandoff', name, '--subresource=status', '--type=merge', '-p', '{"status":{}}'),
                  ('-n', NS, 'patch', 'machineallocationhandoff', name, '--type=merge', '-p', '{"spec":{"cell":"other"}}'),
-                 ('-n', NS, 'get', 'secrets'), ('-n', SITE, 'create', 'configmap', 'forbidden', '--from-literal=x=y'), ('-n', SITE, 'get', 'jobs')):
+                 ('-n', NS, 'get', 'secrets'), ('-n', SITE, 'get', 'secrets'), ('-n', SITE, 'create', 'configmap', 'forbidden', '--from-literal=x=y'), ('-n', SITE, 'get', 'jobs'),
+                 # Another Device's credential, and listing or watching them, are
+                 # denied in both modes.
+                 ('-n', CREDENTIALS, 'get', 'secret', credential_name(OTHER_DEVICE)), ('-n', CREDENTIALS, 'get', 'secrets'),
+                 ('-n', CREDENTIALS, 'get', 'secrets', '--watch', '--request-timeout=5s'),
+                 *((('-n', CREDENTIALS, 'get', 'secret', credential_name(DEVICE)),) if not REDFISH else ())):
         r = kubectl(state, *args, check=False, config='worker-kubeconfig.json')
         if r.returncode == 0 or 'forbidden' not in r.stderr.lower():
             raise SystemExit('worker credential allowed: ' + ' '.join(args[:4]) + ' ' + r.stderr[:200])
-        denied.append(' '.join(args[2:4]) + (' (status)' if '--subresource=status' in args else ''))
+        denied.append(args[1] + ' ' + ' '.join(args[2:4]) + (' (status)' if '--subresource=status' in args else ''))
+    record = {'observedAt': now(), 'serviceAccount': 'w-' + name, 'ownHandoffReadable': True, 'forbidden': denied}
     role = get(state, '-n', NS, 'get', 'role', 'w-' + name)
-    write(s / 'k8s-worker-rbac.json', {'observedAt': now(), 'serviceAccount': 'w-' + name, 'roleRules': role['rules'],
-                                        'ownHandoffReadable': True, 'forbidden': denied, 'roleCreatedBy': role['metadata'].get('labels', {}).get('kro.run/node-id')})
-    print('worker-rbac: per-operation ServiceAccount reads only its own handoff; list, other names, status, spec, Secrets and site writes forbidden')
+    record.update(roleRules=role['rules'], roleCreatedBy=role['metadata'].get('labels', {}).get('kro.run/node-id'))
+    if REDFISH:
+        # A Redfish worker may get exactly the credential Secret of the Device
+        # its assignment names, and nothing else. No handoff field names it.
+        spec = get(state, '-n', NS, 'get', 'machineallocationhandoff', name)['spec']
+        if 'credential' in spec:
+            raise SystemExit('the handoff names a credential Secret: %s' % spec['credential'])
+        own = credential_name(json.loads(spec['assignmentJSON'])['device'])
+        mine = kubectl(state, '-n', CREDENTIALS, 'get', 'secret', own, '-o', 'name', check=False, config='worker-kubeconfig.json')
+        if mine.returncode:
+            raise SystemExit("Redfish worker cannot get its own Device's credential: " + mine.stderr[:200])
+        creds = get(state, '-n', CREDENTIALS, 'get', 'role', 'w-' + name)
+        if creds['rules'] != [{'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': [own], 'verbs': ['get']}]:
+            raise SystemExit('Redfish worker credential Role is not get on its one Secret: %s' % creds['rules'])
+        record.update(ownCredentialReadable=True, credentialRoleRules=creds['rules'])
+    write(s / 'k8s-worker-rbac.json', record)
+    print('worker-rbac: per-operation ServiceAccount reads only its own handoff; list, other names, status, spec, Secrets and site writes forbidden'
+          + ("; it gets only its own Device's BMC credential Secret, never another's, and lists none" if REDFISH else ''))
 
 
 def record_pod_interrupt(state, before, after):
@@ -111,12 +155,12 @@ def record_pod_interrupt(state, before, after):
     after_ops = installs(s / 'interrupt-after.json')
     jb = json.loads((s / 'interrupt-job-before-pod.json').read_text())
     ja = json.loads((s / 'interrupt-job-after-pod.json').read_text())
-    if len(after_ops) != 1 or after_ops[0]['id'] != seen['operation']['id'] or after_ops[0]['stage'] == 'done':
-        raise SystemExit('interrupted operation is not the same unfinished operation')
+    if len(after_ops) != 1 or after_ops[0]['operation'] != seen['operation']['operation'] or after_ops[0]['done'] or after_ops[0]['phase']:
+        raise SystemExit('interrupted operation is not the same unfinished operation without a result')
     if jb['uid'] != ja['uid'] or ja['failed'] < 1:
         raise SystemExit('Job controller did not account and replace the lost Pod in the same Job: %s' % ja)
     write(evidence(state) / 'interrupt.json', {
-        'observedAt': now(), 'operationID': seen['operation']['id'], 'domain': seen['operation']['domain'],
+        'observedAt': now(), 'operationID': seen['operation']['operation'], 'fence': seen['operation']['fence'], 'domain': seen['operation']['domain'],
         'stageAtInterrupt': seen['operation']['stage'], 'domainRunningAtInterrupt': seen['domainRunning'],
         'podInterruption': {'method': 'worker Pod force-deleted with grace period 0', 'deletedPodUID': before, 'replacementPodUID': after,
                             'jobUID': jb['uid'], 'jobFailedPodsBefore': jb['failed'], 'jobFailedPodsAfter': ja['failed'], 'replacedBy': 'Job controller'},
@@ -127,9 +171,9 @@ def record_job_interrupt(state, old, new, pod_before, pod_after):
     s = pathlib.Path(state)
     i = interrupt_record(state)
     before, after = installs(s / 'interrupt-job-before.json'), installs(s / 'interrupt-job-after.json')
-    if len(before) != 1 or before[0]['stage'] == 'done':
+    if len(before) != 1 or before[0]['done']:
         raise SystemExit('install finished before the Job could be deleted mid-operation')
-    if len(after) != 1 or after[0]['id'] != i['operationID']:
+    if len(after) != 1 or after[0]['operation'] != i['operationID'] or after[0]['fence'] != i['fence']:
         raise SystemExit('Job recreation created another install operation')
     i['jobRecreation'] = {'deletedJobUID': old, 'recreatedJobUID': new, 'recreatedBy': 'kro collection reconciliation',
                           'podBeforeUID': pod_before, 'podAfterUID': pod_after, 'stageAtDeletion': before[0]['stage'], 'stageAfterRecreation': after[0]['stage']}
@@ -140,20 +184,25 @@ def record_resume(state, name):
     s = pathlib.Path(state)
     i = interrupt_record(state)
     done = installs(s / 'resume-after.json')
-    if len(done) != 1 or done[0]['id'] != i['operationID'] or done[0]['stage'] != 'done' or done[0]['phase'] != 'Succeeded':
+    if len(done) != 1 or done[0]['operation'] != i['operationID'] or done[0]['fence'] != i['fence'] or not done[0]['done']:
         raise SystemExit('replacement workers did not complete the exact interrupted operation')
+    # The observer published the stored result for exactly that assignment.
+    result = (observation(state, name) or {}).get('result') or {}
+    operation = result.get('operation', {})
+    if result.get('phase') != 'Succeeded' or harness.operation_key(operation.get('kind', ''), operation.get('name', ''), result.get('fence', 0)) != i['operationID'] or result.get('fence') != i['fence']:
+        raise SystemExit('the observed result is not the interrupted operation Succeeded at its fence')
     j, ps = job(state, name), pods(state, name)
     if j['uid'] != i['jobRecreation']['recreatedJobUID'] or ['Complete', 'True', 'CompletionsReached'] not in j['conditions']:
         raise SystemExit('recreated Job did not complete: %s' % j)
     if [p['exitCode'] for p in ps if p['phase'] == 'Succeeded'] != [0]:
         raise SystemExit('expected exactly one succeeded worker Pod in the recreated Job: %s' % ps)
-    i.update(resumedStage=done[0]['stage'], resumedPhase=done[0]['phase'], installOperations=len(done), completedJob=j, completedJobPods=ps)
+    i.update(resumedStage=done[0]['stage'], resumedPhase=result['phase'], installOperations=len(done), completedJob=j, completedJobPods=ps)
     write(evidence(state) / 'interrupt.json', i)
 
 
 def qemu_starts(state, operation):
     # Redfish mode: the persistent lab target A carries every operation.
-    domain = 'fleet-lab-target-a' if REDFISH else 'fleet-local-' + hashlib.sha256(operation.encode()).hexdigest()[:24]
+    domain = harness.LAB_DOMAIN if REDFISH else harness.domain_name(operation)
     r = kubectl(state, '-n', SITE, 'exec', 'deploy/fleet-site-runtime', '-c', 'libvirt', '--', 'cat', '/var/log/libvirt/qemu/' + domain + '.log', check=False)
     return r.stdout.count(': starting up ') if r.returncode == 0 else None
 
@@ -167,7 +216,7 @@ def lifecycle_snapshot(state, name):
     conds = {c['type']: c['status'] for c in machine.get('status', {}).get('conditions', [])}
     site_pods = {d: [p['metadata']['uid'] for p in get(state, '-n', SITE, 'get', 'pods', '-l', 'app.kubernetes.io/name=' + d)['items']]
                  for d in ('fleet-site-runtime', 'fleet-site-boot', 'fleet-site-observer')}
-    print(json.dumps({'observedAt': now(), 'journalSHA256': hashlib.sha256(runtime(state, 'cat', '/var/lib/fleet-local/journal.json').encode()).hexdigest(),
+    print(json.dumps({'observedAt': now(), 'siteStoreSHA256': hashlib.sha256(runtime(state, 'cat', harness.STATE_PATH).encode()).hexdigest(),
                       'qemuStarts': qemu_starts(state, op), 'domains': runtime(state, 'virsh', '--connect', LIBVIRT, 'list', '--name', *([] if REDFISH else ['--all'])).split(),
                       'pvcUID': pvc['metadata']['uid'], 'pvUID': pv['metadata']['uid'], 'pvReclaimPolicy': pv['spec']['persistentVolumeReclaimPolicy'],
                       'machineA': {'phase': machine.get('status', {}).get('phase'), 'bound': conds.get('Bound'), 'ready': conds.get('Ready')},
@@ -177,7 +226,7 @@ def lifecycle_snapshot(state, name):
 def record_lifecycle(state, old, new):
     s = pathlib.Path(state)
     a, b = json.loads((s / 'lifecycle-before.json').read_text()), json.loads((s / 'lifecycle-after.json').read_text())
-    for key in ('journalSHA256', 'qemuStarts', 'pvcUID', 'pvUID', 'pvReclaimPolicy', 'domains', 'machineA'):
+    for key in ('siteStoreSHA256', 'qemuStarts', 'pvcUID', 'pvUID', 'pvReclaimPolicy', 'domains', 'machineA'):
         if a[key] != b[key]:
             raise SystemExit('%s changed across Pod/Job lifecycle: %s -> %s' % (key, a[key], b[key]))
     if a['machineA'] != {'phase': 'Ready', 'bound': 'True', 'ready': 'True'} or a['qemuStarts'] != 2 or a['domains'] or a['pvReclaimPolicy'] != 'Retain':
@@ -191,65 +240,118 @@ def record_lifecycle(state, old, new):
         raise SystemExit('recreated completed Job did not finish with one verified no-op replay: %s' % replay)
     write(evidence(state) / 'lifecycle.json', {'observedAt': now(), 'recreated': ['fleet-site-runtime Pod', 'fleet-site-boot Pod', 'fleet-site-observer Pod', 'completed install Job'],
                                                 'completedJobUIDBefore': old, 'completedJobUIDAfter': new, 'replayPods': replay,
-                                                'unchanged': ['provider journal bytes', 'QEMU starts (2)', 'PVC/PV identity', 'Retain reclaim policy', 'no domains', 'consumer-a Machine Ready/Bound'],
-                                                'journalSHA256': a['journalSHA256'], 'observerRepublished': True, 'before': a, 'after': b})
+                                                'unchanged': ['site store state bytes', 'QEMU starts (2)', 'PVC/PV identity', 'Retain reclaim policy', 'no domains', 'consumer-a Machine Ready/Bound'],
+                                                'siteStoreSHA256': a['siteStoreSHA256'], 'observerRepublished': True, 'before': a, 'after': b})
 
 
-FAULTS = ('duplicate', 'wrong-cell', 'stale-epoch')
+FAULTS = ('duplicate', 'wrong-cell', 'stale-fence')
+# Faults delivered to the cell; the duplicate never exists.
+JOB_FAULTS = ('wrong-cell', 'stale-fence', 'device-mismatch')
+
+
+def handoff(name, cell, spec, fault):
+    return {'apiVersion': 'coordination.fleet.datumapis.com/v1alpha1', 'kind': 'MachineAllocationHandoff',
+            'metadata': {'name': name, 'namespace': NS, 'labels': {CELL_LABEL: cell, ROLE_LABEL: 'assignment', 'fleet.datumapis.com/fault': fault}}, 'spec': spec}
 
 
 def delivery_faults(state, action):
+    """Each fault derives from the latest delivered assignment, whose fence is
+    the Device's stored fence: a duplicate of it, the same assignment for
+    another cell, the same operation below that fence, a handoff that names
+    another Device's credential Secret, and a handoff whose assignment names
+    another Device than the handoff does."""
     s = pathlib.Path(state)
     cell = (s / 'prefix').read_text().strip() + '-cell'
+    private = s / 'fault-handoffs.json'
     if action == 'create':
-        handoffs = get(state, '-n', NS, 'get', 'machineallocationhandoffs', '-l', 'coordination.fleet.datumapis.com/cell=' + cell)['items']
-        source = [h for h in handoffs if json.loads(h['spec']['requestJSON'])['kind'] == 'install' and json.loads(h['spec']['requestJSON'])['epoch'] == 1]
-        if len(source) != 1:
-            raise SystemExit('expected exactly one epoch-1 install handoff to derive faults from')
-        spec = source[0]['spec']
-        request = json.loads(spec['requestJSON'])
-        objects = {}
-        # Same retained intent under a second name: name/operation binding fails.
-        objects['duplicate'] = ('op-fault-duplicate-' + hashlib.sha256(spec['requestJSON'].encode()).hexdigest()[:12], dict(spec))
-        # Selected by the cell label, but the intent names another cell.
-        wrong = dict(request, id=request['id'] + '-fault-wrong-cell')
-        objects['wrong-cell'] = ('op-' + hashlib.sha256(wrong['id'].encode()).hexdigest()[:40], {'cell': 'remote-elsewhere-cell', 'requestJSON': json.dumps(wrong, separators=(',', ':'))})
-        # Well-formed for this cell, but replays the superseded epoch-1 fence.
-        stale = dict(request, id=request['id'] + '-fault-stale-epoch')
-        objects['stale-epoch'] = ('op-' + hashlib.sha256(stale['id'].encode()).hexdigest()[:40], {'cell': cell, 'requestJSON': json.dumps(stale, separators=(',', ':'))})
-        if request['epoch'] != 1:
-            raise SystemExit('stale-epoch fault requires the epoch-1 install handoff')
-        for fault in FAULTS:
-            name, body = objects[fault]
-            obj = {'apiVersion': 'coordination.fleet.datumapis.com/v1alpha1', 'kind': 'MachineAllocationHandoff',
-                   'metadata': {'name': name, 'namespace': NS, 'labels': {'coordination.fleet.datumapis.com/cell': cell, 'fleet.datumapis.com/fault': fault}}, 'spec': body}
-            kubectl(state, 'create', '-f', '-', input=json.dumps(obj))
-            (s / ('fault-%s-job' % fault)).write_text('w-' + name + '\n')
-            (s / ('fault-%s-handoff' % fault)).write_text(name + '\n')
+        handoffs = get(state, '-n', NS, 'get', 'machineallocationhandoffs', '-l', '%s=%s,%s=assignment' % (CELL_LABEL, cell, ROLE_LABEL))['items']
+        if not handoffs:
+            raise SystemExit('no delivered assignment to derive faults from')
+        source = max(handoffs, key=lambda h: json.loads(h['spec']['assignmentJSON'])['fence'])
+        assignment = json.loads(source['spec']['assignmentJSON'])
+        if source['metadata']['name'] != assignment_name(assignment) or assignment['fence'] < 2:
+            raise SystemExit('the stale-fence fault needs a delivered assignment under its own name with a fence of at least 2')
+        faults = {}
+        # The same assignment again: its name is fixed by its contents, so the API refuses it.
+        dup = handoff(source['metadata']['name'], cell, source['spec'], 'duplicate')
+        r = kubectl(state, 'create', '-f', '-', input=json.dumps(dup), check=False)
+        if r.returncode == 0 or 'AlreadyExists' not in r.stderr:
+            raise SystemExit('a duplicate assignment was not refused as AlreadyExists: ' + r.stderr[:200])
+        faults['duplicate'] = {'handoff': source['metadata']['name'], 'refused': 'AlreadyExists'}
+        # Selected by the cell label, but the handoff names another cell.
+        wrong = dict(assignment, operation=dict(assignment['operation'], name=assignment['operation']['name'] + '-fault-wrong-cell'))
+        faults['wrong-cell'] = {'handoff': assignment_name(wrong), 'spec': {'cell': 'remote-elsewhere-cell', 'device': assignment['device'],
+                                                                          'assignmentJSON': json.dumps(wrong, separators=(',', ':'))}}
+        # Well-formed for this cell under its own name, but below the stored fence.
+        stale = dict(assignment, fence=assignment['fence'] - 1)
+        faults['stale-fence'] = {'handoff': assignment_name(stale), 'operation': harness.operation_key(stale['operation']['kind'], stale['operation']['name'], stale['fence']), 'fence': stale['fence'],
+                                 'spec': {'cell': cell, 'device': assignment['device'], 'assignmentJSON': json.dumps(stale, separators=(',', ':'))}}
+        # The handoff names this Device, but its assignment names another, below
+        # the stored fence. Its worker refuses it, and it gets no credential
+        # Role, so neither Device's Secret is granted for it.
+        mismatched = dict(assignment, device=OTHER_DEVICE, fence=assignment['fence'] - 1,
+                          operation=dict(assignment['operation'], name=assignment['operation']['name'] + '-fault-device'))
+        faults['device-mismatch'] = {'handoff': assignment_name(mismatched), 'spec': {'cell': cell, 'device': assignment['device'],
+                                                                                    'assignmentJSON': json.dumps(mismatched, separators=(',', ':'))}}
+        for fault in JOB_FAULTS:
+            f = faults[fault]
+            kubectl(state, 'create', '-f', '-', input=json.dumps(handoff(f['handoff'], cell, f.pop('spec'), fault)))
+            (s / ('fault-%s-job' % fault)).write_text('w-' + f['handoff'] + '\n')
+        # A forged handoff naming another Device's credential Secret. No handoff
+        # field may name a Secret, so the API refuses it, and no Role on that
+        # Secret is ever created.
+        foreign = dict(assignment, fence=assignment['fence'] - 1, operation=dict(assignment['operation'], name=assignment['operation']['name'] + '-fault-credential'))
+        forged = handoff(assignment_name(foreign), cell, {'cell': cell, 'device': assignment['device'], 'assignmentJSON': json.dumps(foreign, separators=(',', ':')),
+                                                          'credential': credential_name(OTHER_DEVICE)}, 'foreign-credential')
+        r = kubectl(state, 'create', '--validate=strict', '-f', '-', input=json.dumps(forged), check=False)
+        if r.returncode == 0:
+            raise SystemExit('a handoff naming another Device\'s credential Secret was accepted')
+        if 'unknown field' not in r.stderr or 'credential' not in r.stderr:
+            raise SystemExit('a handoff naming a credential Secret was refused for another reason: ' + r.stderr[:200])
+        if kubectl(state, '-n', NS, 'get', 'machineallocationhandoff', assignment_name(foreign), check=False).returncode == 0:
+            raise SystemExit('the refused credential handoff exists')
+        faults['foreign-credential'] = {'handoff': assignment_name(foreign), 'refused': 'unknown field spec.credential'}
+        faults['source'] = {'handoff': source['metadata']['name'], 'operation': assignment['operation'], 'fence': assignment['fence']}
+        write(private, faults)
         return
-    names = {f: (s / ('fault-%s-handoff' % f)).read_text().strip() for f in FAULTS}
+    faults = json.loads(private.read_text())
     if action == 'verify':
-        record = {'observedAt': now(), 'faults': {}}
-        for fault, name in names.items():
+        record = {'observedAt': now(), 'source': faults['source'], 'faults': {'duplicate': faults['duplicate'], 'foreign-credential': faults['foreign-credential']}}
+        # No Role at the site grants any Secret but the one of the Device its
+        # own assignment names; another Device's credential is never granted.
+        for role in get(state, '-n', CREDENTIALS, 'get', 'roles')['items']:
+            names = [n for rule in role.get('rules', []) for n in rule.get('resourceNames', [])]
+            if credential_name(OTHER_DEVICE) in names:
+                raise SystemExit('Role %s grants another Device\'s credential Secret' % role['metadata']['name'])
+        for fault in JOB_FAULTS:
+            name = faults[fault]['handoff']
             j, ps = job(state, name), pods(state, name)
             if ['Failed', 'True', 'PodFailurePolicy'] not in j['conditions'] or j['succeeded'] or [p['exitCode'] for p in ps] != [65]:
                 raise SystemExit('%s fault Job did not fail once by podFailurePolicy exit 65: %s %s' % (fault, j, ps))
-            h = get(state, '-n', NS, 'get', 'machineallocationhandoff', name)
-            if h.get('status'):
-                raise SystemExit(fault + ' fault handoff gained a status observation')
-            record['faults'][fault] = {'handoff': name, 'job': j, 'pods': ps, 'status': None}
+            seen = observation(state, name)
+            if fault == 'wrong-cell' and seen:
+                raise SystemExit('the wrong-cell handoff gained an observation')
+            if fault == 'stale-fence' and (seen or {}).get('result'):
+                raise SystemExit('the stale-fence handoff gained a result')
+            if fault == 'device-mismatch' and kubectl(state, '-n', CREDENTIALS, 'get', 'role', 'w-' + name, check=False).returncode == 0:
+                raise SystemExit('the device-mismatch handoff was granted a credential Role')
+            record['faults'][fault] = {'handoff': name, 'job': j, 'pods': ps, 'observedFence': (seen or {}).get('fence'), 'result': None}
+        stored = kubectl(state, '-n', SITE, 'exec', 'deploy/fleet-site-runtime', '-c', 'libvirt', '--', 'test', '-e',
+                         '%s/%s.json' % (harness.RESULTS_DIR, faults['stale-fence']['operation']), check=False)
+        if stored.returncode == 0:
+            raise SystemExit('the site stored a result for the stale-fence assignment')
         machine = get(state, '-n', 'default', 'get', 'machine', 'allocation', config='consumer-b/management-project.json')
         conds = {c['type']: c['status'] for c in machine.get('status', {}).get('conditions', [])}
         if machine.get('status', {}).get('phase') != 'Bound' or conds.get('Bound') != 'True':
             raise SystemExit('failed fault Jobs changed consumer-b allocation: %s' % machine.get('status'))
-        record['providerJournalUnchanged'] = True
-        record['consumerBStillBound'] = True
+        record.update(siteStoreUnchanged=True, staleResultStored=False, consumerBStillBound=True)
         write(evidence(state) / 'delivery-faults.json', record)
         return
-    for name in names.values():
+    names = [faults[f]['handoff'] for f in JOB_FAULTS]
+    for name in names:
         kubectl(state, '-n', NS, 'delete', 'machineallocationhandoff', name, '--wait=true')
     for _ in range(120):
-        left = [n for n in names.values() if kubectl(state, '-n', SITE, 'get', 'job', 'w-' + n, check=False).returncode == 0]
+        left = [n for n in names if kubectl(state, '-n', SITE, 'get', 'job', 'w-' + n, check=False).returncode == 0]
         if not left:
             break
         subprocess.run(['sleep', '1'])

@@ -61,10 +61,10 @@ func TestRebuildKeepsUnprovenOutcomes(t *testing.T) {
 		fence := e.custody(device.Name).Spec.Fence
 		e.dropCustody(device.Name)
 		custody := verify(e, device, fence)
-		if custody.Spec.State != ops.CustodyVerified || custody.Spec.Holder.Type != ops.HolderAllocation || custody.Spec.RecoveryHold == nil || custody.Spec.RecoveryHold.UID != string(install.UID) || custody.Spec.ActiveOperation != nil {
+		if custody.Spec.State != ops.CustodyVerified || custody.Spec.Holder.Type != ops.HolderAllocation || custody.Spec.RecoveryHold == nil || custody.Spec.RecoveryHold.Name != install.Name || custody.Spec.ActiveOperation != nil {
 			t.Fatalf("rebuilt = %+v", custody.Spec)
 		}
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-other"); err == nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-other"); err == nil {
 			t.Fatal("a held server was claimed")
 		}
 	})
@@ -77,14 +77,14 @@ func TestRebuildKeepsUnprovenOutcomes(t *testing.T) {
 		// It may have run before custody was lost: its status says Admitted.
 		deadline := metav1.NewTime(e.clock.Now().Add(InstallationDeadline))
 		recorded := ops.DeviceSnapshot{BMCEndpoint: device.Spec.BMC.Endpoint, SystemUUID: device.Spec.Identity.SystemUUID, BMCPublicKeySHA256: fmt.Sprintf("%064x", n), Extra: map[string]string{"resetTypes": "On"}}
-		install.Status = ops.OperationStatus{Phase: ops.PhaseAdmitted, Fence: 4, Deadline: &deadline, Snapshot: &recorded}
+		install.Status = ops.OperationStatus{Admission: admitted(4), Phase: ops.PhaseAdmitted, Fence: 4, Deadline: &deadline, Snapshot: &recorded}
 		if err := e.admin.Status().Update(e.ctx, install); err != nil {
 			t.Fatal(err)
 		}
 		custody := verify(e, device, 4)
 		e.settle(device.Name)
 		custody = e.custody(device.Name)
-		if hold := custody.Spec.RecoveryHold; hold == nil || hold.UID != string(install.UID) || custody.Spec.ActiveOperation != nil || custody.Spec.Fence <= 4 {
+		if hold := custody.Spec.RecoveryHold; hold == nil || hold.Name != install.Name || custody.Spec.ActiveOperation != nil || custody.Spec.Fence <= 4 {
 			t.Fatalf("rebuilt = %+v", custody.Spec)
 		}
 		// The rebuilt hold keeps the deadline and snapshot the status recorded.
@@ -99,12 +99,14 @@ func TestRebuildKeepsUnprovenOutcomes(t *testing.T) {
 		device := next()
 		e.allocation(device, "alloc-r-"+device.Name, "Releasing")
 		wipe := e.wipe(device, "alloc-r-"+device.Name, 1)
-		wipe.Status = ops.OperationStatus{Phase: ops.PhasePending, Reason: ReasonOperationInProgress}
+		// Its admission was recorded, then custody was lost before the rest
+		// of its status was copied.
+		wipe.Status = ops.OperationStatus{Admission: admitted(1), Phase: ops.PhasePending, Reason: ReasonOperationInProgress}
 		if err := e.admin.Status().Update(e.ctx, wipe); err != nil {
 			t.Fatal(err)
 		}
 		custody := verify(e, device, 0)
-		if custody.Spec.Holder.Type != ops.HolderRelease || custody.Spec.RecoveryHold == nil || custody.Spec.RecoveryHold.UID != string(wipe.UID) || custody.Spec.ActiveOperation != nil {
+		if custody.Spec.Holder.Type != ops.HolderRelease || custody.Spec.RecoveryHold == nil || custody.Spec.RecoveryHold.Name != wipe.Name || custody.Spec.ActiveOperation != nil {
 			t.Fatalf("rebuilt = %+v", custody.Spec)
 		}
 		// A Pending status recorded no deadline or snapshot, so the hold has
@@ -122,12 +124,12 @@ func TestRebuildKeepsUnprovenOutcomes(t *testing.T) {
 		e.allocation(device, allocation, "Releasing")
 		verify(e, device, 0)
 		install := e.installation(device, allocation, "request-1")
-		install.Status = ops.OperationStatus{Phase: ops.PhaseOutcomeUnknown, Fence: 1, FinishedAt: ptrTime(e.clock.Now())}
+		install.Status = ops.OperationStatus{Admission: admitted(1), Phase: ops.PhaseOutcomeUnknown, Fence: 1, FinishedAt: ptrTime(e.clock.Now())}
 		if err := e.admin.Status().Update(e.ctx, install); err != nil {
 			t.Fatal(err)
 		}
 		wipe := e.wipe(device, allocation, 1)
-		wipe.Status = ops.OperationStatus{Phase: ops.PhaseSucceeded, Fence: 2, FinishedAt: ptrTime(e.clock.Now())}
+		wipe.Status = ops.OperationStatus{Admission: admitted(2), Phase: ops.PhaseSucceeded, Fence: 2, FinishedAt: ptrTime(e.clock.Now())}
 		if err := e.admin.Status().Update(e.ctx, wipe); err != nil {
 			t.Fatal(err)
 		}
@@ -144,18 +146,18 @@ func TestRebuildKeepsUnprovenOutcomes(t *testing.T) {
 		allocation := "alloc-l-" + device.Name
 		e.allocation(device, allocation, "Releasing")
 		original := e.wipe(device, allocation, 1)
-		original.Status = ops.OperationStatus{Phase: ops.PhaseOutcomeUnknown, Fence: 1, FinishedAt: ptrTime(e.clock.Now())}
+		original.Status = ops.OperationStatus{Admission: admitted(1), Phase: ops.PhaseOutcomeUnknown, Fence: 1, FinishedAt: ptrTime(e.clock.Now())}
 		if err := e.admin.Status().Update(e.ctx, original); err != nil {
 			t.Fatal(err)
 		}
 		retried := e.namedWipe(device, allocation, original.Name+"-retry-2", 1)
-		retried.Status = ops.OperationStatus{Phase: ops.PhaseOutcomeUnknown, Fence: 3, FinishedAt: ptrTime(e.clock.Now())}
+		retried.Status = ops.OperationStatus{Admission: admitted(3), Phase: ops.PhaseOutcomeUnknown, Fence: 3, FinishedAt: ptrTime(e.clock.Now())}
 		if err := e.admin.Status().Update(e.ctx, retried); err != nil {
 			t.Fatal(err)
 		}
 		custody := verify(e, device, 3)
 		hold := custody.Spec.RecoveryHold
-		if hold == nil || hold.UID != string(retried.UID) || hold.RetryName != original.Name || hold.Retries != 2 || RetryName(*hold, 3) != original.Name+"-retry-3" || len(custody.Spec.Conflicts) != 0 {
+		if hold == nil || hold.Name != retried.Name || hold.RetryName != original.Name || hold.Retries != 2 || RetryName(*hold, 3) != original.Name+"-retry-3" || len(custody.Spec.Conflicts) != 0 {
 			t.Fatalf("rebuilt hold = %+v", hold)
 		}
 	})
@@ -168,14 +170,14 @@ func TestRebuildKeepsUnprovenOutcomes(t *testing.T) {
 		var newest *ops.DeviceInstallation
 		for index, fence := range []int64{2, 5} {
 			install := e.installation(device, allocation, fmt.Sprintf("request-%d", index))
-			install.Status = ops.OperationStatus{Phase: ops.PhaseOutcomeUnknown, Fence: fence, FinishedAt: ptrTime(e.clock.Now())}
+			install.Status = ops.OperationStatus{Admission: admitted(fence), Phase: ops.PhaseOutcomeUnknown, Fence: fence, FinishedAt: ptrTime(e.clock.Now())}
 			if err := e.admin.Status().Update(e.ctx, install); err != nil {
 				t.Fatal(err)
 			}
 			newest = install
 		}
 		custody := verify(e, device, 5)
-		if custody.Spec.State != ops.CustodyUnverified || !slices.Contains(custody.Spec.Conflicts, ConflictMultipleUnfinished) || custody.Spec.RecoveryHold == nil || custody.Spec.RecoveryHold.UID != string(newest.UID) {
+		if custody.Spec.State != ops.CustodyUnverified || !slices.Contains(custody.Spec.Conflicts, ConflictMultipleUnfinished) || custody.Spec.RecoveryHold == nil || custody.Spec.RecoveryHold.Name != newest.Name {
 			t.Fatalf("rebuilt = %+v", custody.Spec)
 		}
 		// Resolve must agree with the live allocation, and keeps the hold.
@@ -198,7 +200,7 @@ func TestRebuildKeepsUnprovenOutcomes(t *testing.T) {
 		e.settle(device.Name)
 		e.requirePhase(resolve, ops.PhaseSucceeded, "")
 		custody = e.custody(device.Name)
-		if custody.Spec.State != ops.CustodyVerified || custody.Spec.Holder.Type != ops.HolderAllocation || custody.Spec.RecoveryHold == nil || custody.Spec.RecoveryHold.UID != string(newest.UID) {
+		if custody.Spec.State != ops.CustodyVerified || custody.Spec.Holder.Type != ops.HolderAllocation || custody.Spec.RecoveryHold == nil || custody.Spec.RecoveryHold.Name != newest.Name {
 			t.Fatalf("after Resolve: %+v", custody.Spec)
 		}
 	})
@@ -259,7 +261,7 @@ func TestARefusalNeverUsesCustodyReadBeforeAHolderChange(t *testing.T) {
 	device := e.verified("server-example-800", uid(800), fmt.Sprintf("%064x", 800))
 	var install *ops.DeviceInstallation
 	racing := &claimingClient{Client: e.client(), before: func() {
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-late"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-late"); err != nil {
 			t.Error(err)
 		}
 		install = e.installation(device, "alloc-late", "request-1")
@@ -302,12 +304,13 @@ func TestFencesFollowTheSiteReport(t *testing.T) {
 func TestAHeldOperationIsNeverACandidate(t *testing.T) {
 	e := startEnv(t)
 	device := e.verified("server-example-820", uid(820), fmt.Sprintf("%064x", 820))
-	if err := e.coord.Claim(e.ctx, device.Name, "alloc-held"); err != nil {
+	if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-held"); err != nil {
 		t.Fatal(err)
 	}
 	install := e.installation(device, "alloc-held", "request-1")
 	custody := e.custody(device.Name)
-	custody.Spec.RecoveryHold = &ops.RecoveryHold{OperationReference: reference("DeviceInstallation", install), Fence: 0, Since: metav1.NewTime(e.clock.Now()), Reason: ReasonRebuilt}
+	e.markAdmitted(install, custody.Spec.Fence+1)
+	custody.Spec.RecoveryHold = &ops.RecoveryHold{OperationReference: reference("DeviceInstallation", install), Fence: custody.Spec.Fence + 1, Since: metav1.NewTime(e.clock.Now()), Reason: ReasonRebuilt}
 	candidates, err := e.coord.candidates(e.ctx, custody)
 	if err != nil {
 		t.Fatal(err)

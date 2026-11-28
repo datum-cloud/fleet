@@ -196,8 +196,9 @@ Each attempt runs in this order:
 All requests go through the shared Redfish transport guard: the enrolled
 `https://IPv4:port` only, paths under `/redfish/v1`, no redirects, no
 environment proxy, and a 1 MiB bound on each response.
-`redfish.NewPinnedClient` and `redfish.PinnedTLSConfig` are available to the
-provisioning executor too; its behavior is unchanged.
+The Redfish site workers use `redfish.NewPinnedClient` and
+`redfish.PinnedTLSConfig` too, with the same per-Device credential Secret and
+approved pin. A pin the workers cannot match sends nothing.
 
 ### Approving a pin
 
