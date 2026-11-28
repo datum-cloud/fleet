@@ -43,7 +43,7 @@ custody](../../docs/development/device-custody.md#tests).
 | --- | --- | --- |
 | Two allocators race for one server; one wins | `TestConcurrency`, `TestConcurrentAllocatorsOneWinner` | Envtest verified; the standalone smoke verifies two consumers contending for one server |
 | An allocator retries after a lost response and claims no second server | `TestConcurrency`, `TestAnAllocationThatLostItsDeviceIsReplaced` | Envtest verified; the allocation is named from the Machine UID, so a retry finds the same one |
-| A staff operation names a customer allocation and is refused | `TestAdmissionPreconditions`, with the test-only staff kind | Envtest verified; end to end deferred to power |
+| A staff operation names a customer allocation and is refused | `TestAdmissionPreconditions`, with the test-only staff kind; `TestPowerOperations` | Envtest verified, including for staff power; end to end deferred to the power worker |
 | A commissioning times out and a later one settles the hold | `TestLifecycle`, `TestRecovery`, with the test-only kind and `DeviceWipe` | Deferred: commissioning is out of scope; the mechanism is envtest verified |
 | A staff operation targets an allocated, releasing or unsettleable held server and is refused, nothing sent | `TestAdmissionPreconditions`, `TestRecovery` | Envtest verified; end to end proposed |
 | A worker passes its deadline; `OutcomeUnknown`; settling waits for the worker to stop | `TestLifecycle`, `TestRecovery` | Envtest verified with a fake site; end to end proposed |

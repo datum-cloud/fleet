@@ -1,0 +1,20 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: ProtectedResource
+metadata:
+  name: fleet.datumapis.com-devicepoweroperation
+spec:
+  serviceRef:
+    name: fleet.datumapis.com
+  kind: DevicePowerOperation
+  plural: devicepoweroperations
+  singular: devicepoweroperation
+  # Status has one writer, the coordinator. With subresource authorization
+  # enabled, status writes use devicepoweroperations/status.update and
+  # devicepoweroperations/status.patch instead of updateStatus.
+  permissions: [list, get, watch, create, update, patch, delete, updateStatus]
+  subresources:
+    - name: status
+      permissions: [update, patch]
+  parentResources:
+    - apiGroup: resourcemanager.miloapis.com
+      kind: Project

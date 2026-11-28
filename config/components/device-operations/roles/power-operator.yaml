@@ -1,0 +1,13 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-device-power-operator
+  annotations:
+    kubernetes.io/display-name: Fleet Device Power Operator
+    kubernetes.io/description: Power a Device on or off, or reset it, while no customer holds it. Creates only DevicePowerOperations, and does not read MachineAllocations.
+spec:
+  launchStage: Alpha
+  inheritedRoles:
+    - name: fleet.datumapis.com-device-operations-viewer
+  includedPermissions:
+    - fleet.datumapis.com/devicepoweroperations.create

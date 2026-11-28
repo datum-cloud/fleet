@@ -328,12 +328,12 @@ func applyRecovery(ctx context.Context, apply *ApplyContext) (*ops.DeviceCustody
 // for them.
 func DefaultRegistry() (*Registry, error) {
 	registry := NewRegistry()
-	for _, kind := range []Kind{DeviceInstallationKind(), DeviceWipeKind(), DeviceRecoveryKind()} {
+	for _, kind := range []Kind{DeviceInstallationKind(), DeviceWipeKind(), DevicePowerOperationKind(), DeviceRecoveryKind()} {
 		if err := registry.Register(kind); err != nil {
 			return nil, err
 		}
 	}
-	for _, rule := range DefaultRules() {
+	for _, rule := range slices.Concat(DefaultRules(), PowerRules()) {
 		if err := registry.AddRule(rule); err != nil {
 			return nil, err
 		}
@@ -341,7 +341,8 @@ func DefaultRegistry() (*Registry, error) {
 	return registry, nil
 }
 
-// DefaultRules is the operations table of #174 for the built-in kinds.
+// DefaultRules is the operations table of #174 for installation, wipe and
+// recovery. PowerRules holds the power rows.
 func DefaultRules() []Rule {
 	return []Rule{
 		{Kind: "DeviceInstallation", Creator: CreatorMetalProvider, Authority: AuthorityAllocation, Holders: []ops.HolderType{ops.HolderAllocation}, Queue: true},

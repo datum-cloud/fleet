@@ -16,10 +16,12 @@ marked **implemented and verified**, **implemented and inert**, or
 | B: site execution | Per-Device fence store and journal, older-worker stop with a confirmation, deadlines, fenced typed results, per-Device credentials, pinned TLS, identity checks, the handoff payload, the site fence report, and the Redfish install and wipe phases behind the worker contract | **Implemented and verified.** Unit tested, including against TLS BMC stubs. Increment C delivers to it. |
 | C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the delivery loop, the simulator, local VM and Redfish sites, the creator webhook in the production Milo root, the manager's power projector, and deletion of the Secret-backed records and executors. See [Cutover](#cutover-increment-c). | **Implemented.** Verified by unit tests, tests against a real API server, the standalone smoke (`task standalone:test`), and both multi-plane runs, local VM and Redfish. |
 | D: end-to-end failure scenarios | Harness phases and evidence checks for the #174 acceptance tests | **Proposed** |
+| Power P1: control plane | `DevicePowerOperation`, its registry entry, rows, checks, evidence and settle hook, its roles, and the Device field for offered reset types. See [Device power operations](#device-power-operations). | **Implemented.** The kind ships with the component in every root C wires, and the creator webhook, standalone's creator policy and each coordinator's access cover it. Nothing creates power operations yet. Discovery fills the reset-type field in a separate change. |
+| Power P2 to P4 | The site worker (on B), customer power from `Machine.spec.powerState` (on C), and the UI | **Proposed** |
 
 ## What Increment A adds
 
-- **Kinds.** `DeviceCustody` and three operation kinds in
+- **Kinds.** `DeviceCustody` and the operation kinds in
   `fleet.datumapis.com`, served only in provider project control planes. The
   component that registers them, with their ProtectedResources, roles and
   webhook, is in the production Milo root. The synthetic Milo root has it
@@ -521,6 +523,7 @@ Each decision lists the open point from the implementation brief it settles.
 | --- | --- |
 | `DeviceInstallation` | 40 minutes, the Redfish executor's install bound |
 | `DeviceWipe` | 40 minutes, the Redfish executor's cleanup bound |
+| `DevicePowerOperation` | 8 minutes: the two-minute start-by window, four BMC requests of at most 30 seconds, the three-minute observation, and a minute of margin |
 | `DeviceRecovery` | 10 minutes to collect the sites' fence reports |
 
 The worker stops at the deadline exactly (Increment B). The coordinator
@@ -914,6 +917,55 @@ Test the kind with the shared harness in `internal/custody`: register it
 beside the defaults, and run its refusals, admission, results and holds
 against a real API server.
 
+## Device power operations
+
+This section records how Fleet implements the power kind of the [device power
+operations proposal](https://github.com/datum-cloud/fleet/pull/173) (#173,
+pinned at `d6744ab`) on this foundation. Step P1 is **implemented**: the
+coordinator admits, holds and settles power operations in every mode the
+cutover wires, but no site worker runs them and nothing creates them. It
+follows [Adding an operation kind](#adding-an-operation-kind), and adds no
+change to the coordinator. The kind joins the creator webhook's governed
+kinds, standalone's creator policy and each coordinator's access, and
+`TestEveryOperationKindIsGoverned` requires every operation kind to be
+governed.
+
+| Piece | Decision |
+| --- | --- |
+| Inputs | `action` is `On`, `ForceOff`, `ForceRestart` or `PowerCycle`. A staff operation requires `expectedSystemUUID`, in lowercase canonical form. Its reason is the envelope's `serviceRequest.reason`, which is already required, rather than a second field. A provider operation omits `expectedSystemUUID` and requires `machineGeneration`. CEL enforces both. |
+| Names | The kind's rule is a generated name, which the staff rows use. The provider row sets its own rule: `<allocation>-power-<Machine generation>`, so its allocation name is at most 200 characters. A retry takes the foundation's retry name, and a staff retry created before its `Retry` waits in `Pending`. |
+| Rows | The Fleet provider for Metal, with `allocationRef`, from holder `Allocation`, queued. Staff, with `serviceRequest`, from holder `None`, and from `Service` only to settle a power hold. |
+| Admission checks | `SystemUUIDMismatch` compares `expectedSystemUUID` with the recorded UUID. `DiscoveryNotCurrent` requires the inventory read to come from the current BMC endpoint, within twice the discovery interval on the injected clock, and to include the recorded system. `ResetTypeNotOffered` requires that system to offer the action. `SystemUUIDNotRecorded` refuses a staff request for a Device with no recorded UUID. These run before rules 5 and 6, so their reasons are the ones reported. |
+| Snapshot | `resetTypes`, the power actions the system offered; `systemID`; and `resetTypesObservedAt`, when discovery read them. |
+| Replacement | The kind sets `Supersedes`, so a newer pending provider operation for the same allocation replaces an older one. It never replaces another kind's operation or the operation that settles a hold. Under a hold, newer operations wait in `Pending`. Only an operation the provider row admits replaces anything, so staff requests, and a staff request naming a customer's allocation, replace nothing. |
+| Holds | A power success settles only a power hold, and only after a `DeviceRecovery` with `Retry`. Power is `Retryable`. |
+| Settle | The Device's discovery must have read the BMC after the held operation ended, from its current endpoint, and read the recorded system `On` or `Off`. The recovery must cite that state in `evidence.data.powerState`, with an `observedAt` after the operation ended. Otherwise the recovery ends `Failed` with `PowerEvidenceNotCurrent`, `PowerEvidenceWrongEndpoint`, `PowerStateNotSettled` or `PowerEvidenceMismatch`. |
+| Evidence | `requestSentAt`, `power.before`, `power.after` and `resetEvidence`, typed in the CRD and decoded strictly, at most 1 KiB, and required for a `Succeeded` result. Observations are in time order. `resetEvidence` needs a sent command, and only a restart or power cycle may carry it. They are recorded in `status.evidence`, where every kind's evidence lives, not at the top level of status as #173's example shows. |
+| Roles | The **device power operator** inherits the viewer and creates only `DevicePowerOperation`. It does not read MachineAllocations. The **device power requester** is the Fleet provider for Metal's role. The viewer and coordinator cover the new kind. |
+| Discovery | Power reads the `ComputerSystem.Reset` types the Device's observed System offers. This change adds only that field, in the Go type and the CRD. BMC discovery starts recording it, with GETs only, in a separate change. Until then every action is refused with `ResetTypeNotOffered`. |
+
+The worker reasons `Stale`, `NotPoweredOn` and `PowerStateNotSettled` before
+a command, the start-by window and the journal payload arrive with the worker
+in B.
+
+### Gaps that remain
+
+Both need a change in the foundation, and neither is worked around here.
+
+- **A kind check cannot wait.** Rule 7 now runs before rule 5, and a kind
+  check can only refuse. A provider power operation whose discovery is not
+  current therefore ends `Failed` with `DiscoveryNotCurrent`. #174 says it
+  waits in `Pending`, as it did when rule 5 refused it first. Because a
+  provider operation is named from the Machine generation, a short discovery
+  lapse fails that generation's power change for good: it is not created
+  again until the generation changes.
+- **The evidence hook does not see the result's phase.** It also validates
+  `Failed` and `OutcomeUnknown` evidence, where the server did not change. So
+  it cannot require what only a success must prove: reset proof for a restart
+  or power cycle, and `power.after` in the requested state. A `Succeeded`
+  restart with no reset proof is accepted, and so is a `Succeeded` result
+  whose evidence is the empty object `{}`.
+
 ## Tests
 
 Run `task test:envtest`. It runs these tests with the race detector against
@@ -936,6 +988,8 @@ a real API server:
 | Seams, rows, principals, ordering, evidence bounds, capacity for every input | `TestRegistryRejectsIncompleteKindsAndRows`, `TestAddingRowsLeavesExistingRowsAlone`, `TestPrincipals`, `TestCandidatesOrderOldestFirstWithADeterministicTieBreak`, `TestEvidenceIsTypedAndBounded`, `TestCapacityProjection` |
 | Creator recording and caller preservation, including callers whose credential carries no UID | `TestHandler`, `TestCreatorAgainstAPIServer`, `TestStandaloneCreatorPolicyAgainstAPIServer`, `TestCreatorIdentifiesTheCallerByUsername` |
 | CRD contract, roles, and that nothing ships the component or the test-only kinds | `TestCRDContract`, `TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets`, `TestComponentIsInert` |
+| Power: each refusal with custody unchanged, both rows and every other pair, staff racing an allocation, replacement only by the provider row and waiting under a hold, expiry, an early staff retry settling after `Retry`, `Settle` evidence, required evidence | `TestPowerOperations` |
+| Power: CEL inputs and evidence pruning, checks, input digest, evidence bounds, registration | `TestPowerCRDRules`, `TestPowerChecks`, `TestPowerInputDigestIsStable`, `TestPowerEvidenceIsTypedAndBounded`, `TestPowerRegistration` |
 
 Increment A has no site, so "nothing was sent" means custody admitted nothing
 and the fence did not rise. Increment D proves it with the lab BMC audit.
