@@ -66,7 +66,7 @@ func TestTheSiteAPI(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	dispatcher := &Dispatcher{Runner: runner, Context: ctx}
-	server := httptest.NewServer(Handler(dispatcher, store, results, func() (string, error) { return token, nil }))
+	server := httptest.NewServer(Handler(dispatcher, store, results, custody.NetworkBootOnly, func() (string, error) { return token, nil }))
 	defer server.Close()
 	for name, header := range map[string]string{"no token": "", "wrong token": "Bearer other"} {
 		request, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/results", nil)
@@ -85,6 +85,14 @@ func TestTheSiteAPI(t *testing.T) {
 	remote, err := NewClient(server.URL, func() (string, error) { return token, nil }, server.Client())
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The site reports its enrollment's delivery declaration, and only to
+	// an authenticated caller.
+	if response, err := server.Client().Get(server.URL + "/v1/delivery-methods"); err != nil || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated delivery methods = %v, %v", response, err)
+	}
+	if methods, known, err := remote.DeliveryMethods(ctx, device); err != nil || !known || len(methods) != 1 || methods[0].Method != ops.DeliveryNetworkBoot {
+		t.Fatalf("delivery methods = %+v, %v, %v", methods, known, err)
 	}
 	a := assignment(t)
 	for range 3 {

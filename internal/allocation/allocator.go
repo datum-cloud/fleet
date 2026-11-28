@@ -140,11 +140,10 @@ type Allocator struct {
 	// through them, by claim kind, until no operation names their kind.
 	// IPAM's claimer always takes part as the default.
 	PreviousBootAddresses []bootaddress.Source
-	// DeliveryMethods is the site's declared boot delivery methods, in its
-	// order of preference. It is the same declaration the coordinator
-	// admits against. Each installation records the method selected from
-	// it.
-	DeliveryMethods []custody.OfferedMethod
+	// Sites reads the boot delivery methods each serving site's enrollment
+	// declares, the same declaration the coordinator admits against. Each
+	// installation records the method selected from it.
+	Sites custody.Sites
 }
 
 // ErrNoReportAddress means the site has no address source that claims a
@@ -155,6 +154,10 @@ var ErrNoReportAddress = errors.New("allocation: virtual media needs an address 
 // ErrNoDeliveryMethod means the site offers no delivery method the server
 // is qualified for, so nothing can install it.
 var ErrNoDeliveryMethod = errors.New("allocation: the site offers no delivery method the server is qualified for")
+
+// ErrDeliveryUnknown means a serving site has not reported a current
+// delivery declaration, so no method is selected yet.
+var ErrDeliveryUnknown = errors.New("allocation: a serving site has not reported its delivery methods")
 
 // selectDelivery reads the Device and its custody and selects the method an
 // installation records.
@@ -167,7 +170,14 @@ func (a *Allocator) selectDelivery(ctx context.Context, allocation *fleetv1.Mach
 	if err := a.Provider.Get(ctx, key, state); err != nil {
 		return ops.DeliveryInput{}, err
 	}
-	input, ok := custody.SelectMethod(a.DeliveryMethods, custody.QualifiedMethods(device), state)
+	offered, known, err := custody.Offered(ctx, a.Sites, device)
+	if err != nil {
+		return ops.DeliveryInput{}, err
+	}
+	if !known {
+		return ops.DeliveryInput{}, ErrDeliveryUnknown
+	}
+	input, ok := custody.SelectMethod(offered, custody.QualifiedMethods(device), state)
 	if !ok {
 		return ops.DeliveryInput{}, ErrNoDeliveryMethod
 	}

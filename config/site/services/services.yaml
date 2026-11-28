@@ -21,6 +21,20 @@ spec:
   ports:
     - {name: http, port: 8080, targetPort: 8080, protocol: TCP}
 ---
+# The site enrollment's boot delivery declaration: the methods this site
+# offers, in its order of preference. The observer publishes it on every
+# report handoff; the coordinator and the Metal provider read it there and
+# keep no copy. The environment gives the JSON list base64-encoded, because
+# Flux's substitution would drop the quotes around JSON text; the mounted
+# file holds the JSON.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fleet-site-delivery
+  namespace: fleet-site
+binaryData:
+  methods: ${FLEET_SITE_DELIVERY_METHODS}
+---
 # Admission parameter for kro-created worker Jobs: they must run the same
 # digest-pinned image as these services.
 apiVersion: v1
@@ -148,7 +162,7 @@ spec:
         - name: observer
           image: "${FLEET_SITE_IMAGE}"
           imagePullPolicy: IfNotPresent
-          command: [fleet-multiplane, site-observer, --cell, "${FLEET_CELL}", --interval, 10s]
+          command: [fleet-multiplane, site-observer, --cell, "${FLEET_CELL}", --interval, 10s, --delivery-methods, /etc/fleet-site-delivery/methods]
           env:
             - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
           securityContext:
@@ -161,6 +175,9 @@ spec:
             limits: {memory: 128Mi}
           volumeMounts:
             - {name: state, mountPath: /var/lib/fleet-local, subPath: journal}
+            - {name: delivery, mountPath: /etc/fleet-site-delivery, readOnly: true}
       volumes:
         - name: state
           persistentVolumeClaim: {claimName: fleet-site-state}
+        - name: delivery
+          configMap: {name: fleet-site-delivery}

@@ -149,7 +149,8 @@ func TestDeliveryMethodAdmission(t *testing.T) {
 		fence := e.custody(device.Name).Spec.Fence
 		notURL := virtualMedia
 		notURL.MediaService = "http://media.example"
-		if refusal := checkDelivery(&Admission{Device: device, Custody: e.custody(device.Name), Offered: e.sites.DeliveryMethods("")}, &ops.DeviceInstallationSpec{Delivery: notURL}); refusal == nil || refusal.Reason != ReasonDeliveryInputs {
+		offers, _, _ := e.sites.DeliveryMethods(e.ctx, "", device)
+		if refusal := checkDelivery(&Admission{Device: device, Custody: e.custody(device.Name), Offered: offers, OfferedKnown: true}, &ops.DeviceInstallationSpec{Delivery: notURL}); refusal == nil || refusal.Reason != ReasonDeliveryInputs {
 			t.Fatalf("a media service that is not https://IPv4:port: %+v", refusal)
 		}
 		network := &ops.BootNetworkInput{AddressClaim: fleetv1.TypedReference{APIGroup: "ipam.miloapis.com", Kind: "IPAddressClaim", Name: "claim-example"}, Address: "198.51.100.30"}
@@ -163,7 +164,8 @@ func TestDeliveryMethodAdmission(t *testing.T) {
 		e := e.sub(t)
 		device := held(e, "VirtualMedia")
 		fence := e.custody(device.Name).Spec.Fence
-		if refusal := checkDelivery(&Admission{Device: device, Custody: e.custody(device.Name), Offered: e.sites.DeliveryMethods("")}, &ops.DeviceInstallationSpec{Delivery: virtualMedia}); refusal == nil || refusal.Reason != ReasonReportAddressRequired {
+		offers, _, _ := e.sites.DeliveryMethods(e.ctx, "", device)
+		if refusal := checkDelivery(&Admission{Device: device, Custody: e.custody(device.Name), Offered: offers, OfferedKnown: true}, &ops.DeviceInstallationSpec{Delivery: virtualMedia}); refusal == nil || refusal.Reason != ReasonReportAddressRequired {
 			t.Fatalf("virtual media with no report address: %+v", refusal)
 		}
 		// Another operation's claim does not hold this one's address.
@@ -254,6 +256,26 @@ func TestDeliveryMethodAdmission(t *testing.T) {
 		}
 	})
 
+	t.Run("an install waits while a serving site has not reported its methods", func(t *testing.T) {
+		e := e.sub(t)
+		device := held(e, "VirtualMedia")
+		fence := e.custody(device.Name).Spec.Fence
+		e.sites.mu.Lock()
+		e.sites.unknown = true
+		e.sites.mu.Unlock()
+		operation := install(e, device, "request-1", virtualMedia, nil)
+		e.settle(device.Name)
+		e.requirePhase(operation, ops.PhasePending, ReasonDeliveryNotOffered)
+		e.requireUntouched(device.Name, fence)
+		e.sites.mu.Lock()
+		e.sites.unknown = false
+		e.sites.mu.Unlock()
+		e.settle(device.Name)
+		if active := e.custody(device.Name).Spec.ActiveOperation; active == nil || active.UID != string(operation.UID) {
+			t.Fatalf("the install was not admitted once the site reported its methods: %+v", active)
+		}
+	})
+
 	t.Run("a wipe cannot settle a held virtual media install", func(t *testing.T) {
 		e := e.sub(t)
 		device := held(e, "VirtualMedia")
@@ -332,7 +354,10 @@ func (t twoSites) Serving(*inventory.Device) []string { return []string{"site-a"
 func (t twoSites) Fence(context.Context, string, *inventory.Device) (SiteFence, bool, error) {
 	return SiteFence{}, false, nil
 }
-func (t twoSites) DeliveryMethods(site string) []OfferedMethod { return t[site] }
+func (t twoSites) DeliveryMethods(_ context.Context, site string, _ *inventory.Device) ([]OfferedMethod, bool, error) {
+	methods, known := t[site]
+	return methods, known, nil
+}
 
 func TestOfferedIsWhatEveryServingSiteOffers(t *testing.T) {
 	window := func(d time.Duration) *metav1.Duration { return &metav1.Duration{Duration: d} }
@@ -340,14 +365,17 @@ func TestOfferedIsWhatEveryServingSiteOffers(t *testing.T) {
 		// Each site's declaration holds its own window values.
 		return OfferedMethod{Method: ops.DeliveryVirtualMedia, Addresses: ops.AddressesDataNetwork, MediaService: mediaService, FetchWindow: window(time.Minute), ReportWindow: window(time.Hour)}
 	}
-	got := offered(twoSites{"site-a": {{Method: ops.DeliveryNetworkBoot}, media()}, "site-b": {media()}}, &inventory.Device{})
-	if len(got) != 1 || got[0].Method != ops.DeliveryVirtualMedia {
+	got, known, _ := Offered(context.Background(), twoSites{"site-a": {{Method: ops.DeliveryNetworkBoot}, media()}, "site-b": {media()}}, &inventory.Device{})
+	if !known || len(got) != 1 || got[0].Method != ops.DeliveryVirtualMedia {
 		t.Fatalf("offered = %+v, want virtual media alone", got)
 	}
 	other := media()
 	other.ReportWindow = window(time.Minute)
-	if got := offered(twoSites{"site-a": {media()}, "site-b": {other}}, &inventory.Device{}); len(got) != 0 {
+	if got, _, _ := Offered(context.Background(), twoSites{"site-a": {media()}, "site-b": {other}}, &inventory.Device{}); len(got) != 0 {
 		t.Fatalf("sites with different windows offered %+v", got)
+	}
+	if _, known, _ := Offered(context.Background(), twoSites{"site-a": {media()}}, &inventory.Device{}); known {
+		t.Fatal("a site that has reported no declaration counted as known")
 	}
 }
 
@@ -365,5 +393,34 @@ func TestCheckDownloads(t *testing.T) {
 	}
 	if refusal := checkDownloads([]ops.DownloadInput{{Name: "installer", Reference: "registry.example/installer" + digest}}); refusal != nil {
 		t.Fatalf("a pinned download was refused: %+v", refusal)
+	}
+}
+
+func TestParseOffered(t *testing.T) {
+	got, err := ParseOffered([]byte(`[{"method":"NetworkBoot"},{"method":"VirtualMedia","addresses":"DataNetwork","mediaService":"https://192.0.2.10:8443","fetchWindow":"5m"}]`))
+	if err != nil || len(got) != 2 || got[0].Method != ops.DeliveryNetworkBoot || got[1].FetchWindow.Duration != 5*time.Minute {
+		t.Fatalf("declaration = %+v, %v", got, err)
+	}
+	if got, err := ParseOffered([]byte(`[]`)); err != nil || len(got) != 0 {
+		t.Fatalf("an empty declaration offers none: %+v, %v", got, err)
+	}
+	for name, data := range map[string]string{
+		"not a list":            `{"method":"NetworkBoot"}`,
+		"unknown method":        `[{"method":"Floppy"}]`,
+		"repeated method":       `[{"method":"NetworkBoot"},{"method":"NetworkBoot"}]`,
+		"unknown field":         `[{"method":"NetworkBoot","priority":1}]`,
+		"network boot settings": `[{"method":"NetworkBoot","mediaService":"https://192.0.2.10:8443"}]`,
+		"no address mode":       `[{"method":"VirtualMedia","mediaService":"https://192.0.2.10:8443"}]`,
+		"plain http service":    `[{"method":"VirtualMedia","addresses":"DataNetwork","mediaService":"http://192.0.2.10:8080"}]`,
+		"service with a path":   `[{"method":"VirtualMedia","addresses":"DataNetwork","mediaService":"https://192.0.2.10:8443/media"}]`,
+		"zero report window":    `[{"method":"VirtualMedia","addresses":"DataNetwork","mediaService":"https://192.0.2.10:8443","reportWindow":"0s"}]`,
+		"trailing data":         `[{"method":"NetworkBoot"}] []`,
+		"null":                  `null`,
+		"service with a user":   `[{"method":"VirtualMedia","addresses":"DataNetwork","mediaService":"https://user:secret@192.0.2.10:8443"}]`,
+		"service with a query":  `[{"method":"VirtualMedia","addresses":"DataNetwork","mediaService":"https://192.0.2.10:8443?x=1"}]`,
+	} {
+		if _, err := ParseOffered([]byte(data)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }

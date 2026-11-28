@@ -89,9 +89,15 @@ type FenceReport struct {
 	Stopped int64 `json:"stopped"`
 }
 
-// Handler serves the site API behind a bearer token.
-func Handler(dispatcher *Dispatcher, store *site.Store, results *site.Results, token func() (string, error)) http.Handler {
+// Handler serves the site API behind a bearer token. methods is the site's
+// enrollment of delivery methods, in its order of preference.
+func Handler(dispatcher *Dispatcher, store *site.Store, results *site.Results, methods []custody.OfferedMethod, token func() (string, error)) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/delivery-methods", func(w http.ResponseWriter, _ *http.Request) {
+		write(w, struct {
+			Methods []custody.OfferedMethod `json:"methods"`
+		}{methods})
+	})
 	mux.HandleFunc("PUT /v1/assignments", func(w http.ResponseWriter, r *http.Request) {
 		var assignment site.Assignment
 		if err := decode(r, &assignment); err != nil {

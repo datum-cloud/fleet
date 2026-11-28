@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"go.datum.net/fleet/internal/coordination"
+	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/multiplane"
 	"go.datum.net/fleet/internal/redfish"
 	"go.datum.net/fleet/internal/site"
@@ -40,6 +41,7 @@ func run() error {
 	handoff := fs.String("handoff", "", "exact delivered handoff name (site-worker)")
 	origin := fs.String("origin", "", "boot listener origin to probe, http://IPv4:port (boot-denials; required)")
 	interval := fs.Duration("interval", 10*time.Second, "observation refresh interval (site-observer)")
+	deliveryFile := fs.String("delivery-methods", "", "the site enrollment's delivery declaration, a JSON list of offers (site-observer)")
 	configPath := fs.String("config", "", "private acceptance config JSON")
 	kubeconfig := fs.String("kubeconfig", "", "cell-local kubeconfig; default in-cluster ServiceAccount")
 	cell := fs.String("cell", "", "exact Karmada member name")
@@ -77,7 +79,7 @@ func run() error {
 		return multiplane.Coordinate(ctx, config, *installationDeadline, func(err error) {
 			fmt.Fprintf(os.Stderr, "%s coordinator: pass incomplete: %v\n", time.Now().UTC().Format(time.RFC3339), err)
 		})
-	case "seed", "allocate", "install", "admit-install", "admit-install-b", "release", "release-b", "reuse", "recovery-mismatch", "probe-unallocatable", "tenant-isolation", "media-not-offered", "media-unpinned", "media-install-held", "media-install-download", "media-install-lost", "media-install":
+	case "seed", "allocate", "install", "admit-install", "admit-install-b", "release", "release-b", "reuse", "recovery-mismatch", "probe-unallocatable", "tenant-isolation", "media-not-offered", "media-offered", "media-unpinned", "media-install-held", "media-install-download", "media-install-lost", "media-install":
 		return phase(os.Args[1], *configPath, *once)
 	case "redfish-probe":
 		return probe(*endpoint, *credentials, *system, *uuid, *pin)
@@ -163,7 +165,15 @@ func run() error {
 	}
 	cellView := &coordination.Cell{API: api, Namespace: coordinationNamespace, Name: *cell}
 	if os.Args[1] == "site-observer" {
-		// The observer never runs work: it reports what the store holds.
+		// The observer never runs work: it reports what the store holds and
+		// the enrollment's delivery declaration, read again on every pass.
+		cellView.Delivery = func() ([]custody.OfferedMethod, error) {
+			data, err := os.ReadFile(*deliveryFile)
+			if err != nil {
+				return nil, err
+			}
+			return custody.ParseOffered(data)
+		}
 		return cellView.Observe(ctx, *interval, store, site.NewResults(store), func(name string, err error) {
 			fmt.Fprintf(os.Stderr, "observer: handoff %s not published: %s\n", name, classify(err))
 		})
@@ -204,7 +214,7 @@ func phase(name, configPath string, once bool) error {
 		"allocate": r.Allocate, "admit-install": r.AdmitInstall, "install": r.Install,
 		"release": r.Release, "release-b": r.ReleaseSecond, "reuse": r.Reuse,
 		"admit-install-b": r.AdmitInstallSecond, "recovery-mismatch": r.RecoveryMismatch, "probe-unallocatable": r.ProbeUnallocatable, "tenant-isolation": r.TenantIsolation,
-		"media-not-offered": r.MediaNotOffered, "media-unpinned": r.MediaUnpinned, "media-install-held": r.MediaInstallHeld, "media-install-download": r.MediaInstallDownload, "media-install-lost": r.MediaInstallLost, "media-install": r.MediaInstall,
+		"media-not-offered": r.MediaNotOffered, "media-offered": r.MediaOffered, "media-unpinned": r.MediaUnpinned, "media-install-held": r.MediaInstallHeld, "media-install-download": r.MediaInstallDownload, "media-install-lost": r.MediaInstallLost, "media-install": r.MediaInstall,
 	}[name]
 	last := ""
 	for {

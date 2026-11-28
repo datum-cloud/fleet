@@ -21,6 +21,7 @@ annotation, or explicit fault injection whose repair is left to Flux.
 Nothing here stores credentials in a source revision.
 """
 import argparse
+import base64
 import datetime
 import hashlib
 import json
@@ -75,7 +76,7 @@ RGD = 'fleet-handoff-dispatcher'
 # Flux-owned shared site objects and the layer (Kustomization) that writes each.
 SHARED = {('deployments', SITE, 'fleet-site-runtime'): 'fleet-site-services', ('deployments', SITE, 'fleet-site-boot'): 'fleet-site-services',
           ('deployments', SITE, 'fleet-site-observer'): 'fleet-site-services', ('services', SITE, 'fleet-site-boot'): 'fleet-site-services',
-          ('configmaps', SITE, 'fleet-site-worker-policy'): 'fleet-site-services',
+          ('configmaps', SITE, 'fleet-site-worker-policy'): 'fleet-site-services', ('configmaps', SITE, 'fleet-site-delivery'): 'fleet-site-services',
           ('serviceaccounts', SITE, 'fleet-site-runtime'): 'fleet-site-base', ('serviceaccounts', SITE, 'fleet-site-boot'): 'fleet-site-base',
           ('serviceaccounts', SITE, 'fleet-site-observer'): 'fleet-site-base', ('persistentvolumeclaims', SITE, 'fleet-site-state'): 'fleet-site-base',
           ('roles', COORD, 'fleet-site-observer'): 'fleet-site-base', ('rolebindings', COORD, 'fleet-site-observer'): 'fleet-site-base',
@@ -130,7 +131,7 @@ PLATFORM_LAYER_INVENTORY = {
 } if LAB_IPAM else {}
 EXPECTED['platform'] += list(PLATFORM_LAYER_INVENTORY)
 LAYER_INVENTORY = {
-    'flux-system/fleet-site-services': sorted(['fleet-site_fleet-site-boot__Service', 'fleet-site_fleet-site-worker-policy__ConfigMap',
+    'flux-system/fleet-site-services': sorted(['fleet-site_fleet-site-boot__Service', 'fleet-site_fleet-site-worker-policy__ConfigMap', 'fleet-site_fleet-site-delivery__ConfigMap',
                                                'fleet-site_fleet-site-runtime_apps_Deployment', 'fleet-site_fleet-site-boot_apps_Deployment',
                                                'fleet-site_fleet-site-observer_apps_Deployment'] + (
                                                    ['fleet-site_fleet-site-bmc__Service', 'fleet-site_fleet-site-bmc_apps_Deployment'] if PROVIDER == 'redfish' else []) + SYNCED_OBJECTS),
@@ -263,6 +264,20 @@ def config_map(name, namespace, data):
     return '\n'.join(lines) + '\n'
 
 
+def delivery_methods(state, given):
+    """The site enrollment's delivery declaration for this revision, base64
+    encoded for the ConfigMap's binaryData: the one given, kept for later
+    revisions, else the last one given, else network boot only."""
+    path = pathlib.Path(state) / 'site-delivery.json'
+    if given:
+        methods = json.loads(given)
+        if not isinstance(methods, list):
+            raise SystemExit('--delivery-methods must be a JSON list of offers')
+        path.write_text(json.dumps(methods, separators=(',', ':')))
+    declared = path.read_text() if path.exists() else '[{"method":"NetworkBoot"}]'
+    return base64.b64encode(declared.encode()).decode()
+
+
 def stage(args):
     s = pathlib.Path(args.state).resolve()
     root = pathlib.Path(args.root).resolve()
@@ -313,7 +328,10 @@ def stage(args):
                             FLEET_SITE_DISPATCH='true' if args.site == 'dispatch' else 'false',
                             # The central media service's certificate (public), so
                             # Redfish workers verify it; empty where none runs.
-                            FLEET_MEDIA_CA=env.get('mediaCA', ''))
+                            FLEET_MEDIA_CA=env.get('mediaCA', ''),
+                            # The site enrollment's delivery declaration, which
+                            # the observer publishes to the coordinator.
+                            FLEET_SITE_DELIVERY_METHODS=delivery_methods(s, args.delivery_methods))
             if args.bad_kro_chart:
                 patches.append(child_patch('kro', [{'target': {'kind': 'OCIRepository', 'name': 'kro-chart'},
                                                     'patch': '- op: replace\n  path: /spec/ref/digest\n  value: %s\n' % MISSING_DIGEST}]))
@@ -1089,7 +1107,7 @@ def fail_closed(args):
     shared_before = shared_uids(s)
     services_before = {d: kget(s, 'cell', '-n', SITE, 'get', 'deployment', d)['metadata']['generation'] for d in SITE_DEPLOYMENTS}
     good = current(s)
-    bad = argparse.Namespace(state=str(s), root=args.root, revision=good['revision'] + 1, site='dispatch', bad_kro_chart=True, drop_site_volume=False,
+    bad = argparse.Namespace(state=str(s), root=args.root, revision=good['revision'] + 1, site='dispatch', bad_kro_chart=True, drop_site_volume=False, delivery_methods='',
                              purpose='fail-closed: kro chart pinned to an absent digest', cluster=[], timeout=0)
     stage(bad)
     push(bad)
@@ -1127,7 +1145,7 @@ def fail_closed(args):
                       'siteLastAppliedRevision': site['status'].get('lastAppliedRevision'), 'siteMarkerUnchanged': marker,
                       'kroDeploymentUnchanged': True, 'siteFactsUnchanged': True, 'sharedLayersAppliedBadRevision': True,
                       'sharedServiceGenerationsUnchanged': services_during, 'sharedObjectUIDsUnchanged': True}
-    fixed = argparse.Namespace(state=str(s), root=args.root, revision=good['revision'] + 2, site='dispatch', bad_kro_chart=False, drop_site_volume=False,
+    fixed = argparse.Namespace(state=str(s), root=args.root, revision=good['revision'] + 2, site='dispatch', bad_kro_chart=False, drop_site_volume=False, delivery_methods='',
                                purpose='fail-closed recovery: pinned kro chart restored', cluster=['cell'], timeout=600)
     publish(fixed)
     site_obj = kget(s, 'cell', '-n', SITE, 'get', DISPATCHER[0], DISPATCHER[1])
@@ -1146,7 +1164,7 @@ def retention(args):
     s = pathlib.Path(args.state)
     before = site_facts(s)
     base = current(s)['revision']
-    drop = argparse.Namespace(state=str(s), root=args.root, revision=base + 1, site='dispatch', bad_kro_chart=False, drop_site_volume=True,
+    drop = argparse.Namespace(state=str(s), root=args.root, revision=base + 1, site='dispatch', bad_kro_chart=False, drop_site_volume=True, delivery_methods='',
                               purpose='retention: site volume claim removed from the source', cluster=['cell'], timeout=600)
     publish(drop)
     inv = kustomizations(s, 'cell')['flux-system/fleet-site-base']
@@ -1157,7 +1175,7 @@ def retention(args):
         die('Flux garbage-collected the journal volume claim')
     removed = site_facts(s)
     same_facts(before, removed, 'source removal of the volume claim')
-    restore = argparse.Namespace(state=str(s), root=args.root, revision=base + 2, site='dispatch', bad_kro_chart=False, drop_site_volume=False,
+    restore = argparse.Namespace(state=str(s), root=args.root, revision=base + 2, site='dispatch', bad_kro_chart=False, drop_site_volume=False, delivery_methods='',
                                  purpose='retention: site volume claim restored to the source (create-once policy)', cluster=['cell'], timeout=600)
     publish(restore)
     inv = kustomizations(s, 'cell')['flux-system/fleet-site-base']
@@ -1190,6 +1208,7 @@ def main():
         s.add_argument('--bad-kro-chart', action='store_true')
         s.add_argument('--drop-site-volume', action='store_true')
         s.add_argument('--purpose', default='')
+        s.add_argument('--delivery-methods', default='', help='the site enrollment\'s delivery declaration, a JSON list of offers; kept for later revisions')
 
     def clusters(s):
         s.add_argument('--cluster', action='append', default=[], choices=CLUSTERS)

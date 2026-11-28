@@ -29,9 +29,11 @@ type Sites interface {
 	// Fence returns the site's fence report for the Device, and false if
 	// the site has not reported one.
 	Fence(ctx context.Context, site string, device *inventory.Device) (SiteFence, bool, error)
-	// DeliveryMethods returns the boot delivery methods the site declares,
-	// in its order of preference. A site that declares none offers none.
-	DeliveryMethods(site string) []OfferedMethod
+	// DeliveryMethods returns the boot delivery methods the site's
+	// enrollment declares, in its order of preference, as the site reports
+	// them for the Device. It returns false when the site has not reported
+	// a current declaration: the coordinator then decides nothing on it.
+	DeliveryMethods(ctx context.Context, site string, device *inventory.Device) ([]OfferedMethod, bool, error)
 }
 
 // SiteFence is one site's fence report for one Device.
@@ -783,7 +785,12 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 		}
 		return fail(ReasonOperationInProgress, "another operation is running, and staff operations never wait")
 	}
-	admission := &Admission{Operation: operation, Custody: custody.DeepCopy(), Device: device, Row: row, Registry: c.Registry, Reader: c.Client, Now: now, DiscoveryInterval: cfg.DiscoveryInterval, Offered: offered(c.Sites, device)}
+	admission := &Admission{Operation: operation, Custody: custody.DeepCopy(), Device: device, Row: row, Registry: c.Registry, Reader: c.Client, Now: now, DiscoveryInterval: cfg.DiscoveryInterval}
+	// A declaration that cannot be read counts as not current: a check that
+	// needs it waits instead of deciding.
+	if offers, known, err := Offered(ctx, c.Sites, device); err == nil {
+		admission.Offered, admission.OfferedKnown = offers, known
+	}
 	// Rule 7, the kind's own checks, runs before the shared identity and
 	// key checks, so a kind's more specific reason, such as a system UUID
 	// that is not recorded, is the one reported.

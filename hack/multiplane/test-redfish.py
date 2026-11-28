@@ -249,7 +249,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (s / 'gitops-environment.json').write_text(json.dumps({'registryHost': 'fleet-mp-0000abcd-registry', 'registryPort': 5555, 'karmadaPort': 1, 'cell': 'fleet-mp-0000abcd-cell',
                                                            'cellEndpoint': 'https://x:6443', 'siteImage': 'r/fleet-site@sha256:' + 'a' * 64, 'siteImageDigest': 'sha256:' + 'a' * 64,
                                                            'bmcImage': 'r/fleet-bmc@sha256:' + 'b' * 64, 'bmcImageDigest': 'sha256:' + 'b' * 64}))
-    args = argparse.Namespace(state=str(s), root=str(root), revision=2, site='off', bad_kro_chart=False, drop_site_volume=True, purpose='test', cluster=[], timeout=5)
+    args = argparse.Namespace(state=str(s), root=str(root), revision=2, site='off', bad_kro_chart=False, drop_site_volume=True, delivery_methods='', purpose='test', cluster=[], timeout=5)
     check('stage a Redfish revision', flux.stage(args) == 0)
     cell = subprocess.run(['kustomize', 'build', str(s / 'gitops/r2/environment/cell')], text=True, capture_output=True).stdout
     for layer in ('base', 'services', 'graph'):

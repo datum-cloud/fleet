@@ -7,11 +7,12 @@ the lab BMC adapter's fault file and are recorded. Evidence keeps methods,
 paths, outcome classes, fences and digests; never a media URL, a URL
 capability or a report token.
 
-  offer             the operator adds virtual media after network boot, with
-                    the central media service and the lab's short phases, and
-                    restarts the coordinator; staff record target A as
-                    qualified for virtual media only (the lab stand-in for
-                    commissioning)
+  offer             the operator adds virtual media after network boot to the
+                    site enrollment, with the central media service and the
+                    lab's short phases, as a source revision the cell's Flux
+                    reconciles; the coordinator is not restarted. Staff
+                    record target A as qualified for virtual media only (the
+                    lab stand-in for commissioning)
   arm-corrupt-token one-shot: the lab BMC's next config medium carries another
                     report token than the one the media service served
   held-report       the first install booted from media and its OS posted a
@@ -173,14 +174,19 @@ def steps_of(s, uid):
 
 def offer(s):
     config = json.loads((s / 'acceptance.json').read_text())
-    config['DeliveryMethods'] = [{'method': 'NetworkBoot'},
-                                 {'method': 'VirtualMedia', 'addresses': 'DataNetwork', 'mediaService': config['MediaService'], 'fetchWindow': FETCH, 'reportWindow': REPORT}]
-    (s / 'acceptance.json').write_text(json.dumps(config))
+    methods = [{'method': 'NetworkBoot'},
+               {'method': 'VirtualMedia', 'addresses': 'DataNetwork', 'mediaService': config['MediaService'], 'fetchWindow': FETCH, 'reportWindow': REPORT}]
     provider(s, '-n', 'fleet-provider', 'annotate', '--overwrite', 'device', DEVICE_NAME, QUALIFIED + '=VirtualMedia')
-    subprocess.run(['bash', 'hack/multiplane/coordinator.sh', 'restart', str(s)], check=True, capture_output=True, text=True)
-    rf.write(s / 'evidence' / 'media-offer.json', {'observedAt': now(), 'deliveryMethods': config['DeliveryMethods'],
+    # The declaration is site enrollment: a source revision changes it, and
+    # the cell's observer publishes it to the coordinator, which keeps none.
+    subprocess.run(['python3', 'hack/multiplane/flux.py', 'publish', str(s), '--revision', '3', '--site', 'off', '--purpose', 'offer virtual media',
+                    '--delivery-methods', json.dumps(methods), '--cluster', 'cell', '--timeout', '600'], check=True, capture_output=True, text=True)
+    rendered = base64.b64decode(rf.kget(s, '-n', 'fleet-site', 'get', 'configmap', 'fleet-site-delivery')['binaryData']['methods']).decode()
+    if json.loads(rendered) != methods:
+        die('the reconciled site declaration differs from the revision: %s' % rendered)
+    rf.write(s / 'evidence' / 'media-offer.json', {'observedAt': now(), 'deliveryMethods': methods, 'source': 'site enrollment, revision r3',
                                                     'qualified': {'device': harness.DEVICE, 'methods': ['VirtualMedia'], 'source': 'lab-set annotation; commissioning is not implemented'}})
-    print('media-offer: the cell declares NetworkBoot then VirtualMedia (central media service, %s fetch and %s report phases); target A is qualified for VirtualMedia only; coordinator restarted' % (FETCH, REPORT))
+    print('media-offer: revision r3 declares NetworkBoot then VirtualMedia in the site enrollment (central media service, %s fetch and %s report phases); target A is qualified for VirtualMedia only' % (FETCH, REPORT))
 
 
 def arm(s, *fault):

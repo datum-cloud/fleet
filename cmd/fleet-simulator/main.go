@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
+	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/site"
 	"go.datum.net/fleet/internal/site/fixture"
 	"go.datum.net/fleet/internal/site/simwork"
@@ -75,7 +76,7 @@ func main() {
 	runner := &site.Runner{Site: siteName, Store: store, Results: results, Access: fixture.Access{Enrollment: enrollment},
 		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}}}
 	dispatcher := &siteapi.Dispatcher{Runner: runner, Context: ctx, Logger: logger}
-	server := newServer(address, siteapi.Handler(dispatcher, store, results, func() (string, error) { return readToken(tokenPath) }), logger)
+	server := newServer(address, siteapi.Handler(dispatcher, store, results, custody.NetworkBootOnly, func() (string, error) { return readToken(tokenPath) }), logger)
 	if discover {
 		api, err := discoveryClient()
 		if err != nil {

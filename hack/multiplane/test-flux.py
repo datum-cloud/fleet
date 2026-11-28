@@ -2,6 +2,7 @@
 """Offline tests for hack/multiplane/flux.py: source staging, push records and
 reconcile waits, with fake flux and kubectl executables. Needs kustomize."""
 import argparse
+import base64
 import importlib.util
 import json
 import os
@@ -100,7 +101,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (s / 'gitops-environment.json').write_text(json.dumps(env))
 
     def ns(**kw):
-        base = dict(state=str(s), root=str(root), revision=1, site='absent', bad_kro_chart=False, drop_site_volume=False, purpose='test', cluster=[], timeout=5)
+        base = dict(state=str(s), root=str(root), revision=1, site='absent', bad_kro_chart=False, drop_site_volume=False, delivery_methods='', purpose='test', cluster=[], timeout=5)
         base.update(kw)
         return argparse.Namespace(**base)
 
@@ -136,6 +137,15 @@ with tempfile.TemporaryDirectory() as tmp:
     check('substituted variables defined', used and used <= env_keys, str(sorted(used - env_keys)))
     check('graph uses no Flux variables', not re.findall(r'\$\{FLEET_', (root / 'config/site/graph/rgd.yaml').read_text()))
     check('stage off revision', flux.stage(ns(revision=2, site='off')) == 0 and 'FLEET_SITE_DISPATCH: "false"' in render(2, 'cell'))
+    def declared(rev):
+        found = re.search(r'^  FLEET_SITE_DELIVERY_METHODS: "?([A-Za-z0-9+/=]+)"?$', render(rev, 'cell'), re.M)
+        return found and base64.b64decode(found.group(1)).decode()
+    check('the site declares network boot by default', declared(2) == '[{"method":"NetworkBoot"}]')
+    media = '[{"method":"NetworkBoot"},{"method":"VirtualMedia","addresses":"DataNetwork","mediaService":"https://192.0.2.10:8443"}]'
+    flux.stage(ns(revision=7, site='off', delivery_methods=media))
+    flux.stage(ns(revision=8, site='dispatch'))
+    check('a declaration is kept by later revisions', declared(7) == media and declared(8) == media)
+    expect_exit('a declaration must be a list', lambda: flux.stage(ns(revision=10, site='off', delivery_methods='{"method":"NetworkBoot"}')), '--delivery-methods must be a JSON list of offers')
     flux.stage(ns(revision=4, site='dispatch', bad_kro_chart=True))
     check('bad chart revision patches only kro', flux.MISSING_DIGEST in render(4, 'cell') and flux.KRO_CHART_DIGEST not in render(4, 'cell'))
     flux.stage(ns(revision=6, site='dispatch', drop_site_volume=True))

@@ -52,7 +52,7 @@ from its own OCIRepository). See
 | Handoff CRD, management role, interpreter, member `Cluster`, `PropagationPolicy` on the Karmada API | hub kustomize-controller through the chart's `karmada-kubeconfig` | — |
 | kro controller | cell helm-controller (`HelmRelease kro`) | — |
 | Site namespace, StorageClass, site store PVC, service identities, observer RBAC, kro grants and admission policies | cell Flux (`fleet-site-base`) | kro does not manage these; its delete grants still cover service identities and coordination RBAC (see trust model) |
-| Shared runtime, boot and observer Deployments, boot Service, worker-policy parameter | cell Flux as `fleet-site-services-reconciler` | kro (read only; verified by label, inventory and RBAC), harness (drift is injected, repair is Flux's) |
+| Shared runtime, boot and observer Deployments, boot Service, worker-policy parameter, delivery declaration | cell Flux as `fleet-site-services-reconciler` | kro (read only; verified by label, inventory and RBAC), harness (drift is injected, repair is Flux's) |
 | `ResourceGraphDefinition fleet-handoff-dispatcher` | cell Flux as `fleet-site-graph-reconciler` | — |
 | `HandoffDispatcher/dispatcher`, including `dispatch` | cell Flux as `fleet-site-dispatch-reconciler`, from a source revision | Harness (dispatch is a pushed revision; the graph-lifecycle fault suspends the layer first) |
 | Per-operation `w-<handoff>` ServiceAccounts, Roles, RoleBindings and Jobs | kro only, admission-checked | Flux (verified absent from every inventory) |

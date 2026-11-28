@@ -576,7 +576,7 @@ a CI runner's KVM guests. Each held installation waits out both windows.
 | Part | In the prototype |
 | --- | --- |
 | Delivery inputs | Real. Each installation records its method and the method's inputs before admission; the input digest pins them. |
-| Site declaration | Real, with one simplification: the coordinator's site configuration declares each site's methods in preference order. The Metal provider selects from the same declaration. |
+| Site declaration | Real. The site enrollment's `fleet-site-delivery` ConfigMap declares the site's methods in preference order. The observer publishes it on each report handoff, and the coordinator and the Metal provider read it there. A change is a source revision, with no coordinator restart. |
 | Admission | Real for the site and qualification checks, the settling-hold rule, input consistency and digest-pinned downloads. A machine class cannot restrict methods yet. |
 | Qualification | Stubbed. Staff set the `fleet.datumapis.com/qualified-delivery-methods` annotation on the Device. A Device without it is qualified for network boot only. Commissioning will replace it. |
 | Central media service | Real windows, fences from custody, media, report endpoint, transfer records and a background sweep that drops config media no window can serve. The sweep skips and counts a window file it cannot read, and goes on. In the lab it runs on the workstation beside the coordinator, on loopback, which lab Pods reach through the runtime's host gateway. Guests reach it through the report relay. |
@@ -603,7 +603,7 @@ it pulled that reference, installed, and booted the installed disk.
 | Phase | What it proves |
 | --- | --- |
 | `media-not-offered` | While the cell declares network boot only, a virtual media installation is refused with `DeliveryMethodNotOffered`. The fence does not change and nothing is delivered. |
-| `media-central`, `media-offer` | The central media service starts with the image's pinned artifacts. The operator adds virtual media after network boot; staff record target A as qualified for virtual media only. |
+| `media-central`, `media-offer`, `media-offered` | The central media service starts with the image's pinned artifacts. Revision 3 adds virtual media after network boot to the site enrollment, and the coordinator reads it from the cell's report without a restart. Staff record target A as qualified for virtual media only. |
 | `media-unpinned` | An installation whose installer downloads an image by tag is refused with `InstallDownloadUnpinned`. |
 | `media-arm-corrupt-token`, `media-install-held`, `media-held-report` | The lab BMC's config medium carries another report token. The installed OS's report, from its IPAM address, is refused for its token. Reports posted straight to the service, over IPv4 and IPv6 loopback, come from outside the site's report ranges and are refused for their source. No report is taken, and the installation ends `OutcomeUnknown` at its report deadline with a hold that records virtual media. |
 | `media-arm-add-download`, `media-install-download`, `media-held-download` | The next installation settles that hold with the held method. The lab BMC adds a download the operation never pinned to its config medium; the first-boot report names it, so the report is never verified and the installation is held. |

@@ -33,6 +33,10 @@ type Site interface {
 	Results(ctx context.Context) ([]site.Stored, error)
 	// Forget tells the site the coordinator answered a result.
 	Forget(ctx context.Context, stored site.Stored) error
+	// DeliveryMethods returns the delivery methods the site's enrollment
+	// declares, as the site reports them for a "<namespace>/<name>"
+	// Device, and false if it has reported no current declaration.
+	DeliveryMethods(ctx context.Context, device string) ([]custody.OfferedMethod, bool, error)
 }
 
 // Sites is the coordinator's explicit site configuration: which sites serve
@@ -42,13 +46,16 @@ type Sites struct {
 	Sites map[string]Site
 	// Devices maps a Device name to the names of the sites serving it.
 	Devices map[string][]string
-	// Methods is each site's declared boot delivery methods, in its order
-	// of preference. A site with none offers none.
-	Methods map[string][]custody.OfferedMethod
 }
 
-func (s *Sites) DeliveryMethods(name string) []custody.OfferedMethod {
-	return slices.Clone(s.Methods[name])
+// DeliveryMethods reads the site's own declaration, from its enrollment, as
+// the site reports it. The coordinator keeps no copy.
+func (s *Sites) DeliveryMethods(ctx context.Context, name string, device *inventory.Device) ([]custody.OfferedMethod, bool, error) {
+	remote, ok := s.Sites[name]
+	if !ok {
+		return nil, false, nil
+	}
+	return remote.DeliveryMethods(ctx, device.Namespace+"/"+device.Name)
 }
 
 var _ custody.Sites = (*Sites)(nil)
