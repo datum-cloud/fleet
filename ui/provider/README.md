@@ -65,7 +65,7 @@ flag is baked into the build.
 pnpm build:fixtures && pnpm preview
 
 # staff-portal, in another terminal (you must be in the staff-users group)
-PORTAL_PLUGINS='metal-datumapis-com=http://localhost:7781' npm run dev
+PORTAL_PLUGINS='metal-datumapis-com=http://localhost:7781' pnpm dev
 ```
 
 If staff-portal's `.env` already sets `PORTAL_PLUGINS_JSON`, add
